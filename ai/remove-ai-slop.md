@@ -1,0 +1,35 @@
+# Remove AI Slop
+
+## Purpose
+
+AI가 만든 티가 나는 저품질 코드와 문서를 제거하기 위한 기준이다.
+
+## Slop Patterns
+
+- 요구사항과 무관한 과한 추상화
+- 의미 없는 helper, manager, util 남발
+- 실제 검증 없이 "robust", "production-ready"라고 주장
+- TODO를 남기고 후속 설명 없음
+- 실패를 숨기는 fallback
+- 문서와 코드가 서로 다른 이야기를 함
+- 같은 내용을 여러 문서에 복붙
+- 실제 API contract와 다른 예시 응답
+
+## Cleanup Rules
+
+- 불필요한 추상화는 제거한다.
+- 검증하지 않은 주장은 제거하거나 `NOT VERIFIED`로 바꾼다.
+- TODO는 owner, reason, next step을 적는다.
+- 중복 문서는 owner 문서로 모으고 다른 문서는 링크로 바꾼다.
+- "완료" 표현은 QA Gate 증거가 있을 때만 사용한다.
+
+## Documentation Quality Bar
+
+좋은 문서는 다음을 만족한다.
+
+- 무엇을 할지 명확하다.
+- 왜 그렇게 하는지 설명한다.
+- 대안을 언급한다.
+- 모르는 것은 모른다고 적는다.
+- 구현자가 다음 행동을 알 수 있다.
+
