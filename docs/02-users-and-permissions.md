@@ -1,0 +1,75 @@
+# 02. Users and Permissions
+
+## User Types
+
+### Anonymous API Client
+
+현재 과제 요구사항은 사용자 식별값을 request로 전달하는 형태다. 별도 로그인/인증 구현은 요구사항에 포함하지 않는다.
+
+가능한 행동:
+
+- 메뉴 목록 조회
+- 사용자 식별값을 포함한 포인트 충전 요청
+- 사용자 식별값을 포함한 주문 요청
+- 인기 메뉴 조회
+
+### User
+
+포인트를 충전하고 커피를 주문하는 사용자다.
+
+가능한 행동:
+
+- 자신의 포인트 충전
+- 자신의 포인트로 주문/결제
+
+### Operator
+
+운영자 개념은 현재 과제 필수 범위에 포함되지 않는다.
+
+가능한 행동:
+
+- TODO: 관리자 기능이 추가되면 정의한다.
+
+## Roles
+
+현재 구현 범위에서는 role 기반 권한 모델을 확정하지 않는다.
+
+| Role | Description |
+|---|---|
+| Anonymous | 인증 없이 API를 호출하는 클라이언트 |
+| User | 사용자 식별값으로 표현되는 주문 사용자 |
+| Operator | TODO: 운영 기능 추가 시 정의 |
+
+## Permission Matrix
+
+| Feature | Anonymous | User | Operator |
+|---|---:|---:|---:|
+| View menus | Yes | Yes | TBD |
+| Charge points | Yes, with userId | Yes | TBD |
+| Create order | Yes, with userId | Yes | TBD |
+| View popular menus | Yes | Yes | TBD |
+| Manage menus | No | No | TBD |
+
+## Authentication Rules
+
+현재 과제 요구사항에는 로그인 기능이 정의되어 있지 않다.
+
+따라서 이 프로젝트에서는 `userId`를 로그인된 principal이 아니라, 포인트 계정을 식별하기 위한 과제용 사용자 식별값으로 사용한다.
+
+테스트와 seed data에서 사용자를 미리 준비하고, 포인트 충전/주문 요청은 해당 `userId`를 전달한다.
+
+## Authorization Rules
+
+- 현재 API는 사용자 식별값을 request path 또는 body로 받는다.
+- 이 방식은 과제용 단순화다.
+- 실제 서비스에서는 로그인된 principal과 요청 userId의 일치 여부를 서버에서 검증해야 한다.
+
+## Server-side Permission Rules
+
+- UI 또는 클라이언트에서 숨긴 버튼은 권한 검증으로 간주하지 않는다.
+- 서버는 권한이 필요한 API에서 반드시 server-side permission check를 수행해야 한다.
+- 권한 없는 요청은 `403 FORBIDDEN`을 반환해야 한다.
+
+## Open Questions
+
+- Open Question: 사용자 생성 API가 필요한가, 아니면 테스트 fixture/seed data로 충분한가?
