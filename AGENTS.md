@@ -30,7 +30,12 @@ Start with `ai/document-routing.md` for routing, owning-feature detection, and p
 - `docs/08-ui-and-frontend-guidelines.md`: UI guidance, if frontend is added
 - `docs/09-quality-operations-and-rules.md`: test, security, release, DoD
 - `ai/document-routing.md`: routing rules for which docs/spec files to load and when
-- `ai/*`: AI workflow, verification, QA gate, done claim rules
+- `ai/*`: AI workflow, delegated-work tracking, verification, QA gate, and done-claim rules
+- `ai/subagent-workflow.md`: mandatory dispatch and handoff rules for delegated work
+- `ai/github-issue-planning.md`: Issue boundaries, tracking/progress statuses, lifecycle, and `pending_issue` reconciliation
+- `ai/github-issue-template.md`: copy-ready Issue body for delegated work
+- `ai/work-log-template.md`: issue summary and role-log formats
+- `ai/work-logs/README.md` and `ai/work-logs/index.md`: work-log recovery and active Issue index
 - `specs/*`: feature-level execution documents
 - `adr/*`: architecture decision records
 
@@ -46,8 +51,11 @@ Start with `ai/document-routing.md` for routing, owning-feature detection, and p
 8. Read `specs/{feature}/tasks.md` only for execution or verification handoff.
 9. Read `specs/{feature}/decisions.md` only when prior feature decisions exist or new decisions are made.
 10. Read `specs/{feature}/checklist.md` only before completion claims.
-11. `ai/qa-gate.md` before final QA review.
-12. `ai/done-claim-template.md` before reporting completion.
+11. When dispatching subagents, read `ai/subagent-workflow.md` and `ai/github-issue-planning.md` before dispatching. Create one Issue per cohesive, independently closable work item and initialize its `ai/work-logs/issue-{number}/` summary and role logs. Use `tracking_status: pending_issue` only after a documented Issue-creation failure; keep workflow progress in `status`.
+12. When review and evidence are ready, complete the pre-QA sections of `ai/issue-completion-checklist.md`.
+13. Run `ai/qa-gate.md` and record the implementation result.
+14. Create the completion report from `ai/done-claim-template.md` after QA.
+15. Only after the done claim exists, complete the closure sections of `ai/issue-completion-checklist.md` and close the Issue if every closure condition passes.
 
 ## Development Flow
 
@@ -65,8 +73,8 @@ Follow `ai/document-routing.md` for task classification, owning-feature detectio
 5. Implement, review, verify, or update documentation according to the selected route.
 6. Verify according to `ai/verification-levels.md` when verification is required.
 7. Update docs/specs/ADR if behavior, contracts, requirements, or architecture changed.
-8. Pass `ai/qa-gate.md` before completion claims.
-9. Report completion using `ai/done-claim-template.md`.
+8. When subagents are dispatched, follow `ai/subagent-workflow.md`, create and maintain the Issue-scoped work logs, and record every role's evidence. A complete `tracking_status: pending_issue` fallback may pass implementation QA, but it must be reconciled before an issue-backed claim, unqualified overall `DONE`, reconciliation completion, or Issue closure.
+9. Follow the completion sequence exactly: review/evidence ready -> pre-QA sections of `ai/issue-completion-checklist.md` -> `ai/qa-gate.md` -> `ai/done-claim-template.md` -> closure sections of `ai/issue-completion-checklist.md` and Issue closure.
 
 ## Non-Negotiable Rules
 
@@ -86,6 +94,13 @@ Follow the detailed AI rules in:
 - `ai/document-routing.md`
 - `ai/implementation-guardrails.md`
 - `ai/subagent-workflow.md`
+- `ai/github-issue-planning.md`
+- `ai/github-issue-template.md`
+- `ai/work-log-template.md`
+- `ai/work-logs/README.md`
+- `ai/work-logs/index.md`
 - `ai/verification-levels.md`
+- `ai/issue-completion-checklist.md`
 - `ai/qa-gate.md`
+- `ai/done-claim-template.md`
 - `ai/reviewer-checklist.md`

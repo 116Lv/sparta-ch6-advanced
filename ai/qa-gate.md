@@ -1,66 +1,99 @@
 # QA Gate
 
-작업은 QA Gate를 통과하기 전까지 완료로 인정하지 않는다.
+Run this gate after review/evidence readiness and the pre-QA checklist, and before creating the done claim. This gate determines `implementation_status`; it does not by itself authorize an overall `DONE` claim or GitHub Issue closure. A failed, missing, or unrecorded required check blocks implementation completion; it is not an implied pass.
 
-## Required Checks
+## Required Verification Checks
 
-- typecheck 통과
-- lint 통과
-- unit test 통과
-- integration test 통과
-- 필요한 경우 e2e test 통과
-- DB migration 성공
-- 서버 실행 성공
-- 실제 API request 성공
-- 예상하지 못한 500 응답 없음
-- 서버 로그에 unhandled exception 없음
-- API response body가 문서의 contract와 일치
+- Typecheck passes.
+- Lint passes.
+- Unit tests pass.
+- Integration tests pass.
+- End-to-end tests pass when required.
+- Database migration succeeds when the change includes one.
+- The server starts when runtime behavior changed.
+- A real API request succeeds when API behavior changed.
+- No unexpected HTTP 500 response occurs.
+- Server logs contain no unhandled exception.
+- API response bodies match the documented contract.
 
 ## API Verification Rules
 
-API가 변경된 작업은 mock 테스트만으로 완료할 수 없다.
+Work that changes an API cannot be completed with mock tests alone. Run real HTTP requests against a running server.
 
-반드시 실제 서버를 대상으로 HTTP request를 수행해야 한다.
+Verify each changed endpoint where applicable:
 
-각 endpoint는 가능한 경우 다음을 확인한다.
-
-| Case | Expected |
+| Case | Expected result |
 |---|---|
-| 정상 요청 | 2xx |
-| 잘못된 입력 | 400 |
-| 인증 없음 | 401 |
-| 권한 없음 | 403 |
-| 없는 리소스 | 404 |
-| 중복/충돌 | 409 |
-| 서버 내부 오류 | 예상하지 못한 500이 없어야 함 |
+| Valid request | 2xx |
+| Invalid input | 400 |
+| Unauthenticated request | 401 |
+| Unauthorized request | 403 |
+| Missing resource | 404 |
+| Duplicate or conflict | 409 |
+| Internal failure | No unexpected 500 response |
 
-## Failure Conditions
+## Delegated-Work Evidence Gate
 
-다음 중 하나라도 해당하면 완료가 아니다.
+This section applies whenever one or more subagents were dispatched. All of the following are mandatory before implementation QA can pass:
 
-- 테스트를 실행하지 않음
-- 테스트 결과 로그가 없음
-- 서버를 실행하지 않음
-- DB migration을 적용하지 않음
-- 실제 API 요청을 수행하지 않음
-- 예상하지 못한 500 발생
-- 서버 로그에 unhandled exception 존재
-- 실패한 테스트를 무시함
-- 테스트를 통과시키기 위해 요구사항을 변경함
-- 문서와 구현이 충돌함
+- `tracking_status` is exactly `issue_backed` or `pending_issue`, and workflow `status` uses only the canonical progress values.
+- Exactly one tracking record exists: a real GitHub Issue-backed record or the complete fallback defined below.
+- An Issue summary exists at `ai/work-logs/issue-{number}/README.md` or the approved `ai/work-logs/no-issue/{work-key}/README.md` path.
+- A role-specific work log exists beside that summary for every dispatched role.
+- The Issue summary links every involved role log and identifies the current owner, tracking status, workflow status, and recovery state.
+- Agent logs record their scope, changed files, commands, verification evidence, blockers, and next handoff.
+- The tracking record and work logs contain enough evidence to verify the acceptance criteria and required verification level.
 
-## Exception Handling
+For `tracking_status: issue_backed`, a real GitHub Issue number and URL must link to `ai/work-logs/issue-{number}/`. Missing or invalid tracking metadata, an Issue summary, any involved role log, or required verification evidence is a QA blocker. A reviewer must not infer evidence from an oral handoff, an unlinked terminal result, or an unrecorded claim.
 
-검증을 실행할 수 없는 환경이면 완료가 아니라 `BLOCKED` 또는 `PARTIAL`로 보고한다.
+### `pending_issue` Exception
 
-허용되는 표현:
+GitHub unavailability permits work to continue only through the documented fallback. The temporary directory must preserve exactly one intended future Issue boundary. Its Issue summary and every role log must use `tracking_status: pending_issue`, retain actual progress in workflow `status`, and record `issue_creation_attempted_at`, `issue_creation_failure_reason`, `expected_issue_scope`, `reconciliation_required: true`, and `migration_history`.
 
-- "NOT RUN: 프로젝트에 Gradle wrapper가 아직 없습니다."
-- "BLOCKED: MySQL/Redis/Kafka 테스트 환경이 아직 없습니다."
+When that fallback metadata, all role logs, and all applicable verification evidence are complete and valid, QA may produce `implementation_status: PASS` while `tracking_status` remains `pending_issue`. Pending tracking still blocks an unqualified overall `DONE`, an issue-backed claim, reconciliation completion, and GitHub Issue closure.
 
-허용되지 않는 표현:
+Reconciliation later requires creating the one intended Issue, moving the full fallback directory to `ai/work-logs/issue-{number}/`, preserving the old path in `migration_history`, updating all metadata and the index, and posting the migration summary to the Issue. Linking the old directory or copying selected files is not reconciliation.
 
-- "테스트는 못 했지만 완료입니다."
-- "로직상 문제 없어 보입니다."
-- "mock으로 확인했으니 실제 API도 문제 없습니다."
+## Implementation-QA Failure Conditions
 
+Implementation QA fails when any of the following applies:
+
+- Required verification was not run.
+- Results or evidence for required verification are missing.
+- The server was not started when runtime verification is required.
+- A required database migration was not applied.
+- A real API request was not performed after an API change.
+- An unexpected 500 response occurred.
+- Server logs contain an unhandled exception.
+- A failed test was ignored.
+- Requirements were changed only to make tests pass.
+- Documentation and implementation conflict.
+- Delegated-work tracking metadata, role logs, fallback metadata, or required evidence is missing or invalid.
+
+Incomplete reconciliation by itself does not fail implementation QA when the documented fallback is otherwise complete. It remains a blocker for issue-backed tracking, unqualified overall `DONE`, reconciliation completion, and Issue closure.
+
+## QA Output
+
+Record exactly one implementation result for the done claim:
+
+- `implementation_status: PASS` when every applicable implementation and delegated-evidence check passes, including a complete fallback when used.
+- `implementation_status: FAIL` when a required check fails.
+- `implementation_status: BLOCKED` when a required check cannot run or required evidence cannot be obtained.
+- `implementation_status: PARTIAL` when explicitly allowed verification passed but the required implementation scope is incomplete.
+
+When `implementation_status` is `PASS`, set the Issue summary and completed role logs to workflow `status: done` before creating the done claim. Do not change `tracking_status` during this transition.
+
+## Reporting Unavailable Verification
+
+When verification cannot run because of the environment, report `BLOCKED` or `PARTIAL`; do not report completion.
+
+Allowed examples:
+
+- `NOT RUN: The project does not yet have a Gradle wrapper.`
+- `BLOCKED: A MySQL, Redis, or Kafka test environment is unavailable.`
+
+Disallowed examples:
+
+- `The tests were not run, but the work is complete.`
+- `The logic appears correct.`
+- `Mock verification proves the real API works.`
