@@ -325,36 +325,81 @@ A missing registry entry is `NOT_CONFIGURED` at capability discovery. If the cur
 
 ### Phase 1A: State And Registry Skeleton
 
-- Add schemas and enum contracts for registry, state, runs, command results, done claims, approval records, and policy violations.
-- Add canonical `ai/command-registry.json` and `ai/project-state.json` with human-readable Markdown policy and generated summary sections.
-- Detect and record local and CI helper-runtime states without requiring Phase 3 CI availability.
-- Register only evidenced commands and represent absent capabilities as `NOT_CONFIGURED`.
-- Add `.ai-runs/` to `.gitignore` and connect `AGENTS.md` to the supported workflow path and enforcement boundary.
-- Add schema and generated-summary validation fixtures.
+#### Phase 1A-1: Schemas And Canonical State
+
+- Add schemas and closed enum contracts for registry, state, runs, command results, done claims, approval records, and policy violations.
+- Add the initial canonical `ai/command-registry.json` and `ai/project-state.json` skeletons.
+- Record local and CI helper-runtime states without requiring Phase 3 CI availability.
+- Register only evidenced commands; mark `test` as `CONFIGURED_UNVERIFIED` and unsupported capabilities as `NOT_CONFIGURED`.
+- Record the application port as `INFERRED`, not confirmed.
+
+#### Phase 1A-2: Human-Readable Summaries
+
+- Add `ai/command-registry.md` and `ai/project-state.md` with separate human policy and generated summary sections.
+- Add generated-section ownership markers and prohibit manual edits to generated state.
+- Define JSON-to-Markdown display mappings, including `NOT_APPLICABLE` to `N/A`.
+- Add fixtures that detect stale or contradictory generated summaries.
+
+#### Phase 1A-3: Repository Integration
+
+- Add `.ai-runs/` to `.gitignore`.
+- Connect `AGENTS.md` to canonical JSON state, human-readable summaries, and the supported-path enforcement boundary.
+- Add schema-validation fixtures for valid, malformed, unknown-version, and invalid-enum state.
+- Verify that Phase 1A adds no command execution gateway or product behavior.
 
 ### Phase 1B: Command Gateway
 
-- Add registry-ID command execution without `eval` and enforce parameter schemas.
-- Add `scripts/ai/command-runner.sh`, `scripts/ai/workflow-gate.sh`, and `scripts/ai/done-claim-check.sh`.
-- Add shared exit codes, structured script results, pre/post command gates, and per-run evidence.
-- Add secret-safe capture, policy-violation events, approval audit records, and scrubbed review summaries.
-- Add fixture-based command-runner and gate contract tests before registering repository verification as passed.
+#### Phase 1B-1: Registry Resolution And Parameter Validation
+
+- Implement the approved helper-runtime preflight and fail closed when unavailable.
+- Resolve registry IDs from schema-valid JSON and construct argv arrays without `eval` or shell expansion.
+- Enforce closed parameter schemas, unresolved-placeholder checks, classification, and prerequisites.
+
+#### Phase 1B-2: Command Execution And Evidence
+
+- Add `scripts/ai/command-runner.sh` and `scripts/ai/workflow-gate.sh`.
+- Add pre/post command gates, shared exit codes, structured results, and per-run evidence.
+- Add secret-safe capture, approval audit records, policy-violation events, and scrubbed summaries.
+
+#### Phase 1B-3: Completion Gate And Contract Tests
+
+- Add `scripts/ai/done-claim-check.sh` and final-gate leaf-result aggregation.
+- Add fixture-based tests for invalid state, unknown commands, unsafe parameters, unjustified reruns, hidden failures, and missing evidence.
 - Keep Phase 1B described as policy, audit, and supported-path enforcement rather than complete host-tool interception.
 
 ### Phase 2: Workflow Reuse And Completion Gates
 
-- Add context map, cache policy, tool-call policy, resource budget, handoff state, and remaining skills.
-- Add repository intake, verification-level, API-smoke, failure-triage, review, and done-claim gates.
-- Connect existing QA, routing, issue, work-log, and feature-template documents to executable entry points.
+#### Phase 2A: Context Intake And Cache Control
+
+- Add the repository context map, scoped repo intake, project-state refresh, and command-discovery update flow.
+- Add cache policy, tool-call policy, resource budget, fingerprints, and conservative invalidation.
+
+#### Phase 2B: Skills And Handoff Reuse
+
+- Add the repo-intake, command-runner, verification-runner, API-smoke, failure-triage, docs-sync, and review-gate skills.
+- Add agent handoff state and connect reusable context to issue summaries and work logs.
+
+#### Phase 2C: Verification And Documentation Integration
+
+- Add verification-level, API-smoke, failure-triage, review, and done-claim workflow entry points.
+- Connect existing QA, routing, issue, work-log, and feature-template documents to executable gates.
+- Verify `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` mappings by change type.
 
 ### Phase 3: Host Enforcement
 
-- Add native agent-runtime hook adapters where supported.
-- Add CI gates and scrubbed evidence artifacts where repository policy requires them.
+#### Phase 3A: Native Runtime Adapters
+
+- Add host-specific adapters for command, file-read, search, and tool-call hooks where supported.
+- Record and surface bypass attempts that repository-only enforcement could previously audit but not intercept.
+
+#### Phase 3B: CI Gates And Durable Evidence
+
+- Add CI final gates, schema validation, and generated-summary consistency checks.
+- Publish scrubbed evidence artifacts and connect their references to reviewable completion reports.
 
 Each phase must remain usable and testable on its own. Repository-gateway enforcement is not described as complete interception of host tool calls before Phase 3 support exists.
 
-Every delivery phase is decomposed again in its own written specification and implementation plan. Phase 1A begins with schema/JSON skeletons, then Markdown summaries, then repository integration and fixtures. Phase 1B, Phase 2, and Phase 3 must receive similarly bounded task groups before implementation; the design phase names are not single execution tasks.
+Each subphase receives its own written specification or bounded implementation-plan section before execution. A parent phase is never treated as one execution task.
 
 ## Success Criteria
 
