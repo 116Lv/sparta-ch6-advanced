@@ -55,11 +55,11 @@ Scripts reject invalid or unsupported schema versions instead of attempting best
 Schemas define separate enums for different concepts instead of one ambiguous universal status.
 
 - Project fact confidence: `CONFIRMED`, `INFERRED`, `UNKNOWN`, `STALE`, `UNCERTAIN`
-- Capability configuration: `CONFIGURED_UNVERIFIED`, `VERIFIED`, `NOT_CONFIGURED`, `STALE`, `UNCERTAIN`
-- Workflow result: `PASS`, `FAIL`, `BLOCKED`, `NOT_CONFIGURED`, `N/A`, `SKIPPED_WITH_REASON`
-- Script control outcome: `PASS`, `FAIL`, `BLOCKED`, `NOT_CONFIGURED`, `POLICY_VIOLATION`, `INVALID_STATE`, `N/A`, `SKIPPED_WITH_REASON`
+- Capability configuration: `UNKNOWN`, `CONFIGURED_UNVERIFIED`, `VERIFIED`, `NOT_CONFIGURED`, `STALE`, `UNCERTAIN`
+- Workflow result: `PASS`, `FAIL`, `BLOCKED`, `NOT_CONFIGURED`, `NOT_APPLICABLE`, `SKIPPED_WITH_REASON`
+- Script control outcome: `PASS`, `FAIL`, `BLOCKED`, `NOT_CONFIGURED`, `POLICY_VIOLATION`, `INVALID_STATE`, `NOT_APPLICABLE`, `SKIPPED_WITH_REASON`
 
-Values such as `OK`, `DONE`, `PASSED`, `probably-pass`, or `not-needed` are invalid. `NOT_CONFIGURED` means a capability or verification mechanism is not defined. `BLOCKED` means the current task requires that missing or unavailable capability. `N/A` means the capability does not apply to the classified task. `FAIL` means execution occurred and failed. `SKIPPED_WITH_REASON` is permitted only when the selected verification policy explicitly allows a skip and records the reason.
+Values such as `OK`, `DONE`, `PASSED`, `probably-pass`, or `not-needed` are invalid. `NOT_CONFIGURED` means a capability or verification mechanism is not defined. `BLOCKED` means the current task requires that missing or unavailable capability. `NOT_APPLICABLE` means the capability does not apply to the classified task. `FAIL` means execution occurred and failed. `SKIPPED_WITH_REASON` is permitted only when the selected verification policy explicitly allows a skip and records the reason. Human-readable summaries display `NOT_APPLICABLE` as `N/A`; executable JSON never stores `N/A` as the canonical value.
 
 ### Stable Context
 
@@ -244,7 +244,7 @@ The current intake evidence supports these fact-confidence and capability-config
 - `workflow-gate.sh`: execute hook checks.
 - `command-runner.sh`: run registry commands and persist evidence.
 - `verify-level.sh`: map verification levels to registered command IDs.
-- `api-smoke.sh`: run declared HTTP cases against a configured base URL; report `NOT_CONFIGURED` when endpoint cases or prerequisites are absent so the verification gate can map that result to `N/A` or `BLOCKED` by change type.
+- `api-smoke.sh`: run declared HTTP cases against a configured base URL; report `NOT_CONFIGURED` when endpoint cases or prerequisites are absent so the verification gate can map that result to `NOT_APPLICABLE` or `BLOCKED` by change type.
 - `done-claim-check.sh`: validate recorded completion evidence.
 
 ### Script Exit Codes
@@ -257,10 +257,12 @@ All workflow scripts use a shared process exit-code contract:
 - `3`: `NOT_CONFIGURED`
 - `4`: `POLICY_VIOLATION`
 - `5`: `INVALID_STATE`
-- `6`: `N/A`
+- `6`: `NOT_APPLICABLE`
 - `7`: `SKIPPED_WITH_REASON`
 
 Every script also writes schema-validated structured result JSON; callers must not infer state by parsing stdout text. A child command's native process exit code is stored separately as `processExitCode`. Any non-zero child exit is mapped to workflow result `FAIL` and runner exit code `1`, so child exit codes cannot be confused with workflow control codes.
+
+Leaf check scripts may return the detailed exit codes above. Final gate scripts translate policy-allowed `NOT_APPLICABLE` or `SKIPPED_WITH_REASON` leaf outcomes into overall `PASS`; otherwise they preserve a blocking non-zero result. CI and native hook adapters call final gate commands rather than raw leaf checks unless they intentionally require every non-PASS leaf result to fail.
 
 Bash scripts remain simple human-facing entry points. JSON parsing, hashing, atomic state updates, structured process execution, evidence writing, and log scrubbing may use one small helper runtime only after that runtime is confirmed for the environment being used. The workflow must not silently assume Python, Node.js, `jq`, or another undeclared dependency.
 
@@ -297,7 +299,7 @@ Existing workflow documents are merged, not replaced wholesale:
 
 ### API Smoke Requiredness
 
-`NOT_CONFIGURED` does not always fail unrelated work. For non-API changes, API smoke may be reported as `N/A` with a reason. For API, auth, permission, persistence, or externally visible behavior changes, missing runnable API cases or prerequisites is `BLOCKED`, not `PASS`. Agents must not claim real API verification when endpoint cases, infrastructure, or server prerequisites are absent.
+`NOT_CONFIGURED` does not always fail unrelated work. For non-API changes, API smoke may be reported as `NOT_APPLICABLE` and displayed as `N/A` with a reason. For API, auth, permission, persistence, or externally visible behavior changes, missing runnable API cases or prerequisites is `BLOCKED`, not `PASS`. Agents must not claim real API verification when endpoint cases, infrastructure, or server prerequisites are absent.
 
 ### Gate Result Mapping
 
@@ -306,7 +308,7 @@ All verification and completion gates apply the same mapping:
 - Applicable command exists and succeeds: `PASS`
 - Applicable command exists and executes unsuccessfully: `FAIL`
 - Required capability is absent or unavailable: command result `NOT_CONFIGURED`, gate result `BLOCKED`
-- Capability is irrelevant to the classified task: `N/A`
+- Capability is irrelevant to the classified task: `NOT_APPLICABLE` (displayed as `N/A`)
 - Policy explicitly permits a skip and records why: `SKIPPED_WITH_REASON`
 
 A missing registry entry is `NOT_CONFIGURED` at capability discovery. If the current task requires it, the verification or completion gate converts the overall result to `BLOCKED`. Agents cannot turn `NOT_CONFIGURED` into a silent skip.
@@ -352,6 +354,8 @@ A missing registry entry is `NOT_CONFIGURED` at capability discovery. If the cur
 
 Each phase must remain usable and testable on its own. Repository-gateway enforcement is not described as complete interception of host tool calls before Phase 3 support exists.
 
+Every delivery phase is decomposed again in its own written specification and implementation plan. Phase 1A begins with schema/JSON skeletons, then Markdown summaries, then repository integration and fixtures. Phase 1B, Phase 2, and Phase 3 must receive similarly bounded task groups before implementation; the design phase names are not single execution tasks.
+
 ## Success Criteria
 
 - Repository structure and reading routes are stored in `context-map.md`.
@@ -366,6 +370,23 @@ Each phase must remain usable and testable on its own. Repository-gateway enforc
 - Completion claims fail without required recorded verification.
 - Raw commands, `eval`, unsanitized evidence publication, and unsupported API-smoke claims are blocked.
 - Existing workflow and QA documents point to the new execution structure without contradictory duplicate rules.
+
+## Approval Note
+
+This design is approved as the baseline for AI Workflow Enforcement. Implementation starts with Phase 1A and must not expand into product feature work.
+
+Phase implementation preserves these constraints:
+
+1. JSON is canonical for executable workflow state.
+2. Markdown summaries are not independent sources of truth.
+3. Invalid schema state fails closed.
+4. Commands are represented by registry IDs and argv arrays.
+5. Raw shell command execution, unchecked dynamic arguments, and `eval` are forbidden.
+6. Per-run raw evidence is stored under `.ai-runs/<run-id>/` and ignored by Git.
+7. Reviewable evidence is scrubbed before publication.
+8. Approval records are audit records only and cannot manufacture approval.
+9. Repository gateway enforcement is supported-path enforcement until native adapters or CI gates exist.
+10. Product features, production operations, deployment, destructive database operations, migrations, seeds, and secret changes remain out of scope.
 
 ## Non-Goals
 
