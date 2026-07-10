@@ -24,10 +24,17 @@ The project should be understandable from repository Markdown files alone. Exter
 2. `ai/document-routing.md`
 3. Run the routing gate and record the owning feature outcome.
 4. If the work is feature-owned, read `specs/{feature}/spec.md` first.
-5. Then read only the relevant `docs/00~09`, `ai/*`, and phase-gated `specs/{feature}/*` files required by `ai/document-routing.md`.
-6. `ai/verification-levels.md` when verification is required.
-7. `ai/qa-gate.md` before completion claims.
-8. `ai/done-claim-template.md` before reporting completion.
+5. When dispatching subagents, read `ai/subagent-workflow.md` and `ai/github-issue-planning.md`, create one GitHub Issue per cohesive, independently closable work item, and initialize `ai/work-logs/issue-{number}/README.md` plus role-specific logs. Use `tracking_status: pending_issue` only after a documented creation failure; keep workflow progress in `status`.
+6. Then read only the relevant `docs/00~09`, `ai/*`, and phase-gated `specs/{feature}/*` files required by `ai/document-routing.md`.
+7. `ai/verification-levels.md` when verification is required.
+8. Complete the pre-QA sections of `ai/issue-completion-checklist.md` after review and evidence are ready.
+9. Run `ai/qa-gate.md`.
+10. Create the completion report from `ai/done-claim-template.md`.
+11. Complete the closure sections of `ai/issue-completion-checklist.md`, then close the Issue only if every closure condition passes.
+
+### Delegated Work Recovery
+
+For interrupted or resumed delegated work, start with `ai/work-logs/index.md`, then the relevant `ai/work-logs/issue-{number}/README.md`, then the latest role-specific agent log. For a temporary GitHub outage, use the documented `ai/work-logs/no-issue/` fallback. Reconciliation must move the full fallback directory to `issue-{number}/` and preserve the prior path in migration history before the eventual Issue can close.
 
 ## Document Map
 
@@ -43,6 +50,21 @@ The project should be understandable from repository Markdown files alone. Exter
 | `08-ui-and-frontend-guidelines.md` | UI rules, forms, tables, loading/error/empty states |
 | `09-quality-operations-and-rules.md` | Testing, security, logging, release, migration, DoD |
 
+## AI Workflow And Delegated Work
+
+| Document | Purpose |
+|---|---|
+| `ai/document-routing.md` | First ownership and reading-order gate for every task |
+| `ai/subagent-workflow.md` | Dispatch, handoff, agent-role, and orchestrator rules |
+| `ai/github-issue-planning.md` | GitHub Issue boundaries, tracking/progress statuses, lifecycle, and reconciliation |
+| `ai/github-issue-template.md` | Required GitHub Issue body for delegated work |
+| `ai/work-log-template.md` | Issue summary and role-specific work-log formats |
+| `ai/work-logs/README.md` | Work-log storage and recovery rules |
+| `ai/work-logs/index.md` | Index of issue-scoped and pending reconciliation work |
+| `ai/issue-completion-checklist.md` | Pre-QA readiness and post-claim GitHub Issue-closure checks |
+| `ai/qa-gate.md` | Final verification and delegated-work evidence gate |
+| `ai/done-claim-template.md` | Evidence-based completion report format |
+
 ## Source of Truth Rules
 
 - Product goals live in `docs/01-product-vision.md`.
@@ -52,6 +74,7 @@ The project should be understandable from repository Markdown files alone. Exter
 - Testing and operations rules live in `docs/09-quality-operations-and-rules.md`.
 - Document routing rules live in `ai/document-routing.md`.
 - AI workflow rules live in `ai/*`.
+- Delegated work uses GitHub Issues for external task tracking and `ai/work-logs/issue-{number}/` for durable execution evidence. `tracking_status` records Issue availability; `status` records workflow progress. A complete pending fallback may pass implementation QA but must be reconciled before an issue-backed claim, unqualified overall `DONE`, reconciliation completion, or Issue closure.
 - Feature-specific execution details live in `specs/*`.
 - Project-wide architecture decisions live in `adr/*`.
 
