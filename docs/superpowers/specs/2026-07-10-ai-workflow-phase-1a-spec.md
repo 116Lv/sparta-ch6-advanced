@@ -2,7 +2,7 @@
 
 ## Status
 
-- Specification status: Draft for review
+- Specification status: Approved for Phase 1A implementation planning
 - Owning feature: none
 - Baseline: `docs/superpowers/specs/2026-07-10-ai-workflow-enforcement-design.md`
 - Scope: Phase 1A-1, Phase 1A-2, and Phase 1A-3 only
@@ -21,6 +21,10 @@ Create the written contract for the machine-readable workflow state that Phase 1
 5. Phase 1A performs static file inspection only. It does not execute Gradle, application, database, infrastructure, API, migration, seed, lint, test, or helper-runtime commands.
 6. No capability is marked `VERIFIED` without successful execution evidence.
 7. The command gateway, command runner, hook scripts, evidence capture, automatic Markdown generation, and automatic schema validation are Phase 1B or later.
+8. Phase 1B targets Python 3 with the `jsonschema` library and Draft 2020-12 validation, but Phase 1A does not execute Python or assume that it is installed.
+9. Phase 1A and Phase 1B support only POSIX/Bash Gradle argv such as `["./gradlew", "test"]`; native `gradlew.bat` support is future scope and `NOT_CONFIGURED`.
+10. AI agents do not execute project build, test, server, Docker, HTTP, migration, seed, or infrastructure commands until the Phase 1B gateway records runtime evidence.
+11. Static file inspection, document editing, and host-approved version-control operations needed to author and review Phase 1A are administrative workflow operations, not project-command verification evidence.
 
 ## Phase Boundaries
 
@@ -203,6 +207,14 @@ Allowed values:
 
 Every schema requires `$schema`, `$id`, and `schemaVersion`. Every object sets `additionalProperties: false`. Nullable fields use an explicit union such as `"type": ["string", "null"]`; missing data is not represented by invented strings.
 
+Schema files use stable URNs with this pattern:
+
+```text
+urn:sparta-ch6-advanced:ai-workflow:schema:<schema-name>:v1
+```
+
+For example, `command-registry.schema.json` uses `$id: urn:sparta-ch6-advanced:ai-workflow:schema:command-registry:v1`. Canonical instance files use a repository-relative `$schema` path and repository-relative `$id`, such as `$schema: ./schemas/command-registry.schema.json` and `$id: ai/command-registry.json`. Public HTTP schema URLs are not used.
+
 ### `command-registry.schema.json`
 
 Top-level required fields:
@@ -261,7 +273,7 @@ Required project fields:
 - `framework`
 - `buildSystem`
 
-Each fact requires `id`, `value`, `confidence`, `evidence`, and `observedAt`. Each port requires `service`, `value`, `confidence`, and `evidence`. Each helper-runtime record requires `environment`, `runtime`, `configurationStatus`, `version`, and `evidence`.
+Each fact requires `id`, `value`, `confidence`, `evidence`, and `observedAt`. Each port requires `service`, `value`, `confidence`, and `evidence`. Each helper-runtime record requires `environment`, `targetRuntime`, `detectedRuntime`, `configurationStatus`, `version`, and `evidence`.
 
 The application port uses value `8080` with confidence `INFERRED`. Helper runtimes remain `UNKNOWN` until a later approved preflight records evidence.
 
@@ -330,6 +342,8 @@ No policy-violation event is created in Phase 1A.
 ## Initial `command-registry.json` Structure
 
 The initial registry contains capability records even when no executable argv is available. The timestamp below illustrates shape only; implementation uses its actual UTC write time.
+
+The Phase 1A/1B command profile is POSIX/Bash only. `verify.unit` uses `["./gradlew", "test"]`. Native Windows `gradlew.bat` execution profiles are not represented and remain future scope. Git Bash on Windows is usable only when the POSIX wrapper path works; Phase 1A does not test that condition.
 
 ```json
 {
@@ -539,12 +553,12 @@ The initial registry contains capability records even when no executable argv is
     { "service": "kafka", "value": 9092, "confidence": "CONFIRMED", "evidence": [{ "kind": "STATIC_FILE", "path": "docker-compose.yml", "claim": "Kafka maps port 9092." }] }
   ],
   "environments": [
-    { "kind": "LOCAL", "configurationStatus": "UNKNOWN", "notes": ["No runtime preflight is executed in Phase 1A."] },
+    { "kind": "LOCAL", "configurationStatus": "UNKNOWN", "notes": ["Python 3 is the Phase 1B target, but no runtime preflight is executed in Phase 1A."] },
     { "kind": "CI", "configurationStatus": "NOT_CONFIGURED", "notes": ["No CI workflow exists; CI enforcement is Phase 3 scope."] }
   ],
   "helperRuntimes": [
-    { "environment": "LOCAL", "runtime": null, "configurationStatus": "UNKNOWN", "version": null, "evidence": [] },
-    { "environment": "CI", "runtime": null, "configurationStatus": "NOT_CONFIGURED", "version": null, "evidence": [] }
+    { "environment": "LOCAL", "targetRuntime": "Python 3", "detectedRuntime": null, "configurationStatus": "UNKNOWN", "version": null, "evidence": [] },
+    { "environment": "CI", "targetRuntime": "Python 3", "detectedRuntime": null, "configurationStatus": "NOT_CONFIGURED", "version": null, "evidence": [] }
   ],
   "commandRegistryRef": "ai/command-registry.json",
   "cacheInvalidationInputs": [
@@ -589,6 +603,14 @@ Rules:
 6. `NOT_APPLICABLE` is displayed as `N/A`; all other enum values are displayed unchanged.
 7. A mismatch is resolved by updating canonical JSON first, then refreshing the summary.
 8. Markdown tables are never parsed as executable state.
+
+The generated section includes this Phase 1A bootstrap notice:
+
+```md
+This section was manually bootstrapped from canonical JSON during Phase 1A.
+Automatic generation and stale-state validation begin in Phase 1B or later.
+This section cannot be changed independently of its canonical JSON source.
+```
 
 ### `command-registry.md` Generated Summary Columns
 
@@ -649,6 +671,10 @@ Phase 1A provides state and registry contracts only. It does not provide a comma
 
 During Phase 1A work, do not execute project commands. Keep `verify.unit` as `CONFIGURED_UNVERIFIED`; keep lint, dedicated integration test, E2E, migration, seed, and API smoke as `NOT_CONFIGURED`; and keep application port 8080 as `INFERRED`.
 
+Until the Phase 1B gateway exists, AI agents must not directly run Gradle, application server, Docker Compose, HTTP/API, migration, seed, or infrastructure commands. There is no temporary direct-command exception for AI agents. Static file inspection, documentation edits, and host-approved version-control operations remain allowed administrative workflow operations.
+
+A command run manually by a human outside the AI workflow does not make a registry entry `VERIFIED`, does not count as workflow evidence, and must not be reported by an agent as a passed check. Only Phase 1B command-runner evidence may transition an entry to `VERIFIED`.
+
 Commands with `NOT_CONFIGURED`, `UNKNOWN`, `STALE`, or `UNCERTAIN` status are not executable. No command may be marked `VERIFIED` without recorded runtime evidence.
 ```
 
@@ -661,16 +687,18 @@ Phase 1A is complete only when all of the following are true:
 - [ ] All seven schemas exist and use Draft 2020-12, `schemaVersion: 1`, closed objects, and the enums in this specification.
 - [ ] `ai/command-registry.json` and `ai/project-state.json` conform by document review to their schemas.
 - [ ] `verify.unit` is `CONFIGURED_UNVERIFIED` with argv `./gradlew test` and static evidence.
+- [ ] Native `gradlew.bat` execution is absent from Phase 1A and recorded as future scope / `NOT_CONFIGURED`.
 - [ ] Lint, dedicated integration test, E2E, migration, seed, and API smoke are `NOT_CONFIGURED` with `argv: null`.
 - [ ] No command or capability is marked `VERIFIED`.
 - [ ] Application port 8080 is `INFERRED`.
-- [ ] Local helper runtime is `UNKNOWN`; CI is `NOT_CONFIGURED` unless pre-existing static evidence proves otherwise without command execution.
+- [ ] Python 3 is recorded as the Phase 1B target runtime; local availability remains `UNKNOWN` and CI remains `NOT_CONFIGURED` unless pre-existing static evidence proves otherwise without command execution.
 - [ ] Markdown files contain Human Policy Notes and generated markers, and their bootstrap summaries match canonical JSON.
 - [ ] `.ai-runs/` is ignored and no raw evidence is committed.
 - [ ] `AGENTS.md` states the canonical reading order and Phase 1A enforcement boundary.
 - [ ] Static valid and invalid fixtures exist for future validation.
 - [ ] No product, command gateway, hook script, command execution, migration, seed, API smoke, or runtime verification change is included.
-- [ ] Review records every unresolved question below before Phase 1B planning.
+- [ ] No human manual command result is accepted as `VERIFIED` AI workflow evidence.
+- [ ] The six decisions under Resolved Decisions are reflected consistently across schemas, canonical examples, Markdown rules, and `AGENTS.md` wording.
 
 Verification for Phase 1A is document and static consistency review only. It must report all project commands as `NOT RUN`.
 
@@ -692,15 +720,19 @@ Phase 1A does not:
 - add native runtime adapters or CI gates
 - change product code, tests, runtime behavior, database state, migrations, seeds, deployment, or secrets
 
-## Open Questions Before Implementation
+## Resolved Decisions
 
-1. **Local helper runtime:** Which helper runtime should Phase 1B standardize on after an approved preflight: Python, Node.js, Java, or another explicitly approved runtime? Phase 1A records `UNKNOWN`.
-2. **POSIX versus Windows argv:** Is `./gradlew` under Git Bash the only supported local execution form, or must the future registry support a Windows `gradlew.bat` variant? Phase 1A records only the baseline POSIX argv requested by the design.
-3. **Schema `$id` format:** Should schema identifiers remain repository-relative paths or use stable project URIs? This does not affect Phase 1A field semantics but must be consistent across all schema files.
-4. **Bootstrap summary review:** Is same-change human review sufficient for Phase 1A generated sections, or should those sections contain only metadata until automatic generation exists?
-5. **Phase 1B validation library:** Which schema-validation implementation will be approved after the helper runtime is selected?
-6. **Interim command policy:** Between Phase 1A and Phase 1B, should repository work be paused when it requires project commands, or may a human explicitly authorize a temporary direct command path? No implicit bypass is allowed.
+1. **Helper runtime:** Phase 1B targets Python 3. Phase 1A records local availability as `UNKNOWN`, performs no preflight, and allows no implicit fallback to Node.js, Java, or `jq`.
+2. **Gradle execution profile:** Phase 1A and Phase 1B register only POSIX/Bash argv such as `["./gradlew", "test"]`. Native Windows `gradlew.bat` support is future scope and `NOT_CONFIGURED`.
+3. **Schema identity:** Schema files use stable project URNs. Canonical instances use repository-relative `$schema` and `$id` values.
+4. **Generated summaries:** Phase 1A manually bootstraps a small summary from canonical JSON in the same reviewed change. Automatic generation and stale validation begin in Phase 1B or later.
+5. **Schema validator:** Phase 1B targets Python `jsonschema` with Draft 2020-12 support and plans `scripts/ai/lib/validate_json.py`. Phase 1A creates schemas and fixtures only.
+6. **Interim command policy:** AI project-command execution is fully paused until the Phase 1B gateway exists. Human manual results are outside the AI workflow and cannot produce `VERIFIED` state or passed-check claims.
+
+## Open Questions
+
+None. The six prior questions are resolved above. Before implementation begins, the reviewer checks only that the implementation plan preserves the resolved decisions, file boundaries, and non-goals in this specification.
 
 ## Review Decision
 
-This document is a draft until the open questions are reviewed. Approval of this specification authorizes only Phase 1A file creation and modification. It does not authorize Phase 1B command gateway implementation or any project command execution.
+This specification is approved for Phase 1A implementation planning. Approval authorizes only the Phase 1A file creation and modification listed here. It does not authorize Phase 1B command gateway implementation or any AI project-command execution.
