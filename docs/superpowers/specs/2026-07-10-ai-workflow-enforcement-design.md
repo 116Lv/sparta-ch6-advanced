@@ -34,6 +34,21 @@ Machine-readable workflow state is stored in dedicated JSON files:
 
 The corresponding Markdown files explain these records and summarize their current status. JSON is canonical for execution. A registry validation command checks its schema and verifies that generated or summarized Markdown does not contradict it; agents must not maintain two independent sources of truth manually.
 
+### JSON Schemas
+
+Executable JSON state must be validated before use.
+
+Required schemas:
+
+- `ai/schemas/command-registry.schema.json`
+- `ai/schemas/project-state.schema.json`
+- `ai/schemas/run.schema.json`
+- `ai/schemas/command-result.schema.json`
+- `ai/schemas/done-claim.schema.json`
+- `ai/schemas/approval-record.schema.json`
+
+Scripts reject invalid or unsupported schema versions instead of attempting best-effort parsing. Schema validation is fail-closed: malformed state, unknown required fields, and incompatible versions block the affected workflow action.
+
 ### Stable Context
 
 - `ai/context-map.md`: repository surfaces, ownership, canonical documents, important paths, generated/excluded paths, and minimal reading routes.
@@ -54,6 +69,8 @@ The corresponding Markdown files explain these records and summarize their curre
 - `ai/agent-handoff.md`: shared context packet for orchestrator and subagent transitions.
 
 The cache key for a command result includes the command ID, argv hash, working directory, hashes of registry-declared relevant input paths, and an allowlisted environment fingerprint. A rerun against the same key requires an allowed reason. File reads are keyed by normalized path and content hash, not modification time alone. Input hashing must remain scoped so cache calculation does not become another full-repository scan.
+
+Cache reuse is allowed only when declared inputs and relevant environment fingerprints are unchanged. If a changed file cannot be mapped confidently to registry-declared inputs, affected cache entries become `STALE` or `UNCERTAIN`. When dependency mapping is incomplete or ambiguous, the workflow prefers re-verification over unsafe reuse.
 
 Per-run evidence directories avoid shared-write conflicts between subagents. Registry and project-state updates are serialized, written to a temporary file, schema-validated, and atomically renamed. Any lock records its owner, run ID, and creation time so stale locks can be detected rather than silently blocking future work.
 
@@ -95,6 +112,12 @@ The command runner resolves the command ID from `ai/command-registry.json`, appl
 
 Configured commands use argv arrays rather than raw shell strings. A structured helper executes with shell expansion disabled. Dynamic arguments are accepted only through a registry-declared parameter schema and are never appended as unchecked shell text.
 
+### File Read And Tool-Call Enforcement Boundary
+
+Repository scripts can gate command execution only when agents use `scripts/ai/command-runner.sh`. They cannot completely intercept repeated file reads, broad searches, direct shell invocations, MCP calls, or other host tool calls without a native runtime adapter.
+
+Until native adapters exist, file-read, search, and tool-call rules are enforced through policy, cache records, handoff records, audit checks, and done-claim review. A detected bypass is recorded as a policy violation and can block completion, but Phase 1 and Phase 2 do not claim complete technical interception. Phase 3 may add native runtime adapters and CI gates where the host supports them.
+
 ### Evidence Storage
 
 Workflow evidence is stored per run under `.ai-runs/<run-id>/`:
@@ -102,17 +125,27 @@ Workflow evidence is stored per run under `.ai-runs/<run-id>/`:
 ```text
 .ai-runs/<run-id>/
   run.json
+  approvals.json
   commands/
     <command-id>.json
   logs/
     <command-id>.stdout.log
     <command-id>.stderr.log
+  done-claim.json
   done-claim.md
 ```
 
 The workflow cache stores only summaries and pointers to evidence. `.ai-runs/` is ignored by Git by default because raw evidence can contain local or sensitive data. Durable repository work logs contain scrubbed summaries, while CI may preserve scrubbed raw evidence as an external artifact.
 
 Command output, HTTP responses, and verification logs are filtered before persistence. Authorization headers, cookies, tokens, passwords, secrets, and sensitive environment values are masked. `.env`, `.env.local`, credential stores, and secret-file contents must not be captured. Capture uses an allowlist where possible because post-processing alone cannot guarantee secret removal.
+
+Raw evidence is local and ignored by Git by default. Reviewable evidence is published only in scrubbed form through `ai/workflow-cache.md`, issue work logs, completion reports, and CI artifact summaries. Reviewers must not be required to inspect unsanitized local logs, and a local evidence pointer is not treated as durable cross-machine evidence unless a scrubbed summary or external artifact reference exists.
+
+### Approval Records
+
+Actions requiring human approval create structured evidence containing approval type, approver, scope, reason, timestamp, related run ID, and an external approval reference when one exists. Per-run approval records are stored at `.ai-runs/<run-id>/approvals.json` and validated against `ai/schemas/approval-record.schema.json`.
+
+An approval record is an audit record, not independent proof of authority. An agent must not manufacture approval by writing `approvedBy: human`. Destructive, production, secret, deployment, and other approval-bound actions still require an actual host-runtime or external human approval event before execution; the record captures that event and its scope.
 
 ## Execution Flow
 
@@ -121,7 +154,7 @@ Command output, HTTP responses, and verification logs are filtered before persis
 3. `PRE_EDIT` validates ownership before a write.
 4. Commands are requested by registry ID through `command-runner.sh`.
 5. `PRE_COMMAND` allows, blocks, or requires a recorded reason.
-6. `POST_COMMAND` persists success or failure in the workflow cache.
+6. `POST_COMMAND` persists detailed success or failure evidence under the run directory and updates only a scrubbed summary pointer in the workflow cache.
 7. Verification runs through `verification-runner` and `verify-level.sh`.
 8. Failures must pass `failure-triage` before rerun.
 9. `PRE_DONE_CLAIM` and `done-claim-check.sh` validate completion evidence.
@@ -146,10 +179,16 @@ The current intake evidence supports these facts and confidence states:
 - `workflow-gate.sh`: execute hook checks.
 - `command-runner.sh`: run registry commands and persist evidence.
 - `verify-level.sh`: map verification levels to registered command IDs.
-- `api-smoke.sh`: run declared HTTP cases against a configured base URL; fail as not configured when endpoint cases or prerequisites are absent.
+- `api-smoke.sh`: run declared HTTP cases against a configured base URL; report `NOT_CONFIGURED` when endpoint cases or prerequisites are absent so the verification gate can map that result to `N/A` or `BLOCKED` by change type.
 - `done-claim-check.sh`: validate recorded completion evidence.
 
 Bash scripts remain simple human-facing entry points. JSON parsing, hashing, atomic state updates, structured process execution, evidence writing, and log scrubbing may use one small helper runtime only after that runtime is confirmed in the local and CI environments. The workflow must not silently assume Python, Node.js, `jq`, or another undeclared dependency.
+
+### Helper Runtime Preflight
+
+Before implementing JSON parsing, hashing, schema validation, atomic writes, structured execution, or log scrubbing, repository intake detects candidate helper runtimes such as Python, Node.js, Java, or `jq`. The selected runtime, executable path or command, version, evidence, and confidence state are recorded in `ai/project-state.json`.
+
+Selection requires availability in both the supported local workflow and CI environment. If no helper runtime is approved and available, affected commands fail as `NOT_CONFIGURED`; scripts do not silently degrade to fragile Markdown parsing or undeclared tooling.
 
 No script performs database reset/drop/truncate, production mutation, deployment, secret changes, or bulk destructive operations.
 
@@ -176,6 +215,10 @@ Existing workflow documents are merged, not replaced wholesale:
 - Unscrubbed or potentially sensitive evidence: block publication, done-claim inclusion, and commit.
 - Runtime bypass: report that repository enforcement was bypassed; native runtime adapters may be added separately.
 
+### API Smoke Requiredness
+
+`NOT_CONFIGURED` does not always fail unrelated work. For non-API changes, API smoke may be reported as `N/A` with a reason. For API, auth, permission, persistence, or externally visible behavior changes, missing runnable API cases or prerequisites is `BLOCKED`, not `PASS`. Agents must not claim real API verification when endpoint cases, infrastructure, or server prerequisites are absent.
+
 ## Verification Strategy
 
 1. Static checks validate required files, headings, registry IDs, hook links, and executable script permissions.
@@ -189,9 +232,13 @@ Existing workflow documents are merged, not replaced wholesale:
 ### Phase 1: Executable Command Boundary
 
 - Add canonical command and project-state JSON schemas and human-readable summaries.
+- Add schemas for registry, state, runs, command results, done claims, and approval records.
 - Add registry-ID command execution without `eval`.
 - Add pre/post command gates, per-run evidence, secret-safe capture, and registry validation.
 - Register only evidenced commands and represent absent capabilities as `NOT_CONFIGURED`.
+- Add `.ai-runs/` to `.gitignore`, publish scrubbed review summaries, and record actual approval events.
+- Add fixture-based schema and command-runner contract tests before registering repository verification as passed.
+- Connect `AGENTS.md` to the gateway while explicitly describing Phase 1 as policy, audit, and supported-path enforcement rather than complete host-tool interception.
 
 ### Phase 2: Workflow Reuse And Completion Gates
 
@@ -210,6 +257,7 @@ Each phase must remain usable and testable on its own. Repository-gateway enforc
 
 - Repository structure and reading routes are stored in `context-map.md`.
 - Known commands and unsupported command categories are canonical in `command-registry.json` and summarized in `command-registry.md`.
+- All executable JSON state is schema-versioned and rejected when invalid or incompatible.
 - Project facts distinguish confirmed, inferred, configured-unverified, verified, not-configured, and unknown states.
 - Cache and tool-call invalidation rules prevent unjustified rediscovery.
 - Repeated procedures are represented by focused skills.
