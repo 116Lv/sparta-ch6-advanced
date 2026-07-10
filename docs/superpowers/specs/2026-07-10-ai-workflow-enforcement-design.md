@@ -46,8 +46,20 @@ Required schemas:
 - `ai/schemas/command-result.schema.json`
 - `ai/schemas/done-claim.schema.json`
 - `ai/schemas/approval-record.schema.json`
+- `ai/schemas/policy-violation.schema.json`
 
 Scripts reject invalid or unsupported schema versions instead of attempting best-effort parsing. Schema validation is fail-closed: malformed state, unknown required fields, and incompatible versions block the affected workflow action.
+
+### Status Contracts
+
+Schemas define separate enums for different concepts instead of one ambiguous universal status.
+
+- Project fact confidence: `CONFIRMED`, `INFERRED`, `UNKNOWN`, `STALE`, `UNCERTAIN`
+- Capability configuration: `CONFIGURED_UNVERIFIED`, `VERIFIED`, `NOT_CONFIGURED`, `STALE`, `UNCERTAIN`
+- Workflow result: `PASS`, `FAIL`, `BLOCKED`, `NOT_CONFIGURED`, `N/A`, `SKIPPED_WITH_REASON`
+- Script control outcome: `PASS`, `FAIL`, `BLOCKED`, `NOT_CONFIGURED`, `POLICY_VIOLATION`, `INVALID_STATE`, `N/A`, `SKIPPED_WITH_REASON`
+
+Values such as `OK`, `DONE`, `PASSED`, `probably-pass`, or `not-needed` are invalid. `NOT_CONFIGURED` means a capability or verification mechanism is not defined. `BLOCKED` means the current task requires that missing or unavailable capability. `N/A` means the capability does not apply to the classified task. `FAIL` means execution occurred and failed. `SKIPPED_WITH_REASON` is permitted only when the selected verification policy explicitly allows a skip and records the reason.
 
 ### Stable Context
 
@@ -56,6 +68,18 @@ Scripts reject invalid or unsupported schema versions instead of attempting best
 - `ai/command-registry.md`: human-readable command policy and generated registry summary.
 - `ai/project-state.json`: canonical stack, package manager, ports, environment files, services, test frameworks, confidence status, and intake fingerprint.
 - `ai/project-state.md`: human-readable project-state explanation and summary.
+
+Canonical JSON and human-authored policy notes have distinct ownership. Markdown summaries use separate sections:
+
+```text
+## Human Policy Notes
+Human-editable explanation.
+
+## Generated State Summary
+Generated from canonical JSON; manual edits are forbidden.
+```
+
+Generated sections include a marker such as `<!-- GENERATED SUMMARY FROM ai/command-registry.json. DO NOT EDIT MANUALLY. -->`. Registry validation rejects a generated summary that is stale or inconsistent with canonical JSON.
 
 `ai/document-routing.md` becomes a thin routing gate. It selects an owning feature and a route ID, then delegates repository-wide path and reading decisions to `context-map.md`.
 
@@ -112,6 +136,43 @@ The command runner resolves the command ID from `ai/command-registry.json`, appl
 
 Configured commands use argv arrays rather than raw shell strings. A structured helper executes with shell expansion disabled. Dynamic arguments are accepted only through a registry-declared parameter schema and are never appended as unchecked shell text.
 
+By default, parameters are disabled:
+
+```json
+{
+  "id": "gradle-test",
+  "argv": ["./gradlew", "test"],
+  "classification": "safe",
+  "parameters": { "allowed": false }
+}
+```
+
+Commands that require parameters declare placeholders and a closed validation schema. Each supplied value becomes one argv element after validation; it is never interpreted by a shell:
+
+```json
+{
+  "id": "gradle-test-class",
+  "argv": ["./gradlew", "test", "--tests", "{{testClass}}"],
+  "classification": "safe",
+  "parameters": {
+    "allowed": true,
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["testClass"],
+      "properties": {
+        "testClass": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.$*]+$"
+        }
+      }
+    }
+  }
+}
+```
+
+Malformed registry schemas and unresolved placeholders produce `INVALID_STATE`. Unknown parameters, missing required parameters, and parameter validation failures produce `POLICY_VIOLATION`. Both outcomes occur before process execution.
+
 ### File Read And Tool-Call Enforcement Boundary
 
 Repository scripts can gate command execution only when agents use `scripts/ai/command-runner.sh`. They cannot completely intercept repeated file reads, broad searches, direct shell invocations, MCP calls, or other host tool calls without a native runtime adapter.
@@ -126,6 +187,8 @@ Workflow evidence is stored per run under `.ai-runs/<run-id>/`:
 .ai-runs/<run-id>/
   run.json
   approvals.json
+  policy-violations/
+    <event-id>.json
   commands/
     <command-id>.json
   logs/
@@ -147,6 +210,8 @@ Actions requiring human approval create structured evidence containing approval 
 
 An approval record is an audit record, not independent proof of authority. An agent must not manufacture approval by writing `approvedBy: human`. Destructive, production, secret, deployment, and other approval-bound actions still require an actual host-runtime or external human approval event before execution; the record captures that event and its scope.
 
+Policy violations use append-only event files validated against `ai/schemas/policy-violation.schema.json`. Each event records type, description, detection time, blocking status, run ID, and related command or tool context. `run.json` contains only a summary and pointers, avoiding concurrent rewrites of one shared violations array.
+
 ## Execution Flow
 
 1. `PRE_TASK` reads cached state and validates fingerprints.
@@ -163,7 +228,7 @@ An approval record is an audit record, not independent proof of authority. An ag
 
 Initial intake is read-only and non-destructive. It inspects tracked repository paths, Gradle wrapper/configuration, application configuration, tests, and existing workflow documents. It does not execute unregistered build, database, deployment, or production commands.
 
-The current intake evidence supports these facts and confidence states:
+The current intake evidence supports these fact-confidence and capability-configuration states:
 
 - `CONFIRMED`: Gradle Wrapper is the package/build entry point.
 - `CONFIRMED`: Java 21 and Spring Boot are configured.
@@ -182,13 +247,28 @@ The current intake evidence supports these facts and confidence states:
 - `api-smoke.sh`: run declared HTTP cases against a configured base URL; report `NOT_CONFIGURED` when endpoint cases or prerequisites are absent so the verification gate can map that result to `N/A` or `BLOCKED` by change type.
 - `done-claim-check.sh`: validate recorded completion evidence.
 
-Bash scripts remain simple human-facing entry points. JSON parsing, hashing, atomic state updates, structured process execution, evidence writing, and log scrubbing may use one small helper runtime only after that runtime is confirmed in the local and CI environments. The workflow must not silently assume Python, Node.js, `jq`, or another undeclared dependency.
+### Script Exit Codes
+
+All workflow scripts use a shared process exit-code contract:
+
+- `0`: `PASS`
+- `1`: `FAIL`
+- `2`: `BLOCKED`
+- `3`: `NOT_CONFIGURED`
+- `4`: `POLICY_VIOLATION`
+- `5`: `INVALID_STATE`
+- `6`: `N/A`
+- `7`: `SKIPPED_WITH_REASON`
+
+Every script also writes schema-validated structured result JSON; callers must not infer state by parsing stdout text. A child command's native process exit code is stored separately as `processExitCode`. Any non-zero child exit is mapped to workflow result `FAIL` and runner exit code `1`, so child exit codes cannot be confused with workflow control codes.
+
+Bash scripts remain simple human-facing entry points. JSON parsing, hashing, atomic state updates, structured process execution, evidence writing, and log scrubbing may use one small helper runtime only after that runtime is confirmed for the environment being used. The workflow must not silently assume Python, Node.js, `jq`, or another undeclared dependency.
 
 ### Helper Runtime Preflight
 
-Before implementing JSON parsing, hashing, schema validation, atomic writes, structured execution, or log scrubbing, repository intake detects candidate helper runtimes such as Python, Node.js, Java, or `jq`. The selected runtime, executable path or command, version, evidence, and confidence state are recorded in `ai/project-state.json`.
+Before implementing JSON parsing, hashing, schema validation, atomic writes, structured execution, or log scrubbing, repository intake detects candidate helper runtimes such as Python, Node.js, Java, or `jq`. The selected runtime, executable path or command, version, evidence, and environment-specific state are recorded in `ai/project-state.json`.
 
-Selection requires availability in both the supported local workflow and CI environment. If no helper runtime is approved and available, affected commands fail as `NOT_CONFIGURED`; scripts do not silently degrade to fragile Markdown parsing or undeclared tooling.
+Runtime state is recorded separately for supported environments. Phase 1 requires a locally approved runtime with state `CONFIRMED`. CI may remain `UNKNOWN` or `NOT_CONFIGURED` until Phase 3, in which case CI enforcement is `BLOCKED` without blocking the local gateway. If no local helper runtime is approved and available, affected local commands fail as `NOT_CONFIGURED`; scripts do not silently degrade to fragile Markdown parsing or undeclared tooling.
 
 No script performs database reset/drop/truncate, production mutation, deployment, secret changes, or bulk destructive operations.
 
@@ -219,6 +299,18 @@ Existing workflow documents are merged, not replaced wholesale:
 
 `NOT_CONFIGURED` does not always fail unrelated work. For non-API changes, API smoke may be reported as `N/A` with a reason. For API, auth, permission, persistence, or externally visible behavior changes, missing runnable API cases or prerequisites is `BLOCKED`, not `PASS`. Agents must not claim real API verification when endpoint cases, infrastructure, or server prerequisites are absent.
 
+### Gate Result Mapping
+
+All verification and completion gates apply the same mapping:
+
+- Applicable command exists and succeeds: `PASS`
+- Applicable command exists and executes unsuccessfully: `FAIL`
+- Required capability is absent or unavailable: command result `NOT_CONFIGURED`, gate result `BLOCKED`
+- Capability is irrelevant to the classified task: `N/A`
+- Policy explicitly permits a skip and records why: `SKIPPED_WITH_REASON`
+
+A missing registry entry is `NOT_CONFIGURED` at capability discovery. If the current task requires it, the verification or completion gate converts the overall result to `BLOCKED`. Agents cannot turn `NOT_CONFIGURED` into a silent skip.
+
 ## Verification Strategy
 
 1. Static checks validate required files, headings, registry IDs, hook links, and executable script permissions.
@@ -229,16 +321,23 @@ Existing workflow documents are merged, not replaced wholesale:
 
 ## Delivery Phases
 
-### Phase 1: Executable Command Boundary
+### Phase 1A: State And Registry Skeleton
 
-- Add canonical command and project-state JSON schemas and human-readable summaries.
-- Add schemas for registry, state, runs, command results, done claims, and approval records.
-- Add registry-ID command execution without `eval`.
-- Add pre/post command gates, per-run evidence, secret-safe capture, and registry validation.
+- Add schemas and enum contracts for registry, state, runs, command results, done claims, approval records, and policy violations.
+- Add canonical `ai/command-registry.json` and `ai/project-state.json` with human-readable Markdown policy and generated summary sections.
+- Detect and record local and CI helper-runtime states without requiring Phase 3 CI availability.
 - Register only evidenced commands and represent absent capabilities as `NOT_CONFIGURED`.
-- Add `.ai-runs/` to `.gitignore`, publish scrubbed review summaries, and record actual approval events.
-- Add fixture-based schema and command-runner contract tests before registering repository verification as passed.
-- Connect `AGENTS.md` to the gateway while explicitly describing Phase 1 as policy, audit, and supported-path enforcement rather than complete host-tool interception.
+- Add `.ai-runs/` to `.gitignore` and connect `AGENTS.md` to the supported workflow path and enforcement boundary.
+- Add schema and generated-summary validation fixtures.
+
+### Phase 1B: Command Gateway
+
+- Add registry-ID command execution without `eval` and enforce parameter schemas.
+- Add `scripts/ai/command-runner.sh`, `scripts/ai/workflow-gate.sh`, and `scripts/ai/done-claim-check.sh`.
+- Add shared exit codes, structured script results, pre/post command gates, and per-run evidence.
+- Add secret-safe capture, policy-violation events, approval audit records, and scrubbed review summaries.
+- Add fixture-based command-runner and gate contract tests before registering repository verification as passed.
+- Keep Phase 1B described as policy, audit, and supported-path enforcement rather than complete host-tool interception.
 
 ### Phase 2: Workflow Reuse And Completion Gates
 
@@ -258,7 +357,7 @@ Each phase must remain usable and testable on its own. Repository-gateway enforc
 - Repository structure and reading routes are stored in `context-map.md`.
 - Known commands and unsupported command categories are canonical in `command-registry.json` and summarized in `command-registry.md`.
 - All executable JSON state is schema-versioned and rejected when invalid or incompatible.
-- Project facts distinguish confirmed, inferred, configured-unverified, verified, not-configured, and unknown states.
+- Project facts, capability configuration, workflow results, and script outcomes use separate closed enums.
 - Cache and tool-call invalidation rules prevent unjustified rediscovery.
 - Repeated procedures are represented by focused skills.
 - Mandatory transitions invoke executable gates.
