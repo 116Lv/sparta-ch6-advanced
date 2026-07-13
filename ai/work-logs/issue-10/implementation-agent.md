@@ -115,3 +115,23 @@ Task 1 is complete. Issue #10 remains in progress for later Phase 3A tasks.
 ### Concerns
 
 - The explicit Bearer documentation allowlist intentionally contains only the case-insensitive exact whole-summary phrase required by the tests. Any surrounding or additional text remains fail-closed.
+
+## Task 3 Final Input-Classification Report (2026-07-13)
+
+### Scope
+
+- Rejected an explicitly empty native-adapter CLI `--repository-root` before path resolution, including a subprocess run from repository CWD.
+- Classified bypass reference/path/read failures as `BLOCKED` with `NATIVE_BYPASS_REFERENCE_INVALID`; loaded record schema and semantic failures remain `FAIL` with `NATIVE_BYPASS_CONTRACT_INVALID`.
+- Replaced lexical `observedAt` ordering with exact RFC3339 UTC timestamp ordering, including variable-length fractional seconds.
+- Preserved the canonical unsupported-host result and did not change the shell wrapper.
+
+### RED
+
+- Focused input-classification command exited `1` as expected before implementation: empty repository root resolved to the repository and returned `UNSUPPORTED`; bypass reference faults returned contract `FAIL`; fractional lifecycle input did not produce the required resolution classification.
+- The first fractional vector revealed the Python 3.9 parser rejects a valid two-digit RFC3339 fraction. The final vector uses `.100Z` and `.1Z`, equivalent instants that sorted differently as strings, and drove the shared RFC3339 parser fix.
+
+### GREEN
+
+- Focused input-classification suite: 5 tests passed.
+- Complete adapter class: `python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v` exited `0`; 39 tests passed.
+- No Gradle, product, application, network, database, or infrastructure commands were run; no workflow evidence was created.

@@ -7,6 +7,7 @@ import codecs
 import ctypes
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
+from decimal import Decimal
 import datetime as dt
 import errno
 import hashlib
@@ -821,12 +822,18 @@ def validate(root, instance, schema_path):
         validate_native_bypass_attempt(instance)
 
 
+def parse_rfc3339_timestamp(value):
+    timestamp, separator, fractional_seconds = value[:-1].partition(".")
+    observed_at = dt.datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=dt.timezone.utc)
+    return observed_at, Decimal("0" if not separator else f"0.{fractional_seconds}")
+
+
 def validate_native_bypass_attempt(instance):
     if instance.get("lifecycle") != "RESOLVED":
         return
 
-    observed_at = dt.datetime.fromisoformat(instance["observedAt"].replace("Z", "+00:00"))
-    resolved_at = dt.datetime.fromisoformat(instance["resolvedAt"].replace("Z", "+00:00"))
+    observed_at = parse_rfc3339_timestamp(instance["observedAt"])
+    resolved_at = parse_rfc3339_timestamp(instance["resolvedAt"])
     if resolved_at < observed_at:
         raise InvalidStateError([
             validation_error(
@@ -5688,6 +5695,10 @@ class NativeBypassContractError(ValueError):
     pass
 
 
+class NativeBypassReferenceError(ValueError):
+    pass
+
+
 def native_summary_has_secret(value):
     if NATIVE_SECRET_BEARING_SUMMARY.search(value) or NATIVE_BASIC_CREDENTIAL.search(value):
         return True
@@ -5801,6 +5812,10 @@ def load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invoca
     try:
         path = native_adapter_fixture_path(root, bypass_attempts_ref)
         payload = read_json(path)
+    except (InvalidStateError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as error:
+        raise NativeBypassReferenceError("native bypass attempt reference is invalid") from error
+
+    try:
         if not isinstance(payload, dict) or set(payload) != {"attempts"} or not isinstance(payload["attempts"], list):
             raise ValueError("native bypass attempts must be a closed attempts object")
 
@@ -5863,7 +5878,7 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
         ]
         if current_resolutions:
             if not any(
-                detection["observedAt"] < resolution["observedAt"]
+                parse_rfc3339_timestamp(detection["observedAt"]) < parse_rfc3339_timestamp(resolution["observedAt"])
                 for detection in prior_detections
                 for resolution in current_resolutions
             ):
@@ -6004,6 +6019,10 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
         return publish_native_adapter_gate_result(
             root, native_adapter_gate_result("FAIL", "NATIVE_BYPASS_CONTRACT_INVALID", fallback_data), 1,
         )
+    except NativeBypassReferenceError:
+        return publish_native_adapter_gate_result(
+            root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_REFERENCE_INVALID", fallback_data), 2,
+        )
     except (InvalidStateError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError):
         return publish_native_adapter_gate_result(
             root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", fallback_data), 2,
@@ -6011,14 +6030,14 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
 
 
 def run_native_adapter_gate_cli(arguments):
-    root = Path(arguments.repository_root).resolve()
-    if not all(
+    if not isinstance(arguments.repository_root, str) or not arguments.repository_root or not all(
         isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
         for value in (arguments.task_key, arguments.gate_invocation_id)
     ) or any(value == "" for value in (arguments.runtime_snapshot, arguments.bypass_attempts) if value is not None):
         result, status = invalid_cli_result("native-adapter-gate")
         print(compact(result))
         return result, status
+    root = Path(arguments.repository_root).resolve()
     if not isinstance(arguments.output, str) or not arguments.output:
         result = native_adapter_gate_result(
             "BLOCKED", "NATIVE_ADAPTER_OUTPUT_PATH_INVALID", native_adapter_fallback_data(),

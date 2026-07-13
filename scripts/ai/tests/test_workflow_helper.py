@@ -7122,6 +7122,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
     def test_native_adapter_cli_semantic_arguments_and_invalid_output_are_structured(self):
         invalid_cases = (
+            ("--repository-root", ""),
             ("--task-key", ""),
             ("--gate-invocation-id", ""),
             ("--runtime-snapshot", ""),
@@ -7150,6 +7151,72 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                     if option == "--output" else "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS"
                 )
                 self.assertEqual((result["result"], result["reason"]), ("BLOCKED", expected_reason))
+
+    def test_native_adapter_cli_rejects_empty_repository_root_before_resolving_from_repo_cwd(self):
+        completed = self.run_native_adapter_cli_subprocess(
+            "--repository-root", "",
+            "--task-key", "issue-10",
+            "--gate-invocation-id", "gate-1",
+            "--output", "-",
+        )
+
+        self.assertEqual(completed.returncode, 2, completed.stderr + completed.stdout)
+        self.assertNotIn("Traceback", completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual((result["result"], result["reason"]), (
+            "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+        ))
+        self.assert_valid("native-adapter-result", result)
+
+    def test_bypass_reference_faults_block_before_loaded_record_validation(self):
+        invalid_json_ref = "ai/fixtures/invalid-bypass-attempts.json"
+        (self.root / invalid_json_ref).write_text("{", encoding="utf-8")
+        unreadable_ref = "ai/fixtures/unreadable-bypass-attempts.json"
+        (self.root / unreadable_ref).mkdir()
+        references = ("", "ai/fixtures/missing-bypass-attempts.json", "../outside.json", invalid_json_ref, unreadable_ref)
+
+        for reference in references:
+            with self.subTest(reference=reference):
+                result, status = self.helper.native_adapter_gate(
+                    self.root, "issue-10", "gate-1", bypass_attempts_ref=reference,
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "NATIVE_BYPASS_REFERENCE_INVALID", 2,
+                ))
+
+    def test_malformed_loaded_bypass_records_remain_contract_failures(self):
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([{"eventId": "missing-fields"}]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "FAIL", "NATIVE_BYPASS_CONTRACT_INVALID", 1,
+        ))
+
+    def test_bypass_lifecycle_compares_equivalent_fractional_second_instants_as_equal(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T01:00:00.100Z",
+        )
+        current_resolved = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T01:00:00.1Z",
+            resolvedAt="2026-07-13T01:00:01Z",
+            resolutionReason="REMEDIATED",
+        )
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, current_resolved]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", 2,
+        ))
 
     def test_native_adapter_shell_wrapper_preserves_explicit_empty_optional_arguments(self):
         shell = REPOSITORY_ROOT / "scripts" / "ai" / "native-adapter-gate.sh"
