@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T03:04:00+09:00
+last_updated: 2026-07-14T07:21:23+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -803,3 +803,99 @@ exited `0`; 119 tests passed in `48.692s` (23 Phase 2C and 96 Phase 3A).
   summary, index, reviewer log, Task 8 replay scope, product/infrastructure
   state, and GitHub state were not changed. Prohibited commands and claims
   remain NOT RUN/not made. Independent rereview remains with the parent.
+
+## Task 8 Update - Phase 3A Task 2 (2026-07-14)
+
+### Routing And Handoff
+
+- `tracking_status: issue_backed`; GitHub Issue #14.
+- `owning_feature: none`; this is repo-wide Phase 3A native trust replay
+  hardening routed through `AGENTS.md`, `ai/document-routing.md`, the approved
+  trust-boundary design and Phase 3A plan, and the exact Task 8 brief.
+- Implementation `skill_ids`: `verification-runner`, `failure-triage`, and
+  `docs-sync`; `handoff_state_ref`: `ai/agent-handoff.json`; reusable context:
+  `ai/workflow-cache.json`, `ai/verification-policy.json`, and
+  `ai/native-runtime-adapters.json`; GitHub reconciliation remains
+  `issue_backed`.
+
+### Changed Files And Decisions
+
+- `scripts/ai/workflow_helper.py`: added strict external ledger destination
+  validation, canonical attestation identity, atomic `O_CREAT | O_EXCL` 0600
+  consumption, file durability, partial-record cleanup, replay mapping, and
+  the durable-before-memory call from the signed snapshot trust chain.
+- `scripts/ai/tests/test_workflow_helper.py`: added two-fresh-process replay,
+  create/fsync failure, stale/future no-consumption, record identity/mode, and
+  post-load ledger symlink-swap coverage.
+- The durable record binds SHA-256 repository-path identity, producer, task,
+  gate/challenge, the signed snapshot `$id`, the gate challenge as nonce, and
+  the signed bypass event-set SHA-256. Its filename is the SHA-256 of the
+  compact sorted canonical record.
+- The external ledger is re-resolved against the repository immediately before
+  consumption. Symlinked roots/components, repository-contained roots,
+  non-directories, unsafe record names, non-regular records, and POSIX roots or
+  records with broader-than-owner permissions fail closed.
+- Signature, task/gate, host/version, freshness, key, callback, event-set, and
+  resolution checks retain their existing order and mapping. Durable
+  consumption occurs only after callback verification; the process-local set
+  is updated only after durable consumption and remains defense in depth.
+- Public CLI arguments and host trust injection remain unchanged and
+  unsupported; no repository ledger or `.ai-runs` state is written.
+
+### Exact TDD And Verification Evidence
+
+- RED command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_signed_attestation_replay_is_blocked_across_processes scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_ledger_creation_and_durability_faults_fail_closed_without_records scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_stale_and_future_attestations_never_touch_durable_ledger scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_ledger_root_symlink_swap_is_blocked_without_repository_write -v`
+- RED result: expected exit `1`; 4 tests ran in `1.612s`, with 3 intended
+  failures and 1 Windows directory-symlink capability skip. A second fresh
+  interpreter returned `PASS`, and injected ledger create and fsync faults both
+  returned `PASS`. The stale/future control was already blocked without ledger
+  writes.
+- Focused GREEN command: the same four-test command after implementation.
+- Focused GREEN result: exit `0`; 4 tests ran in `1.625s`, with the same single
+  Windows directory-symlink capability skip. Cross-process reuse was
+  `BLOCKED / NATIVE_ADAPTER_CHALLENGE_REPLAYED`; create and fsync faults were
+  fail-closed `BLOCKED / NATIVE_ADAPTER_EVALUATION_INVALID`; stale/future
+  attestations left no record.
+- Phase 3A command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -q`
+- Phase 3A result: exit `0`; 100 tests passed in `29.424s`, with 1 Windows
+  directory-symlink capability skip.
+- Required surrounding command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -q`
+- Surrounding result: exit `0`; 123 tests passed in `50.170s`, with the same
+  single capability skip.
+- A compatibility spot-check initially named a nonexistent test method and
+  produced one loader `AttributeError`; failure triage identified the selector
+  typo, corrected it to
+  `test_signed_snapshot_binds_task_and_complete_bypass_event_set`, and the
+  corrected three-test check passed in `1.004s`.
+- `git diff --check` exited `0`; only line-ending conversion warnings were
+  emitted. Repository `.ai-runs` and recursive `__pycache__` remained absent.
+
+### Atomicity, Faults, Commit, And Recovery State
+
+- The record itself is the lock: exactly one contender can create the
+  deterministic path with `O_EXCL`; later contenders map `FileExistsError` to
+  replay without opening or rewriting the accepted record.
+- The winner verifies a regular owner-only record, writes canonical bytes,
+  flushes, and `fsync`s before trusted surfaces can return. Any open, write,
+  flush, metadata, or fsync fault propagates to the gate's fail-closed mapping.
+  A partial record is removed after the descriptor is closed; cleanup failure
+  also remains blocking and leaves no PASS path.
+- Implementation/tests commit: `5d1e1f7`
+  (`fix(ai): persist native attestation replay state`). This role-log append is
+  committed separately; the detailed ignored report is
+  `.superpowers/sdd/task-8-phase3a-report.md`.
+- The directory-symlink swap regression could not execute on this Windows host
+  because symlink creation was unavailable. The runtime path revalidation is
+  implemented and the test remains executable on a capable host. Real host
+  ledger ownership/ACL configuration was not exercised; only temporary
+  external test ledgers were used.
+- Task 9 retains original detection-resolution binding. Summary, index,
+  reviewer log, product/infrastructure files, and GitHub Issue state were not
+  changed. Gradle, build/product tests, server, Docker, HTTP/API, database,
+  migration, seed, deploy, infrastructure, real `.ai-runs`, push, PR, merge,
+  and GitHub Issue mutation were NOT RUN. No registry `VERIFIED`, phase-state,
+  Issue closure, native/CI enforcement, or unqualified completion claim is
+  made. Independent review remains with the parent.
