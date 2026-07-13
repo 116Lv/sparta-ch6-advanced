@@ -179,3 +179,37 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: Static re-review confirms the prior Critical is closed, rollback remains lock-bound and exact-session guarded, and publication remains irreversible. Only the non-blocking report/work-log status drift remains.
+
+## Task 4 Re-review (2026-07-14)
+
+### Spec Compliance
+
+- Verdict: Spec compliant.
+- The prior Important evidence TOCTOU issue is closed: the evidence path is opened once, the read is bounded to 65,536 bytes, and SHA-256, strict JSON parsing, and schema validation all consume the same captured bytes (`scripts/ai/workflow_helper.py:5870-5898`, `scripts/ai/workflow_helper.py:6006-6014`).
+- Canonical evidence-schema mismatch still precedes evidence resolution, malformed and oversized evidence preserve fail-closed reasons, schema validation precedes digest mismatch, and external native leaves are rejected before referenced evidence lookup (`scripts/ai/workflow_helper.py:5932-5943`, `scripts/ai/workflow_helper.py:6001-6014`).
+- The regression coverage exercises second-open replacement, malformed JSON, oversize rejection, schema-before-digest precedence, and native-forgery precedence (`scripts/ai/tests/test_workflow_helper.py:6681-6805`).
+
+### Strengths
+
+- The single-read regression substitutes replacement bytes on a hypothetical second open and asserts that the evidence path is opened exactly once (`scripts/ai/tests/test_workflow_helper.py:6681-6715`).
+- The bounded reader rejects the 65,537th byte before decoding, while retaining the existing duplicate-key, non-finite-number, and malformed-JSON reason mapping (`scripts/ai/workflow_helper.py:5870-5898`).
+- Hashing and validation remain ordered for safe error precedence while sharing the identical immutable byte snapshot (`scripts/ai/workflow_helper.py:6007-6014`).
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+- None. The prior Important TOCTOU finding is closed.
+
+#### Minor (Nice to Have)
+
+- None.
+
+### Assessment
+
+- Task quality: Approved.
+- Reasoning: The evidence reopen path has been removed, the bounded single-read implementation binds parsing, schema validation, and hashing to identical bytes, and the required reason precedence and native boundary remain intact. No findings remain.
