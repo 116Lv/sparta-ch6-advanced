@@ -135,3 +135,24 @@ Task 1 is complete. Issue #10 remains in progress for later Phase 3A tasks.
 - Focused input-classification suite: 5 tests passed.
 - Complete adapter class: `python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v` exited `0`; 39 tests passed.
 - No Gradle, product, application, network, database, or infrastructure commands were run; no workflow evidence was created.
+
+## Task 3 Trust-Boundary Fixes Report (2026-07-13)
+
+### Scope
+
+- Anchored the native adapter wrapper and helper path to the wrapper file location, independent of caller CWD.
+- Applied closed identifier contracts and secret/raw-marker scanning to all bypass-attempt string content, including `runId`, `deduplicationKey`, and every summary value.
+- Replaced terminal `$` SemVer anchors with Python-supported `\Z` in every Phase 3A schema.
+- Required a current-gate `RESOLVED` event to follow a `DETECTED` event from a different gate invocation.
+
+### TDD Evidence
+
+- RED: the focused four-test command exited `1` with the expected failures: terminal-newline SemVer values were accepted by schemas; non-summary secret markers reached lifecycle handling; a same-invocation resolution was only untrusted; and an external CWD made the wrapper load a nonexistent helper.
+- GREEN: the same focused tests passed after the minimal fixes. The wrapper path normalization uses Bash builtins so Git Bash Windows-style paths are anchored correctly.
+- A follow-up RED/GREEN regression preserved the pre-existing 128/128/256 character limits for `taskKey`, `runId`, and `deduplicationKey` after they moved to closed identifier schemas.
+- Full Phase 3A suite: `python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v` exited `0`; 51 tests passed.
+
+### Boundary Notes
+
+- No product commands, runtime evidence, or repository `.ai-runs` artifacts were created.
+- The lifecycle remains fail-closed: a later unpaired detection is unresolved, while a resolution with no earlier detection from a different invocation is invalid.

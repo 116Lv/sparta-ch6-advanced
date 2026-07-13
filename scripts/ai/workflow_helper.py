@@ -5721,6 +5721,16 @@ def native_summary_has_secret(value):
     return False
 
 
+def native_bypass_attempt_has_secret(value):
+    if isinstance(value, str):
+        return native_summary_has_secret(value)
+    if isinstance(value, dict):
+        return any(native_bypass_attempt_has_secret(item) for item in value.values())
+    if isinstance(value, list):
+        return any(native_bypass_attempt_has_secret(item) for item in value)
+    return False
+
+
 def native_adapter_gate_result(result, reason, data):
     phase2c_leaf_result = {
         "PASS": "PASS",
@@ -5842,6 +5852,8 @@ def load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invoca
                 raise ValueError("native bypass attempt task does not match this gate")
             if attempt["gateInvocationId"] != gate_invocation_id and attempt["lifecycle"] != "DETECTED":
                 raise ValueError("native bypass attempt resolution does not match this gate")
+            if native_bypass_attempt_has_secret(attempt):
+                raise ValueError("native bypass attempt contains secret-bearing content")
             for value in attempt["summary"].values():
                 if (len(value) > NATIVE_SUMMARY_MAX_BYTES
                         or len(value.encode("utf-8")) > NATIVE_SUMMARY_MAX_BYTES
@@ -5886,7 +5898,8 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
         if current_resolutions:
             if any(
                 not any(
-                    parse_rfc3339_timestamp(detection["observedAt"])
+                    detection["gateInvocationId"] != gate_invocation_id
+                    and parse_rfc3339_timestamp(detection["observedAt"])
                     < parse_rfc3339_timestamp(resolution["observedAt"])
                     for detection in detections
                 )
@@ -5894,12 +5907,10 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
             ):
                 return "INVALID_RESOLUTION"
             if any(
-                not any(
-                    parse_rfc3339_timestamp(detection["observedAt"])
-                    < parse_rfc3339_timestamp(resolution["observedAt"])
-                    for resolution in current_resolutions
-                )
+                parse_rfc3339_timestamp(detection["observedAt"])
+                >= parse_rfc3339_timestamp(resolution["observedAt"])
                 for detection in detections
+                for resolution in current_resolutions
             ):
                 return "UNRESOLVED"
             resolved_transition = True

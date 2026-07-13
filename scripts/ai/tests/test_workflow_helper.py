@@ -6674,7 +6674,9 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
     def test_native_adapter_version_schemas_require_strict_semver_2(self):
         valid_version = "1.0.0-rc.1+build.5"
-        invalid_versions = ("01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-")
+        invalid_versions = (
+            "01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-", "1.0.0\n",
+        )
         vectors = (
             ("native-runtime-adapters", self.supported_host_policy, ("currentHost", "hostVersion")),
             ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "minimumHostVersion")),
@@ -6730,6 +6732,13 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         result = self.adapter_result()
         result["data"]["phase2CLeafResult"] = "PASS"
         self.assert_invalid("native-adapter-result", result)
+
+    def test_native_bypass_identifier_fields_preserve_their_length_limits(self):
+        for field, maximum_length in (("taskKey", 128), ("runId", 128), ("deduplicationKey", 256)):
+            with self.subTest(field=field):
+                attempt = self.bypass_attempt()
+                attempt[field] = "a" * (maximum_length + 1)
+                self.assert_invalid("native-bypass-attempt", attempt)
 
     def test_bypass_lifecycle_requires_consistent_resolution_and_correlation(self):
         attempt = self.bypass_attempt()
@@ -6899,6 +6908,43 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 )
                 self.assertEqual((result["result"], status), ("FAIL", 1))
 
+    def test_bypass_attempts_reject_secret_markers_in_all_user_controlled_string_fields(self):
+        cases = (
+            ("attemptId", "Authorization", "issue-10", "gate-1"),
+            ("eventId", "Cookie", "issue-10", "gate-1"),
+            ("hostId", "Authorization", "issue-10", "gate-1"),
+            ("reasonCode", "Cookie", "issue-10", "gate-1"),
+            ("taskKey", "Authorization", "Authorization", "gate-1"),
+            ("gateInvocationId", "Cookie", "issue-10", "Cookie"),
+            ("runId", "Authorization: Bearer opaque", "issue-10", "gate-1"),
+            ("deduplicationKey", "Cookie: session=opaque", "issue-10", "gate-1"),
+        )
+        for field, value, task_key, gate_invocation_id in cases:
+            with self.subTest(field=field):
+                attempt = self.valid_attempt(**{field: value})
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    task_key,
+                    gate_invocation_id,
+                    bypass_attempts_ref=self.write_attempts([attempt]),
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "FAIL", "NATIVE_BYPASS_CONTRACT_INVALID", 1,
+                ))
+
+        attempt = self.valid_attempt(summary={
+            "target": "Cookie: session=opaque",
+            "argumentSummary": "redacted structural arguments",
+            "querySummary": "query digest only",
+            "toolPayloadSummary": "payload classification only",
+        })
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
+        )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "FAIL", "NATIVE_BYPASS_CONTRACT_INVALID", 1,
+        ))
+
     def test_bypass_summary_rejects_secret_bearing_strings(self):
         secret_summaries = (
             "Authorization: Bearer abc",
@@ -7047,6 +7093,32 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             bypass_attempts_ref=self.write_attempts([prior_detected, current_resolved]),
         )
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_bypass_resolution_rejects_detection_from_the_same_gate_invocation(self):
+        same_invocation_detection = self.valid_attempt(
+            gateInvocationId="gate-1",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        current_resolution = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            gateInvocationId="gate-1",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T01:00:00Z",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+        )
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([same_invocation_detection, current_resolution]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", 2,
+        ))
 
     def test_mixed_resolution_times_in_one_deduplication_group_are_invalid(self):
         prior_detected = self.valid_attempt(
@@ -7228,7 +7300,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             self.helper.native_semver_key("1.0.0-rc.1+build.5"),
             ((1, 0, 0), 0, ((1, "rc"), (0, 1))),
         )
-        for version in ("01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-"):
+        for version in ("01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-", "1.0.0\n"):
             with self.subTest(version=version):
                 with self.assertRaises(ValueError):
                     self.helper.native_semver_key(version)
@@ -7275,6 +7347,32 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual((result["operation"], result["result"]), ("NATIVE_ADAPTER_GATE", "UNSUPPORTED"))
         self.assertFalse((REPOSITORY_ROOT / ".ai-runs").exists())
+
+    def test_native_adapter_shell_wrapper_anchors_repository_from_another_directory(self):
+        shell = REPOSITORY_ROOT / "scripts" / "ai" / "native-adapter-gate.sh"
+        bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        if not bash.is_file():
+            bash = Path("bash")
+        other_repository = self.root / "other-repository"
+        other_repository.mkdir()
+
+        completed = subprocess.run(
+            [
+                str(bash), str(shell), "--task-key", "issue-10", "--gate-invocation-id", "gate-1", "--output", "-",
+            ],
+            cwd=str(other_repository),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 6, completed.stderr + completed.stdout)
+        result = json.loads(completed.stdout)
+        self.assertEqual((result["operation"], result["result"]), ("NATIVE_ADAPTER_GATE", "UNSUPPORTED"))
+        self.assertFalse((other_repository / ".ai-runs").exists())
 
     def test_native_adapter_cli_semantic_arguments_and_invalid_output_are_structured(self):
         invalid_cases = (

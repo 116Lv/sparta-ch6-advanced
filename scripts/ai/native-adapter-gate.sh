@@ -34,7 +34,14 @@ else
   exit 2
 fi
 
-ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+SCRIPT_PATH=${BASH_SOURCE[0]//\\//}
+case "$SCRIPT_PATH" in
+  */*) SCRIPT_DIR=${SCRIPT_PATH%/*} ;;
+  *) SCRIPT_DIR=. ;;
+esac
+SCRIPT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR" && pwd -P)
+ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd -P)
+HELPER="$ROOT/scripts/ai/workflow_helper.py"
 cd "$ROOT"
 probe='import sys; from jsonschema import Draft202012Validator, FormatChecker; print(f"{sys.version_info.major}|{Draft202012Validator.__name__}|{FormatChecker.__name__}")'
 for candidate_name in python3 python; do
@@ -47,7 +54,7 @@ for candidate_name in python3 python; do
   result=$("$candidate" -c "$probe" 2>/dev/null || true)
   case "$result" in
     3\|Draft202012Validator\|FormatChecker)
-      command=("$candidate" scripts/ai/workflow_helper.py native-adapter-gate --repository-root "$ROOT" --task-key "$task_key" --gate-invocation-id "$gate_invocation_id")
+      command=("$candidate" "$HELPER" native-adapter-gate --repository-root "$ROOT" --task-key "$task_key" --gate-invocation-id "$gate_invocation_id")
       if [ "$runtime_snapshot_supplied" = true ]; then
         command+=(--runtime-snapshot "$runtime_snapshot")
       fi
