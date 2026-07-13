@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T07:21:23+09:00
+last_updated: 2026-07-14T07:41:33+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -899,3 +899,72 @@ exited `0`; 119 tests passed in `48.692s` (23 Phase 2C and 96 Phase 3A).
   and GitHub Issue mutation were NOT RUN. No registry `VERIFIED`, phase-state,
   Issue closure, native/CI enforcement, or unqualified completion claim is
   made. Independent review remains with the parent.
+
+### Task 8 Review Fix - Pinned Directory Durability (2026-07-14)
+
+- Independent review found two Important defects in `5d1e1f7`: file fsync did
+  not durably publish the parent directory entry, and validation returned a
+  pathname that was traversed again during record creation. `O_NOFOLLOW` on the
+  final record did not protect swappable ancestor components.
+- Platform inspection showed CPython 3.9.6 on this Windows host has an empty
+  `os.supports_dir_fd`; `os.open` and `os.unlink` have no `dir_fd`, while
+  `O_DIRECTORY` and `O_NOFOLLOW` are absent. Production therefore has no
+  pathname fallback: a supported-host attestation is fail-closed
+  `BLOCKED / NATIVE_ADAPTER_EVALUATION_INVALID` when safe handle-relative
+  ledger primitives are unavailable. Canonical public unsupported-host behavior
+  is unchanged and never reaches ledger consumption.
+- On a supported POSIX backend, consumption now validates the owner-only 0700
+  root, opens it with `O_DIRECTORY | O_NOFOLLOW`, and compares the pinned
+  handle's directory type, device, inode, owner, and mode with the pre-open
+  metadata. The digest filename is created only relative to that handle with
+  `O_CREAT | O_EXCL | O_NOFOLLOW`; its handle must be a regular owner-only 0600
+  file owned by the evaluator user.
+- Publication now writes with progress checking, fsyncs and closes the record,
+  fsyncs the pinned directory entry, and closes the directory before returning
+  success. Partial cleanup closes the record, unlinks only relative to the
+  pinned directory, and fsyncs the directory after removal. Any write, file
+  fsync, file close, publication directory fsync, directory close, relative
+  unlink, or cleanup directory fsync uncertainty remains blocking and never
+  returns PASS.
+- The process-local challenge set is still checked and updated only after the
+  durable consumer returns. It remains defense in depth, not authority.
+- Existing supported-host contract tests on this backend use a unittest-only
+  consumption stub registered and restored through per-test `setUp` cleanup.
+  Ledger-security tests explicitly stop the stub and invoke production through
+  focused mocks for only the missing handle-relative OS primitives. The stub
+  is not present in production, HostNativeTrust, the public CLI, or any
+  repository policy input.
+
+Exact review-fix RED command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_safe_ledger_backend_is_required_for_supported_host_pass scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_safe_ledger_pins_directory_and_fsyncs_published_entry scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_simultaneous_safe_ledger_contenders_yield_one_pass_and_one_replay scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_safe_ledger_publication_and_cleanup_faults_never_return_success scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_safe_ledger_rejects_validation_to_open_directory_swap -v`
+exited `1`; 5 tests ran in `0.498s` with 11 intended failures including fault
+subtests. The safe-backend guard was absent, record creation used a pathname,
+simultaneous safe contenders could not yield one PASS/one replay, durability
+and cleanup paths violated the handle-relative contract, and the directory
+identity swap was not detected.
+
+Focused GREEN used the same command and exited `0`; 5 tests passed in `0.624s`.
+After adding the capable-host real swap branch, the final focused run exited
+`0`; 5 tests passed in `0.628s`. The simultaneous gate test produced exactly
+one PASS and one `NATIVE_ADAPTER_CHALLENGE_REPLAYED` BLOCKED result. The fault
+matrix covered write, record fsync, record close, publication directory fsync,
+directory close, relative cleanup unlink, and cleanup directory fsync.
+
+- Phase 3A command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -q`
+- Phase 3A result: exit `0`; 104 tests passed in `28.663s`, with 2 explicit
+  Windows platform skips (real handle-relative cross-process execution and
+  directory symlink creation).
+- Pre-commit Phase 2C + Phase 3A result: exit `0`; 127 tests passed in
+  `49.676s`, with the same 2 skips.
+- Post-commit Phase 2C + Phase 3A result: exit `0`; 127 tests passed in
+  `49.690s`, with the same 2 skips.
+- `git diff --check` exited `0` with line-ending warnings only; repository
+  `.ai-runs` and recursive `__pycache__` remained absent.
+- Review-fix implementation/tests commit: `9089b17`
+  (`fix(ai): pin native replay ledger directory`). This evidence append is
+  committed separately and the ignored Task 8 report carries the same review
+  evidence.
+- No summary, index, reviewer log, Task 9, product/infrastructure, public CLI,
+  canonical host state, or GitHub state was changed. Prohibited commands and
+  claims remain NOT RUN/not made. Independent rereview remains with the parent.
