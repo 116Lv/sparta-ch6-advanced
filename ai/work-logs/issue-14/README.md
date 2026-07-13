@@ -2,12 +2,12 @@
 issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 tracking_status: issue_backed
-status: in_review
+status: in_progress
 owning_feature: "none"
-current_owner: reviewer
+current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T08:46:12+09:00
+last_updated: 2026-07-14T08:54:55+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -72,12 +72,12 @@ Issue #14 tracks the isolated implementation and review of the four approved tru
 
 ## Agent Logs
 
-- [Implementation Agent](implementation-agent.md): complete
+- [Implementation Agent](implementation-agent.md): in_progress
 - [Reviewer](reviewer.md): in_progress
 
 ## Current State
 
-All Phase 1B-3, Phase 2, and Phase 3A tasks are approved. Phase 3B contract/enforcement status separation is implemented and awaiting independent review.
+All Phase 1B-3, Phase 2, and Phase 3A tasks are approved. Phase 3B contract/enforcement separation requires two Important review fixes: unmixed result/wrapper identities and corrected owner documentation.
 
 ## Decisions
 
@@ -96,12 +96,12 @@ All Phase 1B-3, Phase 2, and Phase 3A tasks are approved. Phase 3B contract/enfo
 
 ## Next Handoff
 
-- Next role: reviewer
+- Next role: implementation-agent
 - Required reading:
   - [Trust-boundary design](../../docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md)
   - [Phase 3B execution plan](../../docs/superpowers/plans/2026-07-14-phase-3b-ci-provenance-hardening.md)
 - Context links:
   - [Implementation role log](implementation-agent.md)
   - [Reviewer role log](reviewer.md)
-- Remaining work: Independently review global Task 10 / Phase 3B local Task 1.
-- Evidence required: Spec compliance and adversarial review of contract versus enforcement status and NOT_CONFIGURED/BLOCKED required-check behavior.
+- Remaining work: Fix the two Important Task 10 review findings, then re-review.
+- Evidence required: RED/GREEN regressions for separated result/wrapper identities and exact owner-document check/status semantics.
