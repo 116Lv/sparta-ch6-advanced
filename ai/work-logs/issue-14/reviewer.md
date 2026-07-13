@@ -315,3 +315,34 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: Final static re-review confirms deep host-trust immutability, external authority ownership, canonical unsupported repository state, and public CLI isolation. No issues remain for Task 7.
+
+## Task 8 Final Re-review (2026-07-14)
+
+### Spec Compliance
+
+- Verdict: Spec compliant.
+- Durable replay identity remains closed over repository, producer, task, gate, attestation ID, nonce, and signed event-set digest.
+- The production backend now pins an owner-only ledger directory handle, verifies type/device/inode/owner/mode identity, and creates only the digest basename with handle-relative `O_CREAT | O_EXCL | O_NOFOLLOW`.
+- Publication writes with progress checks, fsyncs and closes the record, fsyncs the pinned directory entry, and blocks on any record or directory close/sync uncertainty.
+- Failure cleanup closes the record, unlinks relative to the same pinned directory, and fsyncs the directory after removal.
+- Unsupported Windows production backends fail closed without a pathname fallback; canonical public unsupported-host behavior remains unchanged.
+- Real POSIX cross-process and directory-symlink tests are recorded as explicit Windows platform skips, while simultaneous contention, directory identity mismatch, durability, cleanup, and fault controls execute through focused primitive-level tests.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+- None. The prior directory durability and validation-to-open path-race findings are closed.
+
+#### Minor (Nice to Have)
+
+- None.
+
+### Assessment
+
+- Task quality: Approved.
+- Reasoning: Final static re-review confirms pinned handle-relative publication, durable directory synchronization, fail-closed cleanup, precise replay mapping, and transparent platform-skip evidence. No issues remain for Task 8.
