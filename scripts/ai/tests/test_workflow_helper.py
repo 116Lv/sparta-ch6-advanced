@@ -7571,6 +7571,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
 class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567"
     SCHEMA_PATHS = {
+        "host-native-trust": "ai/schemas/host-native-trust.schema.json",
         "native-runtime-adapters": "ai/schemas/native-runtime-adapters.schema.json",
         "native-bypass-attempt": "ai/schemas/native-bypass-attempt.schema.json",
         "native-runtime-snapshot": "ai/schemas/native-runtime-snapshot.schema.json",
@@ -7979,6 +7980,243 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         })
         return policy
 
+    def repository_policy(self):
+        policy = self.supported_host_policy()
+        policy["supportedHosts"] = []
+        return policy
+
+    @staticmethod
+    def host_trust_descriptor(fingerprint="a" * 64, *, host_id="codex-desktop",
+                              producer_id="example.native.adapter", minimum_version="1.0.0"):
+        return {
+            "$schema": "ai/schemas/host-native-trust.schema.json",
+            "schemaVersion": 1,
+            "producerId": producer_id,
+            "hostId": host_id,
+            "minimumHostVersion": minimum_version,
+            "adapterVersionRange": ">=1.0.0 <2.0.0",
+            "ed25519PublicKeyFingerprint": fingerprint,
+            "surfaces": ["COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL"],
+        }
+
+    def external_host_trust(self, fingerprint, *, host_id="codex-desktop",
+                            producer_id="example.native.adapter", host_version="1.0.0"):
+        descriptor = self.host_trust_descriptor(
+            fingerprint, host_id=host_id, producer_id=producer_id,
+        )
+        probe = {
+            "hostId": host_id,
+            "hostVersion": host_version,
+            "versionProvenance": "PROBED",
+            "producerId": producer_id,
+            "observedAt": dt.datetime.now(dt.timezone.utc).replace(
+                microsecond=0,
+            ).isoformat().replace("+00:00", "Z"),
+        }
+        descriptor_path, probe_path, ledger_root = self.write_external_host_documents(
+            descriptor, probe,
+        )
+        return self.helper.load_host_native_trust(
+            self.root, descriptor_path, probe_path, ledger_root,
+        )
+
+    def write_external_host_documents(self, descriptor=None, probe=None):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        if descriptor is None:
+            descriptor = self.host_trust_descriptor()
+        if probe is None:
+            probe = {
+                "hostId": descriptor["hostId"],
+                "hostVersion": descriptor["minimumHostVersion"],
+                "versionProvenance": "PROBED",
+                "producerId": descriptor["producerId"],
+                "observedAt": dt.datetime.now(dt.timezone.utc).replace(
+                    microsecond=0,
+                ).isoformat().replace("+00:00", "Z"),
+            }
+        descriptor_path = root / "descriptor.json"
+        probe_path = root / "probe.json"
+        ledger_root = root / "ledger"
+        descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+        probe_path.write_text(json.dumps(probe), encoding="utf-8")
+        ledger_root.mkdir()
+        return descriptor_path, probe_path, ledger_root
+
+    def test_repository_supported_host_and_temporary_key_cannot_promote_public_cli(self):
+        snapshot, fingerprint, _ = self.signed_snapshot()
+        copied_root = self.copy_repository_fixture()
+        policy = self.supported_policy_with_fingerprint(fingerprint)
+        (copied_root / "ai/native-runtime-adapters.json").write_text(
+            json.dumps(policy), encoding="utf-8",
+        )
+        snapshot_ref = "ai/fixtures/runtime-snapshot.json"
+        (copied_root / snapshot_ref).write_text(json.dumps(snapshot), encoding="utf-8")
+
+        completed = self.run_native_adapter_cli_subprocess(
+            "--repository-root", str(copied_root),
+            "--task-key", "issue-10",
+            "--gate-invocation-id", "gate-signed",
+            "--runtime-snapshot", snapshot_ref,
+            "--output", "-",
+        )
+
+        self.assertNotEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        result = json.loads(completed.stdout)
+        self.assertNotEqual(result["result"], "PASS")
+
+    def test_repository_probed_host_fixture_remains_host_unsupported(self):
+        policy = self.supported_host_policy()
+        policy["supportedHosts"] = []
+        policy["currentHost"].update({
+            "hostId": "supported-host",
+            "hostVersion": "1.2.3",
+            "versionProvenance": "PROBED",
+        })
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-probed-repository",
+            policy_ref=self.write_fixture("repository-probed-policy.json", policy),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "UNSUPPORTED", "HOST_UNSUPPORTED", 6,
+        ))
+
+    def test_external_host_context_can_verify_signed_snapshot_in_lower_level_evaluator(self):
+        snapshot, fingerprint, _ = self.signed_snapshot()
+        host_trust = self.external_host_trust(fingerprint)
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-signed",
+            runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
+            host_trust=host_trust,
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
+        self.assertEqual(
+            {surface["status"] for surface in result["data"]["trustedSurfaces"]},
+            {"ENFORCED"},
+        )
+
+    def test_host_native_trust_rejects_closed_contract_and_identity_mutations(self):
+        descriptor_cases = {
+            "unknown-key": lambda value: value.update({"unexpected": True}),
+            "identifier": lambda value: value.update({"producerId": "bad producer"}),
+            "minimum-version": lambda value: value.update({"minimumHostVersion": "01.0.0"}),
+            "version-range": lambda value: value.update({"adapterVersionRange": ">=2.0.0 <1.0.0"}),
+            "fingerprint": lambda value: value.update({"ed25519PublicKeyFingerprint": "A" * 64}),
+            "surfaces": lambda value: value.update({"surfaces": ["COMMAND"] * 4}),
+        }
+        for name, mutate in descriptor_cases.items():
+            with self.subTest(document="descriptor", name=name):
+                descriptor = self.host_trust_descriptor()
+                mutate(descriptor)
+                paths = self.write_external_host_documents(descriptor=descriptor)
+                with self.assertRaises((self.helper.InvalidStateError, ValueError)):
+                    self.helper.load_host_native_trust(self.root, *paths)
+
+        valid_descriptor = self.host_trust_descriptor()
+        valid_probe = {
+            "hostId": valid_descriptor["hostId"],
+            "hostVersion": "1.0.0",
+            "versionProvenance": "PROBED",
+            "producerId": valid_descriptor["producerId"],
+            "observedAt": "2026-07-14T01:00:00Z",
+        }
+        probe_cases = {
+            "unknown-key": lambda value: value.update({"unexpected": True}),
+            "host-identity": lambda value: value.update({"hostId": "other-host"}),
+            "producer-identity": lambda value: value.update({"producerId": "other-producer"}),
+            "unprobed": lambda value: value.update({"versionProvenance": "UNPROBED"}),
+            "version": lambda value: value.update({"hostVersion": "1.0"}),
+            "timestamp": lambda value: value.update({"observedAt": "2026-02-30T01:00:00Z"}),
+        }
+        for name, mutate in probe_cases.items():
+            with self.subTest(document="probe", name=name):
+                probe = dict(valid_probe)
+                mutate(probe)
+                paths = self.write_external_host_documents(valid_descriptor, probe)
+                with self.assertRaises((self.helper.InvalidStateError, ValueError)):
+                    self.helper.load_host_native_trust(self.root, *paths)
+
+    def test_host_native_trust_paths_must_be_external_regular_and_non_symlinked(self):
+        descriptor_path, probe_path, ledger_root = self.write_external_host_documents()
+        repository_descriptor = self.root / "ai/fixtures/host-trust.json"
+        repository_descriptor.write_bytes(descriptor_path.read_bytes())
+        with self.assertRaises(ValueError):
+            self.helper.load_host_native_trust(
+                self.root, repository_descriptor, probe_path, ledger_root,
+            )
+
+        repository_ledger = self.root / "ai/fixtures/host-ledger"
+        repository_ledger.mkdir()
+        with self.assertRaises(ValueError):
+            self.helper.load_host_native_trust(
+                self.root, descriptor_path, probe_path, repository_ledger,
+            )
+
+        symlink_path = descriptor_path.with_name("descriptor-link.json")
+        try:
+            symlink_path.symlink_to(descriptor_path)
+        except OSError:
+            return
+        with self.assertRaises(ValueError):
+            self.helper.load_host_native_trust(
+                self.root, symlink_path, probe_path, ledger_root,
+            )
+
+    def test_compiled_trust_checks_survive_weakened_repository_schemas(self):
+        copied_root = self.copy_repository_fixture()
+        descriptor_schema_path = copied_root / self.SCHEMA_PATHS["host-native-trust"]
+        descriptor_schema = json.loads(descriptor_schema_path.read_text(encoding="utf-8"))
+        descriptor_schema["additionalProperties"] = True
+        descriptor_schema["properties"]["producerId"] = {}
+        descriptor_schema_path.write_text(json.dumps(descriptor_schema), encoding="utf-8")
+        descriptor = self.host_trust_descriptor()
+        descriptor["producerId"] = "bad producer"
+        paths = self.write_external_host_documents(descriptor=descriptor)
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.load_host_native_trust(copied_root, *paths)
+
+        policy_schema_path = copied_root / self.SCHEMA_PATHS["native-runtime-adapters"]
+        policy_schema = json.loads(policy_schema_path.read_text(encoding="utf-8"))
+        policy_schema["properties"]["supportedHosts"] = {"type": "array"}
+        policy_schema_path.write_text(json.dumps(policy_schema), encoding="utf-8")
+        (copied_root / "ai/native-runtime-adapters.json").write_text(
+            json.dumps(self.supported_host_policy()), encoding="utf-8",
+        )
+        result, status = self.helper.native_adapter_gate(
+            copied_root, "issue-10", "gate-weakened-schema",
+        )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
+        ))
+
+    def test_public_native_adapter_cli_rejects_all_trust_and_fixture_arguments(self):
+        for option in (
+            "--descriptor", "--probe", "--ledger-root", "--policy",
+            "--runtime-snapshot", "--bypass-attempts",
+        ):
+            with self.subTest(option=option):
+                completed = self.run_native_adapter_cli_subprocess(
+                    "--repository-root", str(self.root),
+                    "--task-key", "issue-10",
+                    "--gate-invocation-id", "gate-public-boundary",
+                    option, "ai/fixtures/injected.json",
+                    "--output", "-",
+                )
+                self.assertEqual(completed.returncode, 2, completed.stderr + completed.stdout)
+                result = json.loads(completed.stdout)
+                self.assertEqual((result["result"], result["reason"]), (
+                    "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+                ))
+
     def test_runtime_snapshot_schema_and_canonicalizer_are_available(self):
         self.assertIn("native-runtime-snapshot", self.helper.SCHEMA_NAMES)
         self.assertTrue((REPOSITORY_ROOT / self.SCHEMA_PATHS["native-runtime-snapshot"]).is_file())
@@ -8033,9 +8271,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "gate-event-set",
             runtime_snapshot_ref=self.write_fixture("snapshot-event-set.json", snapshot),
             bypass_attempts_ref=self.write_fixture("attempts-event-set.json", {"attempts": altered}),
-            policy_ref=self.write_fixture(
-                "policy-event-set.json", self.supported_policy_with_fingerprint(fingerprint),
-            ),
+            host_trust=self.external_host_trust(fingerprint),
         )
         self.assertEqual((altered_result["result"], altered_result["reason"], altered_status), (
             "BLOCKED", "NATIVE_BYPASS_EVENT_SET_MISMATCH", 2,
@@ -8050,9 +8286,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "gate-event-set",
             runtime_snapshot_ref=self.write_fixture("snapshot-wrong-task.json", wrong_task),
             bypass_attempts_ref=self.write_fixture("attempts-wrong-task.json", {"attempts": attempts}),
-            policy_ref=self.write_fixture(
-                "policy-wrong-task.json", self.supported_policy_with_fingerprint(fingerprint),
-            ),
+            host_trust=self.external_host_trust(fingerprint),
         )
         self.assertEqual((task_result["result"], task_result["reason"], task_status), (
             "BLOCKED", "NATIVE_ADAPTER_TASK_MISMATCH", 2,
@@ -8098,7 +8332,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 "issue-10",
                 "gate-signed",
                 runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
-                policy_ref=self.write_supported_policy(fingerprint),
+                host_trust=self.external_host_trust(fingerprint),
             )
         self.assertEqual((result["result"], result["reason"], status), (
             "BLOCKED", "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE", 2,
@@ -8122,14 +8356,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     canonicalizer(invalid)
 
-    def test_temporary_supported_policy_accepts_real_signed_enforced_snapshot(self):
+    def test_external_host_trust_accepts_real_signed_enforced_snapshot(self):
         snapshot, fingerprint, _ = self.signed_snapshot()
-        policy_ref = self.write_supported_policy(fingerprint)
+        host_trust = self.external_host_trust(fingerprint)
         missing, missing_status = self.helper.native_adapter_gate(
             self.root,
             "issue-10",
             "gate-missing",
-            policy_ref=policy_ref,
+            host_trust=host_trust,
         )
         self.assertEqual((missing["result"], missing_status), ("NOT_CONFIGURED", 3))
         self.assert_trusted_not_enforced(missing)
@@ -8139,7 +8373,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "issue-10",
             "gate-signed",
             runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
-            policy_ref=policy_ref,
+            host_trust=host_trust,
         )
         self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
         self.assertEqual({surface["status"] for surface in result["data"]["claimedSurfaces"]}, {"ENFORCED"})
@@ -8160,7 +8394,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "gate-resolution",
             runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
             bypass_attempts_ref=self.write_attempts(attempts),
-            policy_ref=self.write_supported_policy(fingerprint),
+            host_trust=self.external_host_trust(fingerprint),
         )
 
         self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
@@ -8197,10 +8431,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                         f"attempts-{name}.json",
                         {"attempts": attempts},
                     ),
-                    policy_ref=self.write_fixture(
-                        f"policy-binding-{name}.json",
-                        self.supported_policy_with_fingerprint(fingerprint),
-                    ),
+                    host_trust=self.external_host_trust(fingerprint),
                 )
                 self.assertEqual((result["result"], result["reason"], status), (
                     "BLOCKED", expected_reason, 2,
@@ -8245,10 +8476,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                         f"resolution-attempts-{name}.json",
                         {"attempts": self.resolved_transition_attempts(gate_invocation_id)},
                     ),
-                    policy_ref=self.write_fixture(
-                        f"resolution-policy-{name}.json",
-                        self.supported_policy_with_fingerprint(fingerprint),
-                    ),
+                    host_trust=self.external_host_trust(fingerprint),
                 )
                 self.assertEqual((result["result"], result["reason"], status), (
                     "BLOCKED", expected_reason, 2,
@@ -8271,23 +8499,24 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "issue-10",
             "gate-resolution",
             bypass_attempts_ref=attempts_ref,
-            policy_ref=self.write_supported_policy(),
+            host_trust=self.external_host_trust("a" * 64),
         )
         self.assertEqual((no_snapshot["result"], no_snapshot["reason"], no_snapshot_status), (
             "BLOCKED", "NATIVE_BYPASS_RESOLUTION_SNAPSHOT_REQUIRED", 2,
         ))
 
-        unprobed_policy = self.supported_policy_with_fingerprint("a" * 64)
-        unprobed_policy["currentHost"].update({
-            "hostVersion": None,
-            "versionProvenance": "UNPROBED",
-        })
+        valid_trust = self.external_host_trust("a" * 64)
+        unprobed = dict(valid_trust.probe)
+        unprobed.update({"hostVersion": None, "versionProvenance": "UNPROBED"})
+        unprobed_trust = self.helper.HostNativeTrust(
+            valid_trust.descriptor, unprobed, valid_trust.ledger_root,
+        )
         unprobed, unprobed_status = self.helper.native_adapter_gate(
             self.root,
             "issue-10",
             "gate-resolution",
             bypass_attempts_ref=attempts_ref,
-            policy_ref=self.write_fixture("resolution-unprobed-policy.json", unprobed_policy),
+            host_trust=unprobed_trust,
         )
         self.assertEqual((unprobed["result"], unprobed["reason"], unprobed_status), (
             "BLOCKED", "NATIVE_BYPASS_RESOLUTION_HOST_UNSUPPORTED", 2,
@@ -8302,7 +8531,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "gate-unresolved",
             runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
             bypass_attempts_ref=self.write_attempts([unresolved]),
-            policy_ref=self.write_supported_policy(fingerprint),
+            host_trust=self.external_host_trust(fingerprint),
         )
 
         self.assertEqual((result["result"], result["reason"], status), (
@@ -8365,10 +8594,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                     "issue-10",
                     gate_invocation_id,
                     runtime_snapshot_ref=self.write_fixture(f"runtime-{name}.json", snapshot),
-                    policy_ref=self.write_fixture(
-                        f"policy-{name}.json",
-                        self.supported_policy_with_fingerprint(policy_fingerprint),
-                    ),
+                    host_trust=self.external_host_trust(policy_fingerprint),
                 )
                 self.assertEqual((result["result"], result["reason"], status), (
                     "BLOCKED", expected_reason, 2,
@@ -8382,14 +8608,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     def test_replayed_challenge_and_missing_crypto_block_without_trusted_enforcement(self):
         snapshot, fingerprint, _ = self.signed_snapshot(gate_invocation_id="gate-one-use")
         snapshot_ref = self.write_temp_snapshot(snapshot)
-        policy_ref = self.write_supported_policy(fingerprint)
+        host_trust = self.external_host_trust(fingerprint)
         first, first_status = self.helper.native_adapter_gate(
-            self.root, "issue-10", "gate-one-use", snapshot_ref, policy_ref=policy_ref,
+            self.root, "issue-10", "gate-one-use", snapshot_ref, host_trust=host_trust,
         )
         self.assertEqual((first["result"], first_status), ("PASS", 0))
 
         replay, replay_status = self.helper.native_adapter_gate(
-            self.root, "issue-10", "gate-one-use", snapshot_ref, policy_ref=policy_ref,
+            self.root, "issue-10", "gate-one-use", snapshot_ref, host_trust=host_trust,
         )
         self.assertEqual((replay["result"], replay["reason"], replay_status), (
             "BLOCKED", "NATIVE_ADAPTER_CHALLENGE_REPLAYED", 2,
@@ -8403,9 +8629,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 "issue-10",
                 "gate-no-crypto",
                 runtime_snapshot_ref=self.write_fixture("runtime-no-crypto.json", crypto_snapshot),
-                policy_ref=self.write_fixture(
-                    "policy-no-crypto.json", self.supported_policy_with_fingerprint(crypto_fingerprint),
-                ),
+                host_trust=self.external_host_trust(crypto_fingerprint),
             )
         self.assertEqual((unavailable["result"], unavailable["reason"], unavailable_status), (
             "BLOCKED", "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE", 2,
@@ -8422,7 +8646,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
         for provenance, version in (("UNPROBED", "1.0.0"), ("PROBED", None)):
             with self.subTest(provenance=provenance, version=version):
-                policy = self.supported_host_policy()
+                policy = self.repository_policy()
                 policy["currentHost"].update({"versionProvenance": provenance, "hostVersion": version})
                 self.assert_invalid("native-runtime-adapters", policy)
 
@@ -8430,7 +8654,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         result["data"].update({"versionProvenance": "PROBED", "hostVersion": None})
         self.assert_invalid("native-adapter-result", result)
 
-        unprobed = self.supported_policy_with_fingerprint("a" * 64)
+        unprobed = self.repository_policy()
         unprobed["currentHost"].update({"versionProvenance": "UNPROBED", "hostVersion": None})
         result, status = self.helper.native_adapter_gate(
             self.root,
@@ -8444,11 +8668,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
     def test_repository_supported_host_policy_cannot_declare_runtime_enforcement(self):
         policy = self.supported_host_policy()
-        self.assert_valid("native-runtime-adapters", policy)
-        policy["supportedHosts"][0]["surfaces"][0]["status"] = "ENFORCED"
         self.assert_invalid("native-runtime-adapters", policy)
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                self.root, policy, "ai/schemas/native-runtime-adapters.schema.json",
+            )
 
     def test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed(self):
+        self.assertIn("host-native-trust", self.helper.SCHEMA_NAMES)
         self.assertIn("native-runtime-adapters", self.helper.SCHEMA_NAMES)
         self.assertIn("native-bypass-attempt", self.helper.SCHEMA_NAMES)
         self.assertIn("native-adapter-result", self.helper.SCHEMA_NAMES)
@@ -8544,7 +8771,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 self.assertIn(surface["reasonCode"], document)
 
     def test_closed_native_adapter_schemas_accept_complete_supported_host_vectors(self):
-        self.assert_valid("native-runtime-adapters", self.supported_host_policy())
+        self.assert_valid("native-runtime-adapters", self.repository_policy())
+        self.assert_valid("host-native-trust", self.host_trust_descriptor())
         self.assert_valid("native-bypass-attempt", self.bypass_attempt())
         self.assert_valid("native-adapter-result", self.adapter_result())
 
@@ -8626,8 +8854,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-", "1.0.0\n",
         )
         vectors = (
-            ("native-runtime-adapters", self.supported_host_policy, ("currentHost", "hostVersion")),
-            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "minimumHostVersion")),
+            ("native-runtime-adapters", self.repository_policy, ("currentHost", "hostVersion")),
+            ("host-native-trust", self.host_trust_descriptor, ("minimumHostVersion",)),
             ("native-bypass-attempt", self.bypass_attempt, ("hostVersion",)),
             ("native-bypass-attempt", self.bypass_attempt, ("adapterVersion",)),
             ("native-adapter-result", self.adapter_result, ("data", "hostVersion")),
@@ -8656,10 +8884,10 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
     def test_native_adapter_schema_patterns_use_portable_exact_end_and_reject_terminal_newlines(self):
         vectors = (
-            ("native-runtime-adapters", self.supported_host_policy, ("updatedAt",), "2026-07-13T01:00:00Z"),
-            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "producerId"), "example.native.adapter"),
-            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "ed25519PublicKeyFingerprint"), "a" * 64),
-            ("native-runtime-adapters", self.supported_host_policy, ("currentHost", "probeRefs", 0), "ai/native-runtime-adapters.md"),
+            ("native-runtime-adapters", self.repository_policy, ("updatedAt",), "2026-07-13T01:00:00Z"),
+            ("host-native-trust", self.host_trust_descriptor, ("producerId",), "example.native.adapter"),
+            ("host-native-trust", self.host_trust_descriptor, ("ed25519PublicKeyFingerprint",), "a" * 64),
+            ("native-runtime-adapters", self.repository_policy, ("currentHost", "probeRefs", 0), "ai/native-runtime-adapters.md"),
             ("native-bypass-attempt", self.bypass_attempt, ("eventId",), "event-1"),
             ("native-bypass-attempt", self.bypass_attempt, ("observedAt",), "2026-07-13T01:00:00Z"),
             ("native-bypass-attempt", self.bypass_attempt, ("summary", "argumentSummary", "sha256"), "a" * 64),
@@ -8693,6 +8921,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assert_invalid("native-adapter-result", result)
 
         for schema_name in (
+            "host-native-trust",
             "native-runtime-adapters",
             "native-bypass-attempt",
             "native-adapter-result",
@@ -8813,14 +9042,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 self.assertIn("native-runtime-adapter", change["requiredChecks"])
 
     def test_every_change_type_aggregates_explicit_native_adapter_state(self):
-        supported_root = self.copy_repository_fixture()
-        supported_policy = self.supported_host_policy()
-        supported_policy["supportedHosts"][0].update({
+        forged_root = self.copy_repository_fixture()
+        forged_policy = self.supported_host_policy()
+        forged_policy["supportedHosts"][0].update({
             "hostId": "codex-desktop",
             "minimumHostVersion": "1.0.0",
         })
-        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
-            json.dumps(supported_policy), encoding="utf-8",
+        (forged_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(forged_policy), encoding="utf-8",
         )
         policy = self.helper.validate_repository_instance(self.root, "ai/verification-policy.json")
         for change in policy["changeTypes"]:
@@ -8837,16 +9066,19 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 self.assertEqual((native["rawResult"], native["mappedResult"], native["reason"]), (
                     "NOT_APPLICABLE", "NOT_APPLICABLE", "HOST_UNSUPPORTED",
                 ))
-            with self.subTest(change_type=change_type, host="supported"):
+            with self.subTest(change_type=change_type, host="forged-repository-policy"):
                 blocked_result, blocked_status = self.helper.verification_gate(
-                    supported_root,
+                    forged_root,
                     change_type,
                     "verification-level",
                     task_key="issue-10",
                     gate_invocation_id=f"gate-b-{change_type}",
                 )
                 self.assertEqual((blocked_result["result"], blocked_status), ("BLOCKED", 2))
-                self.assertEqual(self.native_check(blocked_result)["rawResult"], "NOT_CONFIGURED")
+                self.assertEqual(
+                    (self.native_check(blocked_result)["rawResult"], self.native_check(blocked_result)["reason"]),
+                    ("BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID"),
+                )
 
     def test_unsupported_host_pass_is_explicitly_repository_qualified(self):
         explicit = self.write_bound_verification_leaf_results([
@@ -9009,21 +9241,21 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 ))
                 self.assertEqual(self.native_check(result)["reason"], "NATIVE_ADAPTER_EVALUATION_INVALID")
 
-    def test_early_native_not_configured_preserves_blocking_for_inapplicable_entry_point(self):
-        supported_root = self.copy_repository_fixture()
-        supported_policy = self.supported_host_policy()
-        supported_policy["supportedHosts"][0].update({
+    def test_early_forged_repository_trust_preserves_blocking_for_inapplicable_entry_point(self):
+        forged_root = self.copy_repository_fixture()
+        forged_policy = self.supported_host_policy()
+        forged_policy["supportedHosts"][0].update({
             "hostId": "codex-desktop",
             "minimumHostVersion": "1.0.0",
         })
-        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
-            json.dumps(supported_policy), encoding="utf-8",
+        (forged_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(forged_policy), encoding="utf-8",
         )
         bypass_ref = "ai/fixtures/empty-bypass-attempts.json"
-        (supported_root / bypass_ref).write_text(json.dumps({"attempts": []}), encoding="utf-8")
+        (forged_root / bypass_ref).write_text(json.dumps({"attempts": []}), encoding="utf-8")
 
         result, status = self.helper.verification_gate(
-            supported_root,
+            forged_root,
             "documentation-only",
             "api-smoke",
             task_key="issue-10",
@@ -9036,8 +9268,9 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         ))
         native = self.native_check(result)
         self.assertEqual((native["rawResult"], native["mappedResult"]), (
-            "NOT_CONFIGURED", "BLOCKED",
+            "BLOCKED", "BLOCKED",
         ))
+        self.assertEqual(native["reason"], "NATIVE_ADAPTER_EVALUATION_INVALID")
 
     def test_early_native_not_applicable_preserves_inapplicable_entry_point_result(self):
         snapshot_ref = self.write_temp_snapshot({
@@ -9088,14 +9321,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(calls, [((snapshot_ref, bypass_ref), {})])
 
     def test_verification_gate_evaluates_native_leaf_once_without_optional_inputs_before_inapplicability(self):
-        supported_root = self.copy_repository_fixture()
-        supported_policy = self.supported_host_policy()
-        supported_policy["supportedHosts"][0].update({
+        forged_root = self.copy_repository_fixture()
+        forged_policy = self.supported_host_policy()
+        forged_policy["supportedHosts"][0].update({
             "hostId": "codex-desktop",
             "minimumHostVersion": "1.0.0",
         })
-        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
-            json.dumps(supported_policy), encoding="utf-8",
+        (forged_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(forged_policy), encoding="utf-8",
         )
         original_leaf = self.helper.native_adapter_phase2c_leaf
         calls = []
@@ -9129,7 +9362,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(self.native_check(unsupported_result)["reason"], "HOST_UNSUPPORTED")
 
         blocked_result, blocked_status = self.helper.verification_gate(
-            supported_root,
+            forged_root,
             "documentation-only",
             "api-smoke",
             task_key="issue-10",
@@ -9138,11 +9371,11 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual((blocked_result["result"], blocked_result["reason"], blocked_status), (
             "BLOCKED", "VERIFICATION_GATE_BLOCKED", 2,
         ))
-        self.assertEqual(self.native_check(blocked_result)["reason"], "NATIVE_ADAPTER_NOT_CONFIGURED")
+        self.assertEqual(self.native_check(blocked_result)["reason"], "NATIVE_ADAPTER_EVALUATION_INVALID")
         self.assertEqual(calls, [
             (self.root, (None, None), {}),
             (self.root, (None, None), {}),
-            (supported_root, (None, None), {}),
+            (forged_root, (None, None), {}),
         ])
 
     def test_native_adapter_phase2c_leaf_validates_correlation_fail_closed(self):
@@ -9759,7 +9992,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual((evaluated["surface"], evaluated["commandIntent"]), ("COMMAND", "FILE_READ"))
 
     def test_supported_host_fixture_states_are_completion_blocking_and_never_pass(self):
-        policy_ref = self.write_supported_policy()
+        host_trust = self.external_host_trust("a" * 64)
         states = {
             "missing": None,
             "stale": {"fresh": False, "surfaces": self.supported_surfaces()},
@@ -9781,19 +10014,15 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                     "issue-10",
                     "gate-1",
                     self.write_temp_snapshot(snapshot) if snapshot is not None else None,
-                    policy_ref=policy_ref,
+                    host_trust=host_trust,
                 )
                 self.assertIn((result["result"], status), (("NOT_CONFIGURED", 3), ("BLOCKED", 2)))
                 self.assertNotEqual(result["result"], "PASS")
 
     def test_prerelease_host_version_does_not_satisfy_release_minimum(self):
-        policy = self.supported_host_policy()
-        policy["currentHost"]["hostVersion"] = "1.0.0-beta"
-        policy["supportedHosts"][0]["hostId"] = "codex-desktop"
-        policy["supportedHosts"][0]["minimumHostVersion"] = "1.0.0"
-        policy_ref = self.write_fixture("prerelease-native-runtime-adapters.json", policy)
+        host_trust = self.external_host_trust("a" * 64, host_version="1.0.0-beta")
         result, status = self.helper.native_adapter_gate(
-            self.root, "issue-10", "gate-1", policy_ref=policy_ref,
+            self.root, "issue-10", "gate-1", host_trust=host_trust,
         )
         self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
 
@@ -9807,26 +10036,21 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.helper.native_semver_key(version)
 
-    def test_malformed_policy_versions_block_before_not_configured_evaluation(self):
+    def test_malformed_repository_host_versions_block_before_unsupported_evaluation(self):
         invalid_versions = ("01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-")
-        for path in (("currentHost", "hostVersion"), ("supportedHosts", 0, "minimumHostVersion")):
-            for version in invalid_versions:
-                with self.subTest(path=path, version=version):
-                    policy = self.supported_host_policy()
-                    policy["supportedHosts"][0]["hostId"] = policy["currentHost"]["hostId"]
-                    target = policy
-                    for segment in path[:-1]:
-                        target = target[segment]
-                    target[path[-1]] = version
-                    result, status = self.helper.native_adapter_gate(
-                        self.root,
-                        "issue-10",
-                        "gate-1",
-                        policy_ref=self.write_fixture("malformed-native-runtime-adapters.json", policy),
-                    )
-                    self.assertEqual((result["result"], result["reason"], status), (
-                        "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
-                    ))
+        for version in invalid_versions:
+            with self.subTest(version=version):
+                policy = self.repository_policy()
+                policy["currentHost"]["hostVersion"] = version
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    "gate-1",
+                    policy_ref=self.write_fixture("malformed-native-runtime-adapters.json", policy),
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
+                ))
 
     def test_native_adapter_gate_shell_wrapper_is_static_and_fixed_argument(self):
         shell = REPOSITORY_ROOT / "scripts" / "ai" / "native-adapter-gate.sh"

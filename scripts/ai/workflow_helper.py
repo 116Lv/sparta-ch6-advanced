@@ -114,6 +114,7 @@ SCHEMA_NAMES = (
     "done-claim",
     "gateway-result",
     "helper-runtime-evidence",
+    "host-native-trust",
     "native-adapter-result",
     "native-bypass-attempt",
     "native-runtime-adapters",
@@ -842,6 +843,10 @@ def validate(root, instance, schema_path):
     validate_phase_1b2_contract(instance, schema_path)
     if schema_path == "ai/schemas/native-bypass-attempt.schema.json":
         validate_native_bypass_attempt(instance)
+    elif schema_path == "ai/schemas/native-runtime-adapters.schema.json":
+        validate_native_runtime_adapters_semantics(instance)
+    elif schema_path == "ai/schemas/host-native-trust.schema.json":
+        validate_host_native_trust_descriptor(instance)
 
 
 def parse_rfc3339_timestamp(value):
@@ -6321,6 +6326,7 @@ NATIVE_SNAPSHOT_MAX_AGE_SECONDS = 300
 NATIVE_JSON_SAFE_INTEGER = 9007199254740991
 NATIVE_CONSUMED_CHALLENGES = set()
 NATIVE_ADAPTER_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+NATIVE_KEY_FINGERPRINT = re.compile(r"[a-f0-9]{64}\Z")
 NATIVE_SEMVER = re.compile(
     r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
     r"(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -6339,6 +6345,17 @@ NATIVE_BASIC_CREDENTIAL = re.compile(r"\bbasic\s+\S+", re.IGNORECASE)
 NATIVE_BEARER_CREDENTIAL = re.compile(r"\bbearer\s+\S+", re.IGNORECASE)
 NATIVE_FORBIDDEN_RAW_CONTENT_LABEL = re.compile(r"\b(?:authorization|cookies?)\b", re.IGNORECASE)
 NATIVE_ALLOWED_BEARER_DOCUMENTATION = frozenset(("bearer token documentation",))
+NATIVE_RFC3339_TIMESTAMP = re.compile(
+    r"[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T"
+    r"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?Z\Z"
+)
+
+
+@dataclass(frozen=True)
+class HostNativeTrust:
+    descriptor: dict
+    probe: dict
+    ledger_root: Path
 
 
 class NativeBypassContractError(ValueError):
@@ -6466,16 +6483,184 @@ def native_adapter_fixture_path(root, reference, *, canonical=False):
     return resolve_repository_file(root, normalized)
 
 
-def native_adapter_supported_host(policy):
-    current_host = policy["currentHost"]
-    if current_host["versionProvenance"] != "PROBED" or current_host["hostVersion"] is None:
+def native_semantic_error(code, instance_path, message):
+    raise InvalidStateError([
+        validation_error(code, instance_path=instance_path, message=message)
+    ])
+
+
+def validate_native_runtime_adapters_semantics(policy):
+    if policy.get("supportedHosts") != []:
+        native_semantic_error(
+            "REPOSITORY_NATIVE_TRUST_FORBIDDEN",
+            "/supportedHosts",
+            "repository policy cannot declare a supported host",
+        )
+    surfaces = policy.get("currentHost", {}).get("surfaces")
+    if (
+        not isinstance(surfaces, list)
+        or len(surfaces) != len(NATIVE_ADAPTER_SURFACES)
+        or {surface.get("surface") for surface in surfaces if isinstance(surface, dict)}
+        != set(NATIVE_ADAPTER_SURFACES)
+        or any(
+            not isinstance(surface, dict) or surface.get("status") != "UNSUPPORTED"
+            for surface in surfaces
+        )
+    ):
+        native_semantic_error(
+            "REPOSITORY_NATIVE_SURFACE_BASELINE_INVALID",
+            "/currentHost/surfaces",
+            "repository policy must retain exactly four unsupported host surfaces",
+        )
+
+
+def native_adapter_version_range_bounds(version_range):
+    match = re.fullmatch(r">=(\S+) <(\S+)", version_range) if isinstance(version_range, str) else None
+    if match is None:
+        raise ValueError("native adapter version range is invalid")
+    minimum, maximum = (native_semver_key(item) for item in match.groups())
+    if minimum >= maximum:
+        raise ValueError("native adapter version range must be increasing")
+    return minimum, maximum
+
+
+def validate_host_native_trust_descriptor(descriptor):
+    required = {
+        "$schema",
+        "schemaVersion",
+        "producerId",
+        "hostId",
+        "minimumHostVersion",
+        "adapterVersionRange",
+        "ed25519PublicKeyFingerprint",
+        "surfaces",
+    }
+    try:
+        valid = (
+            isinstance(descriptor, dict)
+            and set(descriptor) == required
+            and descriptor["$schema"] == "ai/schemas/host-native-trust.schema.json"
+            and descriptor["schemaVersion"] == 1
+            and all(
+                isinstance(descriptor[field], str)
+                and NATIVE_ADAPTER_IDENTIFIER.fullmatch(descriptor[field])
+                for field in ("producerId", "hostId")
+            )
+            and NATIVE_KEY_FINGERPRINT.fullmatch(descriptor["ed25519PublicKeyFingerprint"])
+            and isinstance(descriptor["surfaces"], list)
+            and len(descriptor["surfaces"]) == len(NATIVE_ADAPTER_SURFACES)
+            and set(descriptor["surfaces"]) == set(NATIVE_ADAPTER_SURFACES)
+        )
+        native_semver_key(descriptor["minimumHostVersion"])
+        native_adapter_version_range_bounds(descriptor["adapterVersionRange"])
+    except (KeyError, TypeError, ValueError):
+        valid = False
+    if not valid:
+        native_semantic_error(
+            "HOST_NATIVE_TRUST_DESCRIPTOR_INVALID",
+            "",
+            "host-native trust descriptor violates the compiled trust contract",
+        )
+
+
+def validate_host_native_trust_probe(probe):
+    required = {"hostId", "hostVersion", "versionProvenance", "producerId", "observedAt"}
+    try:
+        valid = (
+            isinstance(probe, dict)
+            and set(probe) == required
+            and all(
+                isinstance(probe[field], str)
+                and NATIVE_ADAPTER_IDENTIFIER.fullmatch(probe[field])
+                for field in ("hostId", "producerId")
+            )
+            and probe["versionProvenance"] == "PROBED"
+            and isinstance(probe["observedAt"], str)
+            and NATIVE_RFC3339_TIMESTAMP.fullmatch(probe["observedAt"])
+        )
+        native_semver_key(probe["hostVersion"])
+        parse_rfc3339_timestamp(probe["observedAt"])
+    except (KeyError, TypeError, ValueError):
+        valid = False
+    if not valid:
+        native_semantic_error(
+            "HOST_NATIVE_TRUST_PROBE_INVALID",
+            "",
+            "authoritative host probe violates the compiled trust contract",
+        )
+
+
+def resolve_external_host_trust_path(repository_root, path, *, directory):
+    repository_root = Path(repository_root).resolve(strict=True)
+    candidate = Path(os.path.abspath(os.fspath(path)))
+    try:
+        if any(item.is_symlink() for item in (candidate, *candidate.parents)):
+            raise ValueError("host trust paths cannot contain symlinks")
+        resolved = candidate.resolve(strict=True)
+        try:
+            resolved.relative_to(repository_root)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("host trust paths must be outside the repository")
+        if directory and not resolved.is_dir():
+            raise ValueError("host trust ledger root must be a directory")
+        if not directory and not resolved.is_file():
+            raise ValueError("host trust document must be a regular file")
+        return resolved
+    except OSError as error:
+        raise ValueError("host trust path is unavailable") from error
+
+
+def load_host_native_trust(repository_root, descriptor_path, probe_path, ledger_root) -> HostNativeTrust:
+    descriptor_file = resolve_external_host_trust_path(
+        repository_root, descriptor_path, directory=False,
+    )
+    probe_file = resolve_external_host_trust_path(
+        repository_root, probe_path, directory=False,
+    )
+    resolved_ledger_root = resolve_external_host_trust_path(
+        repository_root, ledger_root, directory=True,
+    )
+    descriptor = read_json(descriptor_file)
+    probe = read_json(probe_file)
+    validate(repository_root, descriptor, "ai/schemas/host-native-trust.schema.json")
+    validate_host_native_trust_probe(probe)
+    if (
+        probe["producerId"] != descriptor["producerId"]
+        or probe["hostId"] != descriptor["hostId"]
+    ):
+        native_semantic_error(
+            "HOST_NATIVE_TRUST_IDENTITY_MISMATCH",
+            "",
+            "authoritative probe identity must match its host trust descriptor",
+        )
+    return HostNativeTrust(descriptor, probe, resolved_ledger_root)
+
+
+def native_host_baseline_surfaces(descriptor):
+    return [
+        {
+            "surface": surface,
+            "status": "NOT_CONFIGURED",
+            "reasonCode": "ADAPTER_CONFIGURATION_REQUIRED",
+        }
+        for surface in descriptor["surfaces"]
+    ]
+
+
+def native_adapter_supported_host(policy, host_trust=None):
+    if host_trust is None:
         return None
-    current_version = native_semver_key(current_host["hostVersion"])
-    for supported_host in policy["supportedHosts"]:
-        minimum_version = native_semver_key(supported_host["minimumHostVersion"])
-        if supported_host["hostId"] == current_host["hostId"] and current_version >= minimum_version:
-            return supported_host
-    return None
+    probe = host_trust.probe
+    descriptor = host_trust.descriptor
+    if probe["versionProvenance"] != "PROBED":
+        return None
+    if probe["hostId"] != descriptor["hostId"]:
+        return None
+    if native_semver_key(probe["hostVersion"]) < native_semver_key(descriptor["minimumHostVersion"]):
+        return None
+    return descriptor
 
 
 def native_semver_key(version):
@@ -6695,7 +6880,7 @@ def native_snapshot_freshness_reason(observed_at):
 
 
 def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, task_key, gate_invocation_id):
-    baseline_surfaces = supported_host["surfaces"]
+    baseline_surfaces = native_host_baseline_surfaces(supported_host)
     try:
         validate(root, snapshot, "ai/schemas/native-runtime-snapshot.schema.json")
         native_snapshot_canonical_bytes(snapshot)
@@ -6781,17 +6966,20 @@ def native_unsupported_runtime_snapshot_contract(snapshot):
 
 
 def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref=None, bypass_attempts_ref=None,
-                        policy_ref="ai/native-runtime-adapters.json"):
+                        policy_ref="ai/native-runtime-adapters.json",
+                        host_trust: "HostNativeTrust | None" = None):
     root = Path(root).resolve()
     fallback_data = native_adapter_fallback_data()
     try:
         policy_path = native_adapter_fixture_path(root, policy_ref, canonical=True)
         policy = validate_repository_instance(root, policy_path)
-        current_host = policy["currentHost"]
-        supported_host = native_adapter_supported_host(policy)
+        supported_host = native_adapter_supported_host(policy, host_trust)
+        current_host = host_trust.probe if supported_host is not None else policy["currentHost"]
         repository_only_qualification = supported_host is None
         baseline_surfaces = (
-            current_host["surfaces"] if supported_host is None else supported_host["surfaces"]
+            current_host["surfaces"]
+            if supported_host is None
+            else native_host_baseline_surfaces(supported_host)
         )
         fallback_data = native_adapter_data(
             current_host,
@@ -6949,7 +7137,7 @@ def run_native_adapter_gate_cli(arguments):
     if not isinstance(arguments.repository_root, str) or not arguments.repository_root or not all(
         isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
         for value in (arguments.task_key, arguments.gate_invocation_id)
-    ) or any(value == "" for value in (arguments.runtime_snapshot, arguments.bypass_attempts) if value is not None):
+    ):
         result, status = invalid_cli_result("native-adapter-gate")
         print(compact(result))
         return result, status
@@ -6964,8 +7152,7 @@ def run_native_adapter_gate_cli(arguments):
         root,
         arguments.task_key,
         arguments.gate_invocation_id,
-        arguments.runtime_snapshot,
-        arguments.bypass_attempts,
+        host_trust=None,
     )
     output_status = write_resolve_output(root, arguments.output, result)
     if output_status != 0:
@@ -7365,8 +7552,6 @@ def main():
     native_adapter_gate_parser.add_argument("--repository-root", required=True)
     native_adapter_gate_parser.add_argument("--task-key", required=True)
     native_adapter_gate_parser.add_argument("--gate-invocation-id", required=True)
-    native_adapter_gate_parser.add_argument("--runtime-snapshot")
-    native_adapter_gate_parser.add_argument("--bypass-attempts")
     native_adapter_gate_parser.add_argument("--output", required=True)
     ci_evidence_gate_parser = subparsers.add_parser("ci-evidence-gate", add_help=False)
     ci_evidence_gate_parser.add_argument("--repository-root", required=True)
