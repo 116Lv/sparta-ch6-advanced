@@ -5999,15 +5999,6 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
     root = Path(root).resolve()
     fallback_data = native_adapter_fallback_data()
     try:
-        if not all(
-            isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
-            for value in (task_key, gate_invocation_id)
-        ):
-            return publish_native_adapter_gate_result(
-                root,
-                native_adapter_gate_result("BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS", fallback_data),
-                2,
-            )
         policy_path = native_adapter_fixture_path(root, policy_ref, canonical=True)
         policy = validate_repository_instance(root, policy_path)
         current_host = policy["currentHost"]
@@ -6058,6 +6049,16 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                     return publish_native_adapter_gate_result(
                         root, native_adapter_gate_result("BLOCKED", snapshot_error, data), 2,
                     )
+
+        if not all(
+            isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
+            for value in (task_key, gate_invocation_id)
+        ):
+            return publish_native_adapter_gate_result(
+                root,
+                native_adapter_gate_result("BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS", data),
+                2,
+            )
 
         lifecycle_state = native_bypass_lifecycle_state(attempts, gate_invocation_id)
         if lifecycle_state == "UNRESOLVED":
@@ -6173,11 +6174,22 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                 "POLICY_VIOLATION", "UNKNOWN_ENTRY_POINT", None,
             ), 4)
         change = change_types[change_type]
+        leaf_results = load_verification_leaf_results(root, leaf_results_ref)
+        explicit_native_inputs = runtime_snapshot_ref is not None or bypass_attempts_ref is not None
+        early_native_leaf = None
+        if explicit_native_inputs:
+            early_native_leaf = native_adapter_phase2c_leaf(
+                root,
+                task_key,
+                gate_invocation_id,
+                runtime_snapshot_ref,
+                bypass_attempts_ref,
+            )
         if not all(
             isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
             for value in (task_key, gate_invocation_id)
         ):
-            raw = native_adapter_phase2c_leaf(root, task_key, gate_invocation_id)
+            raw = early_native_leaf or native_adapter_phase2c_leaf(root, task_key, gate_invocation_id)
             data = {
                 "changeType": change_type,
                 "entryPoint": entry_point,
@@ -6197,6 +6209,26 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                 "BLOCKED", "VERIFICATION_GATE_BLOCKED", data,
             ), 2)
         if entry_point not in change["entryPoints"]:
+            if early_native_leaf is not None and early_native_leaf["result"] != "NOT_APPLICABLE":
+                mapped_result = map_verification_leaf(early_native_leaf["result"], True)
+                data = {
+                    "changeType": change_type,
+                    "entryPoint": entry_point,
+                    "minimumVerificationLevel": change["minimumVerificationLevel"],
+                    "completenessEvaluated": True,
+                    "checks": [{
+                        "checkId": NATIVE_ADAPTER_CHECK_ID,
+                        "required": True,
+                        "rawResult": early_native_leaf["result"],
+                        "mappedResult": mapped_result,
+                        "reason": early_native_leaf["reason"],
+                        "evidenceRef": early_native_leaf["evidenceRef"],
+                    }],
+                    "createdAiRuns": False,
+                }
+                return publish_verification_gate_result(root, verification_gate_result(
+                    "BLOCKED", "VERIFICATION_GATE_BLOCKED", data,
+                ), 2)
             data = {
                 "changeType": change_type,
                 "entryPoint": entry_point,
@@ -6215,7 +6247,6 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
             return publish_verification_gate_result(root, verification_gate_result(
                 "NOT_APPLICABLE", "ENTRY_POINT_NOT_APPLICABLE", data,
             ), 6)
-        leaf_results = load_verification_leaf_results(root, leaf_results_ref)
         check_ids = list(dict.fromkeys(change["requiredChecks"] + change["optionalChecks"]))
         mapped_checks = []
         for check_id in check_ids:

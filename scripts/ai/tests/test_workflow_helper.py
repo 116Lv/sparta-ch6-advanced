@@ -7096,6 +7096,75 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                         "INVALID_STATE", "NATIVE_ADAPTER_LEAF_FORGED", 5,
                     ))
 
+    def test_forged_native_adapter_leaf_precedes_correlation_and_applicability_returns(self):
+        forged = self.write_verification_leaf_results([
+            {"checkId": "native-runtime-adapter", "result": "PASS"},
+        ])
+        cases = (
+            ("invalid-correlation", "verification-level", None, "gate-forged-correlation"),
+            ("inapplicable-entry-point", "api-smoke", "issue-10", "gate-forged-inapplicable"),
+        )
+
+        for case, entry_point, task_key, gate_invocation_id in cases:
+            with self.subTest(case=case):
+                result, status = self.helper.verification_gate(
+                    self.root,
+                    "documentation-only",
+                    entry_point,
+                    forged,
+                    task_key=task_key,
+                    gate_invocation_id=gate_invocation_id,
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "INVALID_STATE", "NATIVE_ADAPTER_LEAF_FORGED", 5,
+                ))
+
+    def test_malformed_native_snapshot_precedes_correlation_and_applicability_returns(self):
+        malformed_snapshot = self.write_temp_snapshot([])
+        cases = (
+            ("invalid-correlation", "verification-level", None, "gate-snapshot-correlation"),
+            ("inapplicable-entry-point", "api-smoke", "issue-10", "gate-snapshot-inapplicable"),
+        )
+
+        for case, entry_point, task_key, gate_invocation_id in cases:
+            with self.subTest(case=case):
+                result, status = self.helper.verification_gate(
+                    self.root,
+                    "documentation-only",
+                    entry_point,
+                    task_key=task_key,
+                    gate_invocation_id=gate_invocation_id,
+                    runtime_snapshot_ref=malformed_snapshot,
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "VERIFICATION_GATE_BLOCKED", 2,
+                ))
+                self.assertEqual(self.native_check(result)["reason"], "NATIVE_ADAPTER_EVALUATION_INVALID")
+
+    def test_malformed_native_bypass_precedes_correlation_and_applicability_returns(self):
+        malformed_bypass = self.write_fixture("malformed-bypass-attempts.json", {
+            "attempts": [{"eventId": "missing-required-fields"}],
+        })
+        cases = (
+            ("invalid-correlation", "verification-level", None, "gate-bypass-correlation"),
+            ("inapplicable-entry-point", "api-smoke", "issue-10", "gate-bypass-inapplicable"),
+        )
+
+        for case, entry_point, task_key, gate_invocation_id in cases:
+            with self.subTest(case=case):
+                result, status = self.helper.verification_gate(
+                    self.root,
+                    "documentation-only",
+                    entry_point,
+                    task_key=task_key,
+                    gate_invocation_id=gate_invocation_id,
+                    bypass_attempts_ref=malformed_bypass,
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "VERIFICATION_GATE_BLOCKED", 2,
+                ))
+                self.assertEqual(self.native_check(result)["reason"], "NATIVE_BYPASS_CONTRACT_INVALID")
+
     def test_native_adapter_phase2c_leaf_validates_correlation_fail_closed(self):
         invalid_vectors = ((None, "gate-1"), ("issue-10", None), ("", "gate-1"), ("issue-10", ""))
         for task_key, gate_invocation_id in invalid_vectors:
