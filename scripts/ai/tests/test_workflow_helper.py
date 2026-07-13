@@ -5655,6 +5655,28 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual((verified["operation"], verified["result"], verify_status), ("PRE_DONE_CLAIM", "PASS", 0))
         self.assertFalse((run / ".state").exists())
 
+    def test_check_evidence_must_be_top_level_and_bound_to_session(self):
+        self.publish_command_result(exit_code=0)
+        claim = self.done_claim()
+        claim["checks"][0]["evidenceRefs"] = ["ai/verification-policy.json"]
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            result, status = self.helper.prepare_done_claim(
+                self.root, "run-1", self.write_claim(claim),
+            )
+        self.assertEqual((result["result"], status), ("INVALID_STATE", 5))
+        self.assertEqual(result["reason"], "DONE_CLAIM_CHECK_EVIDENCE_UNBOUND")
+
+    def test_pass_check_cannot_also_be_declared_not_run(self):
+        self.publish_command_result(exit_code=0)
+        claim = self.done_claim()
+        claim["notRunItems"] = [{"id": "verify.unit", "reason": "not executed"}]
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            result, status = self.helper.prepare_done_claim(
+                self.root, "run-1", self.write_claim(claim),
+            )
+        self.assertEqual((result["result"], status), ("INVALID_STATE", 5))
+        self.assertEqual(result["reason"], "DONE_CLAIM_NOT_RUN_CONTRADICTION")
+
     def test_unreferenced_process_attempt_blocks_finalization(self):
         self.publish_command_result(exit_code=0)
         extra = self.process_attempt(exit_code=0)

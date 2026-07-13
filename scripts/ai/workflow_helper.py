@@ -4789,11 +4789,63 @@ def done_claim_exit_for(result):
     }[result]
 
 
+def validated_done_claim_evidence(root, session, claim):
+    command_refs = set(session["commandResultRefs"])
+    session_refs = command_refs | set(session["gateResultRefs"])
+    top_level_refs = set(claim.get("evidenceRefs", []))
+    check_refs = {
+        reference
+        for check in claim.get("checks", [])
+        for reference in check.get("evidenceRefs", [])
+    }
+    resolved = {}
+    for check in claim.get("checks", []):
+        for reference in check.get("evidenceRefs", []):
+            if reference not in top_level_refs or reference not in session_refs:
+                raise InvalidStateError([validation_error(
+                    "DONE_CLAIM_CHECK_EVIDENCE_UNBOUND",
+                    message="check evidence must be present in the claim and active session",
+                )])
+            schema_path = (
+                "ai/schemas/command-result.schema.json"
+                if reference in command_refs
+                else "ai/schemas/gateway-result.schema.json"
+            )
+            _path, artifact = read_run_reference(root, reference, schema_path)
+            resolved[reference] = artifact
+    if top_level_refs != check_refs or not command_refs.issubset(top_level_refs):
+        raise InvalidStateError([validation_error(
+            "DONE_CLAIM_EVIDENCE_CLOSURE_MISMATCH",
+            message="top-level evidence must equal check evidence and include every command result",
+        )])
+    return resolved
+
+
+def validate_not_run_consistency(session, claim):
+    check_ids = {check["id"] for check in claim.get("checks", [])}
+    command_ids = {
+        reservation["commandId"] for reservation in session.get("reservations", [])
+        if reservation.get("state") != "RESERVED"
+    }
+    not_run_ids = [item["id"] for item in claim.get("notRunItems", [])]
+    if len(not_run_ids) != len(set(not_run_ids)):
+        raise InvalidStateError([validation_error(
+            "DONE_CLAIM_NOT_RUN_DUPLICATE", message="not-run IDs must be unique",
+        )])
+    if set(not_run_ids) & (check_ids | command_ids):
+        raise InvalidStateError([validation_error(
+            "DONE_CLAIM_NOT_RUN_CONTRADICTION",
+            message="a claimed or executed check cannot also be not-run",
+        )])
+
+
 def done_claim_semantic_result(root, session, claim):
     if claim.get("$id") != f".ai-runs/{session['runId']}/done-claim.json":
         return "INVALID_STATE", "DONE_CLAIM_REFERENCE_MISMATCH"
     if claim.get("runId") != session["runId"] or claim.get("taskKey") != session["taskKey"]:
         return "INVALID_STATE", "DONE_CLAIM_RUN_MISMATCH"
+    resolved_evidence = validated_done_claim_evidence(root, session, claim)
+    validate_not_run_consistency(session, claim)
     if claim.get("implementationStatus") != "PASS" or claim.get("overallResult") != "PASS":
         return "BLOCKED", "DONE_CLAIM_NOT_PASS"
     if claim.get("blockers"):
@@ -4819,14 +4871,14 @@ def done_claim_semantic_result(root, session, claim):
             return "BLOCKED", "COMPLETION_WITHOUT_EVIDENCE"
     for reference in claimed_refs:
         if reference not in session_command_refs:
-            return "INVALID_STATE", "DONE_CLAIM_EVIDENCE_NOT_IN_SESSION"
-        _path, command_result = read_run_reference(root, reference, "ai/schemas/command-result.schema.json")
+            continue
+        command_result = resolved_evidence[reference]
         if command_result.get("result") == "FAIL":
             return "FAIL", "DONE_CLAIM_HIDDEN_FAILED_LEAF"
         if command_result.get("result") != "PASS":
             return "BLOCKED", "DONE_CLAIM_LEAF_NOT_PASS"
     for reference in session_command_refs:
-        _path, command_result = read_run_reference(root, reference, "ai/schemas/command-result.schema.json")
+        command_result = resolved_evidence[reference]
         if command_result.get("result") == "FAIL":
             return "FAIL", "DONE_CLAIM_HIDDEN_FAILED_LEAF"
         if command_result.get("result") != "PASS":
