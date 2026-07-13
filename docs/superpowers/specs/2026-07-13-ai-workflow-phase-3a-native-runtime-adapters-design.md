@@ -12,9 +12,11 @@ No Gradle, build, product test, server, Docker Compose, HTTP/curl/API, database,
 
 The current host identifies as Codex desktop and exposes repository shell, file read, search, and tool-call operations to the active agent. Repository inspection found no `.codex` hook configuration, no host adapter registration manifest, and no callable API for installing pre-command, pre-file-read, pre-search, or pre-tool-call interceptors. Repository scripts therefore cannot prove host-wide interception.
 
-Phase 3A defines `codex-desktop` as the first adapter identity with minimum host version `2026.07`. This floor means the repository understands the host identity and contract format; it does not claim that every runtime at that version exposes native hooks. Discovery must report the actual host version and surface evidence before any surface can become `AUDIT_ONLY` or `ENFORCED`.
+Phase 3A has no supported host-native adapter at implementation time, so the supported-host registry is empty and no minimum supported host version exists. `codex-desktop` is a recognized provisional identity, not a supported adapter. A future host may enter the supported-host registry only with an authoritative host version probe, official hook-surface reference, trusted runtime producer identity, and minimum version backed by those sources.
 
-Unknown host identities are `UNSUPPORTED`. Known host identities without a configured adapter declaration are `NOT_CONFIGURED`.
+Unknown, provisional, or version-ineligible host identities are `UNSUPPORTED`. A host becomes `NOT_CONFIGURED` only after it is in the supported-host registry but lacks a valid runtime adapter configuration.
+
+The current investigation is reproducible with repository static probes: inspect `.codex`, `.github`, `ai`, and `scripts/ai`; search for `native`, `adapter`, `hook`, and the four surface names; and inspect the active host tool inventory for a hook registration operation. These probes found repository helper lifecycle hooks but no native registration manifest or callable interceptor installation API. The resulting machine-readable current-host declaration is repository policy evidence only and cannot promote a capability above `UNSUPPORTED`.
 
 ## Considered Approaches
 
@@ -42,16 +44,18 @@ A command that attempts file reading or search through a shell is recorded as a 
 
 ## Discovery Contract
 
-The canonical `ai/native-runtime-adapters.json` document contains:
+The canonical `ai/native-runtime-adapters.json` document contains repository-authored support policy only:
 
 - `schemaVersion`, `updatedAt`, and a closed list of adapter declarations.
-- Adapter identity: `hostId`, `hostVersion`, `minimumHostVersion`, `adapterVersion`, and `discoveryMethod`.
-- Discovery evidence: source, observed timestamp, freshness deadline, and non-secret evidence references.
+- Adapter identity: `hostId`, `minimumHostVersion`, supported adapter version range, and allowed trusted producer identifiers.
+- Current-host classification and non-secret repository probe references.
 - Four required surface declarations: `COMMAND`, `FILE_READ`, `SEARCH`, and `TOOL_CALL`.
-- Per-surface `status`, `observationMode`, `blockingMode`, and reason code.
+- Per-surface repository baseline status and reason code.
 - Completion policy and Phase 2C check mapping.
 
-Allowed status transitions are `NOT_CONFIGURED -> AUDIT_ONLY -> ENFORCED`. `UNSUPPORTED` may become `NOT_CONFIGURED` only after the host identity and minimum version enter the supported-host registry. An adapter cannot jump to `ENFORCED` without fresh discovery evidence and a verified blocking callback for that surface.
+Runtime discovery is a separate ephemeral snapshot supplied through an explicit `--runtime-snapshot` input. Repository files cannot create or modify that snapshot and can never self-promote `ENFORCED`. A snapshot is trusted only when its producer identifier is allowlisted by the supported-host entry, its host version satisfies the minimum, its observation time is no more than 300 seconds old, its one-use challenge matches the gate invocation challenge, and every claimed blocking callback passes the host producer's pre-execution challenge result. Phase 3A fixtures may model this protocol but are never trusted runtime evidence.
+
+Runtime observations override repository defaults only after every trust check passes. Missing, malformed, stale, replayed, repository-authored, or unallowlisted snapshots are rejected and completion-blocking. Allowed status transitions are `NOT_CONFIGURED -> AUDIT_ONLY -> ENFORCED`. `UNSUPPORTED` may become `NOT_CONFIGURED` only after the host identity and minimum version enter the supported-host registry. An adapter cannot jump to `ENFORCED` without a fresh trusted snapshot and a verified blocking callback for that surface.
 
 ## Capability Status Semantics
 
@@ -60,31 +64,34 @@ Allowed status transitions are `NOT_CONFIGURED -> AUDIT_ONLY -> ENFORCED`. `UNSU
 - `NOT_CONFIGURED`: the host is recognized, but no valid and fresh adapter declaration/configuration exists for the surface.
 - `UNSUPPORTED`: the host or surface has no supported adapter contract at the declared host version.
 
-For the current Codex desktop environment, all four native surfaces are initially `NOT_CONFIGURED`. The repository gateway remains enforced for project commands, but that repository-only fact does not change a native surface to `ENFORCED`.
+For the current Codex desktop environment, all four native surfaces are `UNSUPPORTED` because no authoritative native registration surface or minimum supported version is evidenced. The repository gateway remains enforced for project commands, but that repository-only fact does not change a native surface to `ENFORCED`.
 
 ## Bypass Attempt Contract
 
 Each normalized attempt records:
 
-- `attemptId`, `observedAt`, `hostId`, `hostVersion`, and `adapterVersion`.
+- `attemptId`, immutable `eventId`, `observedAt`, `hostId`, `hostVersion`, and `adapterVersion`.
 - `surface`: `COMMAND`, `FILE_READ`, `SEARCH`, or `TOOL_CALL`.
 - `operationType` and optional command intent classification.
 - `statusAtObservation`.
-- `decision`: `BLOCKED`, `ALLOWED_AUDIT_ONLY`, or `NOT_OBSERVED`.
-- `reasonCode`, `repositoryGatewayExpected`, and a Phase 2C correlation identifier.
+- `decision`: `BLOCKED` or `ALLOWED_AUDIT_ONLY`.
+- `reasonCode`, `repositoryGatewayExpected`, `taskKey`, `gateInvocationId`, and nullable repository `runId`.
+- `deduplicationKey`, lifecycle state `DETECTED` or `RESOLVED`, nullable `resolvedAt`, and a closed resolution reason.
 - Redacted target, argv, query, or tool payload summary.
 
 The contract forbids raw environment values, authorization data, cookies, credentials, request bodies, arbitrary tool payloads, and unbounded output. Paths are repository-relative when inside the repository; absolute paths outside it are reduced to a stable redacted category. Arguments preserve only allowlisted literals and structural placeholders. Search queries and tool payloads store a bounded digest plus a redacted classification, never raw content. Redaction uncertainty blocks publication and maps the adapter leaf result to `BLOCKED`.
 
+The adapter producer creates a record only for an observed attempt; `NOT_OBSERVED` is an adapter evaluation state, not a fabricated attempt. `eventId` is unique and repeated delivery of the same `eventId` is idempotent. `deduplicationKey` groups semantically repeated attempts but never removes the original event. An attempt is unresolved while its lifecycle is `DETECTED`. Resolution is permitted only by a later gate invocation with the same `taskKey`, a fresh trusted adapter snapshot, and an allowlisted resolution reason. Any unresolved attempt for the current `taskKey` blocks its Phase 3A completion claim.
+
 ## Fail-Closed And Completion Policy
 
-Immediate fail-closed behavior applies only to an `ENFORCED` surface. `AUDIT_ONLY` records the attempt and blocks a Phase 3A host-native enforcement completion claim. `NOT_CONFIGURED`, `UNSUPPORTED`, stale discovery, adapter faults, malformed declarations, redaction uncertainty, or missing required surface results also block that claim.
+Immediate fail-closed behavior applies only to an `ENFORCED` surface. `AUDIT_ONLY` records the attempt and blocks a Phase 3A host-native enforcement completion claim. `NOT_CONFIGURED`, `UNSUPPORTED`, stale discovery, adapter faults, malformed declarations, redaction uncertainty, missing required surface results, or unresolved attempts also block that claim.
 
 Repository-only workflows may continue to report their existing qualified Phase 2C result when no host adapter is configured, but they must report native enforcement as `NOT_CONFIGURED` or `UNSUPPORTED`. They may not claim Phase 3A host-native enforcement PASS.
 
 ## Phase 2C Integration
 
-Phase 3A adds a required static-workflow leaf check named `native-runtime-adapter`. The Phase 2C result mapping remains authoritative:
+Phase 3A adds a `native-runtime-adapter` leaf check to every Phase 2C change type without changing the approved minimum verification levels. It is optional for ordinary repository-only completion evaluation, where `UNSUPPORTED` or `NOT_CONFIGURED` must remain explicitly visible and cannot be presented as native enforcement. It becomes required for the separately qualified `Phase 3A host-native enforcement` completion claim for every change type. The Phase 2C result mapping remains authoritative when the leaf is required:
 
 - Valid required surfaces at `ENFORCED` with no unresolved bypass attempts: `PASS`.
 - Missing or stale required capability: `NOT_CONFIGURED`, mapped to overall `BLOCKED` when required.
