@@ -6176,6 +6176,15 @@ class Phase2AContextCacheTests(unittest.TestCase):
         }
         self.helper.validate(REPOSITORY_ROOT, cache, "ai/schemas/workflow-cache.schema.json")
 
+        newline_digest = json.loads(json.dumps(cache))
+        newline_digest["entries"][0]["key"]["evidence"][0]["sha256"] += "\n"
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                REPOSITORY_ROOT,
+                newline_digest,
+                "ai/schemas/workflow-cache.schema.json",
+            )
+
     def test_phase_2a_policy_text_preserves_repository_boundary(self):
         combined = "\n".join(self.read_repository_text(path) for path in (
             "ai/context-map.md",
@@ -6356,6 +6365,73 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
                 self.root, {"entries": [candidate]},
             )[0]
             self.assertEqual(actual["status"], "STALE")
+
+    def test_verification_cache_stale_findings_precede_compound_uncertainty(self):
+        entry = self.verification_cache_entry()
+        commit_sha = entry["key"]["commitSha"]
+        cases = []
+
+        environment_and_expired = json.loads(json.dumps(entry))
+        environment_and_expired["key"]["environmentFingerprint"] = "d" * 64
+        environment_and_expired["key"]["expiresAt"] = "2000-01-01T00:00:00Z"
+        cases.append(("environment plus expiry", environment_and_expired))
+
+        unmapped_and_evidence_mismatch = json.loads(json.dumps(entry))
+        unmapped_and_evidence_mismatch["key"]["changeType"] = "unknown-change"
+        unmapped_and_evidence_mismatch["key"]["evidence"][0]["sha256"] = "e" * 64
+        cases.append(("unmapped classification plus evidence mismatch", unmapped_and_evidence_mismatch))
+
+        unmapped_and_expired = json.loads(json.dumps(entry))
+        unmapped_and_expired["key"]["changeType"] = "unknown-change"
+        unmapped_and_expired["key"]["expiresAt"] = "2000-01-01T00:00:00Z"
+        cases.append(("unmapped classification plus expiry", unmapped_and_expired))
+
+        with mock.patch.object(self.helper, "repository_commit_sha", return_value=commit_sha):
+            for name, candidate in cases:
+                with self.subTest(name=name):
+                    actual = self.helper.cache_invalidation_report(
+                        self.root, {"entries": [candidate]},
+                    )[0]
+                    self.assertEqual(actual["status"], "STALE")
+
+            purely_unmapped = json.loads(json.dumps(entry))
+            purely_unmapped["key"]["changeType"] = "unknown-change"
+            actual = self.helper.cache_invalidation_report(
+                self.root, {"entries": [purely_unmapped]},
+            )[0]
+            self.assertEqual(actual["status"], "UNCERTAIN")
+
+    def test_verification_cache_policy_is_parsed_hashed_and_mapped_from_one_read(self):
+        entry = self.verification_cache_entry()
+        policy_path = self.root / "ai" / "verification-policy.json"
+        accepted_bytes = policy_path.read_bytes()
+        replacement_policy = json.loads(accepted_bytes.decode("utf-8"))
+        next(
+            check for check in replacement_policy["checks"]
+            if check["id"] == "review-gate"
+        )["producerId"] = "done-claim-gate"
+        replacement_bytes = json.dumps(replacement_policy, sort_keys=True).encode("utf-8")
+        entry["key"]["policySha256"] = hashlib.sha256(replacement_bytes).hexdigest()
+        commit_sha = entry["key"]["commitSha"]
+        original_open = Path.open
+        policy_open_count = 0
+
+        def race_open(path, *args, **kwargs):
+            nonlocal policy_open_count
+            if Path(path) == policy_path:
+                policy_open_count += 1
+                payload = accepted_bytes if policy_open_count == 1 else replacement_bytes
+                return io.BytesIO(payload)
+            return original_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.helper.Path, "open", autospec=True, side_effect=race_open):
+            with mock.patch.object(self.helper, "repository_commit_sha", return_value=commit_sha):
+                actual = self.helper.cache_invalidation_report(
+                    self.root, {"entries": [entry]},
+                )[0]
+
+        self.assertEqual(policy_open_count, 1)
+        self.assertEqual(actual["status"], "STALE")
 
     def test_repo_intake_rejects_duplicate_skill_catalog_ids(self):
         catalog_path = self.root / "ai" / "skill-catalog.json"

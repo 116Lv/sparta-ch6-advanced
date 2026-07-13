@@ -5783,50 +5783,96 @@ def verification_cache_producers(policy, change_type, entry_point):
     return selected or None
 
 
+def load_verification_cache_policy(root):
+    policy_path = resolve_repository_file(root, "ai/verification-policy.json")
+    encoded, policy = read_bounded_verification_json(
+        policy_path,
+        MAX_PARAMETER_FILE_BYTES,
+        "VERIFICATION_CACHE_POLICY_TOO_LARGE",
+        "verification cache policy exceeds the bounded read limit",
+    )
+    validate(root, policy, "ai/schemas/verification-policy.schema.json")
+    return policy, hashlib.sha256(encoded).hexdigest()
+
+
 def verification_cache_invalidation(root, entry, policy, policy_sha256, commit_sha):
     key = entry.get("key", {})
+    stale_reasons = []
+    uncertain_reasons = []
     if not all(
         isinstance(key.get(field), str)
         and NATIVE_ADAPTER_IDENTIFIER.fullmatch(key[field])
         for field in ("taskKey", "gateInvocationId")
     ):
-        return "UNCERTAIN", "Cache task or gate correlation is missing or unmapped."
+        uncertain_reasons.append("Cache task or gate correlation is missing or unmapped.")
 
-    expected_producers = verification_cache_producers(
-        policy, key.get("changeType"), key.get("entryPoint"),
+    expected_producers = (
+        verification_cache_producers(policy, key.get("changeType"), key.get("entryPoint"))
+        if policy is not None
+        else None
     )
-    if expected_producers is None:
-        return "UNCERTAIN", "Cache change type or entry point is missing or unmapped."
+    if policy is None:
+        uncertain_reasons.append("Current verification cache policy is unavailable.")
+    elif expected_producers is None:
+        uncertain_reasons.append("Cache change type or entry point is missing or unmapped.")
+    else:
+        producer_ids = key.get("producerIds", [])
+        try:
+            producer_mismatch = (
+                len(producer_ids) != len(set(producer_ids))
+                or set(producer_ids) != set(expected_producers)
+            )
+        except TypeError:
+            producer_mismatch = True
+        if producer_mismatch:
+            stale_reasons.append("Cache producer set changed.")
     if key.get("environmentFingerprint") is not None:
-        return "UNCERTAIN", "Cache environment fingerprint has no authoritative current mapping."
-    if key.get("commitSha") != commit_sha:
-        return "STALE", "Cache commit changed."
-    if key.get("policySha256") != policy_sha256:
-        return "STALE", "Cache verification policy digest changed."
-    if (
-        len(key.get("producerIds", [])) != len(set(key.get("producerIds", [])))
-        or set(key.get("producerIds", [])) != set(expected_producers)
-    ):
-        return "STALE", "Cache producer set changed."
+        uncertain_reasons.append("Cache environment fingerprint has no authoritative current mapping.")
+    if commit_sha is None:
+        uncertain_reasons.append("Current repository commit is unavailable.")
+    elif key.get("commitSha") != commit_sha:
+        stale_reasons.append("Cache commit changed.")
+    if policy_sha256 is None:
+        if policy is not None:
+            uncertain_reasons.append("Current verification policy digest is unavailable.")
+    elif key.get("policySha256") != policy_sha256:
+        stale_reasons.append("Cache verification policy digest changed.")
 
     repository_root = Path(root).resolve(strict=True)
-    for item in key.get("evidence", []):
+    evidence = key.get("evidence", [])
+    if not isinstance(evidence, list) or not evidence:
+        uncertain_reasons.append("Cache evidence mapping is missing.")
+        evidence = []
+    for item in evidence:
         try:
-            path = (repository_root / item["path"]).resolve(strict=True)
+            relative = item["path"]
+            if (
+                not isinstance(relative, str)
+                or not VERIFICATION_REPOSITORY_PATH.fullmatch(relative)
+            ):
+                raise ValueError("cache evidence path is unsafe")
+            path = (repository_root / relative).resolve(strict=True)
             path.relative_to(repository_root)
             if not path.is_file():
                 raise OSError("cache evidence is not a regular file")
-        except (KeyError, OSError, ValueError):
-            return "UNCERTAIN", "Cache evidence path is missing, unmapped, or unavailable."
+        except (KeyError, OSError, TypeError, ValueError):
+            uncertain_reasons.append("Cache evidence path is missing, unmapped, or unavailable.")
+            continue
         if digest(path) != item.get("sha256"):
-            return "STALE", "Cache evidence digest changed."
+            stale_reasons.append("Cache evidence digest changed.")
 
     try:
         expires_at = parse_rfc3339_timestamp(key["expiresAt"])[0]
     except (KeyError, TypeError, ValueError):
-        return "UNCERTAIN", "Cache expiry is missing or unmapped."
-    if dt.datetime.now(dt.timezone.utc) > expires_at:
-        return "STALE", "Cache decision expired."
+        uncertain_reasons.append("Cache expiry is missing or unmapped.")
+    else:
+        if dt.datetime.now(dt.timezone.utc) > expires_at:
+            stale_reasons.append("Cache decision expired.")
+
+    if stale_reasons:
+        return "STALE", " ".join(stale_reasons)
+    if uncertain_reasons:
+        return "UNCERTAIN", " ".join(uncertain_reasons)
     return "FRESH", "All verification cache identity inputs match."
 
 
@@ -5837,23 +5883,23 @@ def cache_invalidation_report(root, workflow_cache):
         entry for entry in workflow_cache.get("entries", [])
         if entry.get("kind") == "VERIFICATION_DECISION"
     ]
-    verification_context = None
+    policy = None
+    policy_sha256 = None
+    commit_sha = None
     if verification_entries:
         try:
-            policy_path = resolve_repository_file(root, "ai/verification-policy.json")
-            policy = validate_repository_instance(root, policy_path)
-            verification_context = (policy, digest(policy_path), repository_commit_sha(root))
+            policy, policy_sha256 = load_verification_cache_policy(root)
+        except (InvalidStateError, OSError, TypeError, ValueError):
+            pass
+        try:
+            commit_sha = repository_commit_sha(root)
         except (InvalidStateError, VerificationNotConfiguredError, OSError, TypeError, ValueError):
-            verification_context = None
+            pass
     for entry in workflow_cache.get("entries", []):
         if entry.get("kind") == "VERIFICATION_DECISION":
-            if verification_context is None:
-                entry_status = "UNCERTAIN"
-                reason = "Verification cache policy or commit mapping is unavailable."
-            else:
-                entry_status, reason = verification_cache_invalidation(
-                    root, entry, *verification_context,
-                )
+            entry_status, reason = verification_cache_invalidation(
+                root, entry, policy, policy_sha256, commit_sha,
+            )
             report.append({
                 "entryId": entry["id"],
                 "status": entry_status,

@@ -33,7 +33,7 @@
       "minLength": 1,
       "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*\\\\).+$"
     },
-    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}(?![\\s\\S])" },
     "pathCacheEntry": {
       "type": "object",
       "additionalProperties": false,
