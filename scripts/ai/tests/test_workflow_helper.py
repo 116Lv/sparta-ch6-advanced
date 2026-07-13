@@ -7140,6 +7140,25 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                     "INVALID_STATE", "NATIVE_ADAPTER_LEAF_FORGED", 5,
                 ))
 
+    def test_forged_native_adapter_leaf_precedes_earlier_malformed_leaf_result(self):
+        forged = self.write_verification_leaf_results([
+            {"checkId": 1, "result": "PASS"},
+            {"checkId": "native-runtime-adapter", "result": "PASS"},
+        ])
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "verification-level",
+            forged,
+            task_key="issue-10",
+            gate_invocation_id="gate-forged-after-malformed",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "NATIVE_ADAPTER_LEAF_FORGED", 5,
+        ))
+
     def test_early_native_fail_preserves_failure_for_correlation_and_applicability_returns(self):
         malformed_bypass = self.write_fixture("malformed-bypass-attempts.json", {
             "attempts": [{"eventId": "missing-required-fields"}],

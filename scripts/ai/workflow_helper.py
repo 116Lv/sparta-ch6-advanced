@@ -5609,16 +5609,19 @@ def load_verification_leaf_results(root, leaf_results_ref):
         results = payload.get("results")
         if not isinstance(results, list):
             raise ValueError("leaf results must contain results array")
+        if any(
+            isinstance(item, dict) and item.get("checkId") == NATIVE_ADAPTER_CHECK_ID
+            for item in results
+        ):
+            raise InvalidStateError([validation_error(
+                "NATIVE_ADAPTER_LEAF_FORGED",
+                message="native runtime adapter leaf results are internal-only",
+            )])
         by_id = {}
         for index, item in enumerate(results):
             if not isinstance(item, dict):
                 raise ValueError("leaf result must be an object")
             check_id = item.get("checkId")
-            if check_id == NATIVE_ADAPTER_CHECK_ID:
-                raise InvalidStateError([validation_error(
-                    "NATIVE_ADAPTER_LEAF_FORGED",
-                    message="native runtime adapter leaf results are internal-only",
-                )])
             raw_result = item.get("result")
             if not isinstance(check_id, str) or raw_result not in (
                 "PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON",

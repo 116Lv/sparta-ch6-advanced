@@ -45,6 +45,10 @@ commands_run:
   - "Task 5 (exit 0): git rev-parse origin/main:ai/fixtures/phase-1b/execution/fake-gradlew; git rev-parse :ai/fixtures/phase-1b/execution/fake-gradlew; git hash-object ai/fixtures/phase-1b/execution/fake-gradlew; git hash-object --no-filters ai/fixtures/phase-1b/execution/fake-gradlew [clean-filtered/index/origin 59c3111f32a22ddac701cf212b148160df516850; raw checkout 3d9c04428a49e35002a85aadd1feaa895d0c5dea]"
   - "Task 5 (exit 0): git diff --check"
   - "Task 5 (exit 0): git status --short [after; clean]"
+  - "Phase 3A minor closeout (exit 0): git status --short --branch [output: ## codex/phase-3a-native-runtime-adapters...origin/main [ahead 30]]"
+  - "Phase 3A minor closeout (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v"
+  - "Phase 3A minor closeout (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v"
+  - "Phase 3A minor closeout (exit 0): git diff --check"
 tests_run:
   - "Historical Task 1 RED: expected schema-allowlist failure before implementation."
   - "Historical Task 1 GREEN (exit 0): focused allowlist and issue-backed work-log test passed (1 test)."
@@ -54,6 +58,8 @@ tests_run:
   - "Task 5 (exit 1; NOT PASS): full helper unittest and run-helper-tests.sh each reported 319 tests, 1 CRLF fixture failure, and 17 skips."
   - "Task 5 (exit 0): contract tests, runtime preflight without --record, and repo intake passed."
   - "Task 5 (exit 1; expected non-PASS): native adapter gate returned UNSUPPORTED/HOST_UNSUPPORTED with phase2CLeafResult NOT_APPLICABLE."
+  - "Phase 3A minor closeout (exit 0): Phase2CVerificationGateTests plus Phase3ANativeRuntimeAdapterTests passed (76 tests)."
+  - "Phase 3A minor closeout (exit 0): focused issue-backed work-log/static test passed (1 test)."
 blockers: []
 skill_ids: []
 handoff_state_ref: ai/agent-handoff.json
@@ -61,9 +67,14 @@ reusable_context_refs:
   - ai/context-map.json
   - ai/workflow-cache.json
 not_run_project_commands:
-  - Gradle
-  - build
-  - product/unit project tests
+  - Gradle/build and product/unit project tests
+  - application server
+  - Docker Compose
+  - HTTP/curl/API
+  - database operations
+  - migration and seed
+  - deployment and infrastructure/operations
+  - durable evidence generation (.ai-runs, non-fixture artifact-manifest.json, finalized non-fixture run.json)
 github_reconciliation_status: issue_backed
 reconciliation_required: false
 issue_creation_attempted_at: 2026-07-13T10:00:00+09:00
@@ -246,3 +257,11 @@ The repository was clean before and after the commands. `.ai-runs`, non-fixture 
 ### Boundary Notes
 
 - No product commands, evidence, `.ai-runs` artifacts, network calls, databases, or infrastructure commands were run or created.
+
+## Phase 3A Minor Review Closeout (2026-07-13)
+
+- Added a failing regression with a malformed ordinary leaf followed by a forged `native-runtime-adapter` leaf; it initially returned `VERIFICATION_LEAF_RESULTS_INVALID`.
+- Updated `load_verification_leaf_results()` to pre-scan the confirmed `results` array for dictionary entries with the reserved native check ID before ordinary entry validation.
+- The focused regression now returns `INVALID_STATE` with `NATIVE_ADAPTER_LEAF_FORGED` and exit status `5`.
+- Current status provenance: `git status --short --branch` exited `0` with `## codex/phase-3a-native-runtime-adapters...origin/main [ahead 30]` before the closeout edits.
+- Phase 2C plus Phase 3A focused verification passed 76 tests; the focused issue-backed work-log/static check passed; `git diff --check` exited `0` with no whitespace errors.

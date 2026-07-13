@@ -48,6 +48,10 @@ commands_run:
   - "Task 5 (exit 0): git rev-parse origin/main:ai/fixtures/phase-1b/execution/fake-gradlew; git rev-parse :ai/fixtures/phase-1b/execution/fake-gradlew; git hash-object ai/fixtures/phase-1b/execution/fake-gradlew; git hash-object --no-filters ai/fixtures/phase-1b/execution/fake-gradlew [clean-filtered/index/origin 59c3111f32a22ddac701cf212b148160df516850; raw checkout 3d9c04428a49e35002a85aadd1feaa895d0c5dea]"
   - "Task 5 (exit 0): git diff --check"
   - "Task 5 (exit 0): git status --short [after; clean]"
+  - "Phase 3A minor closeout (exit 0): git status --short --branch [output: ## codex/phase-3a-native-runtime-adapters...origin/main [ahead 30]]"
+  - "Phase 3A minor closeout (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v"
+  - "Phase 3A minor closeout (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v"
+  - "Phase 3A minor closeout (exit 0): git diff --check"
 tests_run:
   - "Historical Task 1 GREEN (exit 0): focused allowlist and issue-backed work-log test passed (1 test)."
   - "Historical Task 1 GREEN (exit 0): Phase3ANativeRuntimeAdapterTests passed (4 tests)."
@@ -56,6 +60,8 @@ tests_run:
   - "Task 5 (exit 1; NOT PASS): full helper unittest and run-helper-tests.sh each reported 319 tests, 1 CRLF fixture failure, and 17 skips."
   - "Task 5 (exit 0): contract tests, runtime preflight without --record, and repo intake passed."
   - "Task 5 (exit 1; expected non-PASS): native adapter gate returned UNSUPPORTED/HOST_UNSUPPORTED with phase2CLeafResult NOT_APPLICABLE."
+  - "Phase 3A minor closeout (exit 0): Phase2CVerificationGateTests plus Phase3ANativeRuntimeAdapterTests passed (76 tests)."
+  - "Phase 3A minor closeout (exit 0): focused issue-backed work-log/static test passed (1 test)."
 blockers: []
 skill_ids:
   - review-gate
@@ -63,9 +69,14 @@ handoff_state_ref: ai/agent-handoff.json
 reusable_context_refs:
   - ai/verification-policy.json
 not_run_project_commands:
-  - Gradle
-  - build
-  - product/unit project tests
+  - Gradle/build and product/unit project tests
+  - application server
+  - Docker Compose
+  - HTTP/curl/API
+  - database operations
+  - migration and seed
+  - deployment and infrastructure/operations
+  - durable evidence generation (.ai-runs, non-fixture artifact-manifest.json, finalized non-fixture run.json)
 github_reconciliation_status: issue_backed
 reconciliation_required: false
 issue_creation_attempted_at: 2026-07-13T10:00:00+09:00
@@ -125,6 +136,8 @@ Reviewed the full Phase 3A diff, Task 3 and Task 4 ranges, fresh evidence, host 
 
 Fresh evidence: Phase 3A passed 68 tests; Phase 2C plus Phase 3A passed 75 tests; contract checks, runtime preflight, repo intake, and `git diff --check` exited 0. The native gate returned its expected exit 1 `UNSUPPORTED`/`HOST_UNSUPPORTED` result with a `NOT_APPLICABLE` leaf. Artifacts are absent and the command-registry diff against `origin/main` exits 0.
 
-Findings: Critical none. Important none. Minor (queued, no auto-fix): `load_verification_leaf_results()` validates array entries in order, so a malformed ordinary item before a forged native leaf can mask `NATIVE_ADAPTER_LEAF_FORGED` with the generic invalid-leaf diagnostic. Both outcomes fail closed; queue a pre-scan/precedence regression in a separately scoped task.
+Findings: Critical none. Important none. The queued Minor is resolved: `load_verification_leaf_results()` now pre-scans the shape-confirmed results array for dictionary entries with `checkId: native-runtime-adapter` before ordinary entry validation. A regression with a malformed ordinary item first and a forged native leaf later proves the result remains `NATIVE_ADAPTER_LEAF_FORGED`.
+
+Minor-closeout verification: the Phase 2C plus Phase 3A focused suite passed 76 tests; the focused issue-backed work-log/static check passed; and `git diff --check` exited `0` with no whitespace errors.
 
 The direct full unittest and `run-helper-tests.sh` are **not PASS**: each exited 1 after 319 tests with one failure and 17 skips. The exact failure is `PosixLaunchTests.test_fake_gradlew_is_exact_posix_builtin_fixture`, which expects LF while this Windows checkout has CRLF. The clean-filtered working-tree hash (`git hash-object`) matches the index and `origin/main` blob (`59c3111f32a22ddac701cf212b148160df516850`); the raw checkout hash (`git hash-object --no-filters`) is `3d9c04428a49e35002a85aadd1feaa895d0c5dea`. This is an environmental CRLF diagnosis, not a Phase 3A branch regression. No code was changed.

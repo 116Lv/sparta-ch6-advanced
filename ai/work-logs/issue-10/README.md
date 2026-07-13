@@ -41,6 +41,10 @@ commands_run:
   - "Task 5 (exit 0): git rev-parse origin/main:ai/fixtures/phase-1b/execution/fake-gradlew; git rev-parse :ai/fixtures/phase-1b/execution/fake-gradlew; git hash-object ai/fixtures/phase-1b/execution/fake-gradlew; git hash-object --no-filters ai/fixtures/phase-1b/execution/fake-gradlew [clean-filtered/index/origin 59c3111f32a22ddac701cf212b148160df516850; raw checkout 3d9c04428a49e35002a85aadd1feaa895d0c5dea]"
   - "Task 5 (exit 0): git diff --check"
   - "Task 5 (exit 0): git status --short [after; clean]"
+  - "Phase 3A minor closeout (exit 0): git status --short --branch [output: ## codex/phase-3a-native-runtime-adapters...origin/main [ahead 30]]"
+  - "Phase 3A minor closeout (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v"
+  - "Phase 3A minor closeout (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v"
+  - "Phase 3A minor closeout (exit 0): git diff --check"
 tests_run:
   - "Historical Task 1 RED: expected allowlist assertion failure before implementation."
   - "Historical Task 1 GREEN (exit 0): focused allowlist and issue-backed work-log test passed (1 test)."
@@ -50,6 +54,8 @@ tests_run:
   - "Task 5 (exit 1; NOT PASS): full helper unittest and run-helper-tests.sh each reported 319 tests, 1 CRLF fixture failure, and 17 skips."
   - "Task 5 (exit 0): contract tests, runtime preflight without --record, and repo intake passed."
   - "Task 5 (exit 1; expected non-PASS): native adapter gate returned UNSUPPORTED/HOST_UNSUPPORTED with phase2CLeafResult NOT_APPLICABLE."
+  - "Phase 3A minor closeout (exit 0): Phase2CVerificationGateTests plus Phase3ANativeRuntimeAdapterTests passed (76 tests)."
+  - "Phase 3A minor closeout (exit 0): focused issue-backed work-log/static test passed (1 test)."
 blockers: []
 skill_ids:
   - review-gate
@@ -59,16 +65,14 @@ reusable_context_refs:
   - ai/workflow-cache.json
   - ai/verification-policy.json
 not_run_project_commands:
-  - Gradle
-  - build
-  - product/unit project tests
+  - Gradle/build and product/unit project tests
   - application server
   - Docker Compose
   - HTTP/curl/API
-  - database
-  - migration
-  - seed
-  - infrastructure commands
+  - database operations
+  - migration and seed
+  - deployment and infrastructure/operations
+  - durable evidence generation (.ai-runs, non-fixture artifact-manifest.json, finalized non-fixture run.json)
 github_reconciliation_status: issue_backed
 reconciliation_required: false
 issue_creation_attempted_at: 2026-07-13T10:00:00+09:00
@@ -160,4 +164,10 @@ The status was clean before the commands and remained clean afterward (`codex/ph
 
 Task 3 review found its closed schemas, redaction, bypass lifecycle, current-host `UNSUPPORTED` mapping, and no-artifact boundary covered by the final 68-test suite. Task 4 review found the required in-process `native-runtime-adapter` leaf, forged-leaf rejection, correlation handling, Phase 2C mapping, repository-only qualification, command-runner boundary, and Phase 3B deferral covered by the final 75-test suite and document inspection. No Critical or Important finding remains.
 
-One Minor diagnostic is queued, without a code change: `load_verification_leaf_results()` validates entries in order, so an invalid ordinary leaf before a later forged `native-runtime-adapter` leaf can produce the generic invalid-leaf diagnostic rather than `NATIVE_ADAPTER_LEAF_FORGED`. Both paths fail closed; the queued follow-up is a forged-leaf pre-scan/precedence regression in a later scoped task.
+The queued Minor diagnostic is resolved: after confirming the top-level `results` array shape, `load_verification_leaf_results()` pre-scans dictionary entries for the reserved `native-runtime-adapter` check ID before ordinary entry validation. The regression places a malformed ordinary leaf before a forged native leaf and now returns `NATIVE_ADAPTER_LEAF_FORGED`.
+
+## Phase 3A Minor Closeout Verification (2026-07-13)
+
+- `python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v`: exit `0`, 76 tests passed.
+- `python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v`: exit `0`, 1 test passed.
+- `git diff --check`: exit `0`; no whitespace errors. Git reported only the existing LF-to-CRLF conversion warnings for modified tracked files.
