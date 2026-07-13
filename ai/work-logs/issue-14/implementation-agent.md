@@ -124,3 +124,37 @@ Ready to begin global Task 1 (Phase 1B-3 local Task 1).
 - The Task 1 helper/test changes are in `2e25b00`; before the recovery-log commit, this assigned role-log update is the only tracked working-tree change. The required ignored report is at `.superpowers/sdd/task-1-phase1b3-report.md`.
 - Next safe action after Task 1 review is the separately scoped finalized-run projection task; rollback hardening remains later scope.
 - Gradle, build/product tests, server, Docker, HTTP/API, database, migration, seed, deploy, and infrastructure commands remain NOT RUN. No real repository `.ai-runs` directory was created.
+
+## Task 2 Update (2026-07-14)
+
+### Changed Files
+
+- `scripts/ai/tests/test_workflow_helper.py`: added the two brief-specified finalized-run tampering and stale-result regressions.
+- `scripts/ai/workflow_helper.py`: added deterministic finalized-run projection validation against the schema-validated claim, gate, and manifest-kind references.
+- `ai/work-logs/issue-14/implementation-agent.md`: recorded Task 2 TDD evidence and recovery state.
+
+### Decisions
+
+- Loaded the final done claim and pre-done gate through their schemas after validating manifest digest and directory closure, then rejected any projection mismatch before returning PASS.
+- Compared `commandResultRefs`, `approvalRefs`, and `policyViolationRefs` by manifest kind while preserving the exact ordered final evidence references.
+- Preserved `completenessEvaluated: false`, `scope: INTEGRITY_ONLY`, Task 1 evidence binding, and child-failure/policy precedence.
+- Kept locked FINALIZING rollback untouched because it belongs to Task 3.
+
+### Exact Verification Evidence
+
+- RED command: `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests.test_verify_finalized_rejects_tampered_run_json scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests.test_verify_finalized_rejects_stale_run_result -v`
+- RED result: expected exit `1`; 2 tests ran and both failed because the baseline returned `('PASS', 0)` instead of `('INVALID_STATE', 5)` after `run.json` tampering.
+- Focused GREEN command: same focused command after implementation.
+- Focused GREEN result: exit `0`; 2 tests passed in `2.999s`.
+- Surrounding GREEN command: `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests -v`
+- Surrounding GREEN result: exit `0`; 12 tests passed in `15.472s`.
+- Self-review command: `git diff --check`
+- Self-review result: exit `0`; no whitespace errors, only Git line-ending conversion warnings.
+- Repository evidence check: `Test-Path -LiteralPath '.ai-runs'`
+- Repository evidence result: `.ai-runs` was absent from the isolated checkout; tests used copied temporary repositories only.
+
+### Recovery State
+
+- Task 2 helper/test changes were committed as `3ce67ae` with message `fix(ai): verify finalized run projection` and are ready for independent review.
+- The required ignored report is at `.superpowers/sdd/task-2-phase1b3-report.md`; the assigned role-log update is committed separately.
+- Gradle, build/product tests, server, Docker, HTTP/API, database, migration, seed, deploy, and infrastructure commands remain NOT RUN. No verification-completeness, registry `VERIFIED`, phase-completion, Issue closure, native/CI enforcement, or unqualified overall `DONE` claim is made.
