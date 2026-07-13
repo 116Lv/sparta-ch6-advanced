@@ -694,3 +694,73 @@ warnings; `.ai-runs` and recursive `__pycache__` remained absent.
 - Exact-set semantics, policy single-read binding, no-canonical-fake-decision
   state, summary, index, reviewer log, product/infrastructure scope, and GitHub
   state remain unchanged. Independent rereview remains with the parent.
+
+## Task 7 Update - Phase 3A Task 1 (2026-07-14)
+
+### Routing And Handoff
+
+- `tracking_status: issue_backed`; GitHub Issue #14.
+- `owning_feature: none`; this is repository-wide Phase 3A trust-authority
+  separation routed through `AGENTS.md`, `ai/document-routing.md`, the exact
+  Task 7 brief, and the existing Phase 2C/3A contracts.
+- Implementation `skill_ids`: `verification-runner`, `failure-triage`, and
+  `docs-sync`; `handoff_state_ref`: `ai/agent-handoff.json`; reusable context:
+  `ai/workflow-cache.json`, `ai/verification-policy.json`, and
+  `ai/native-runtime-adapters.json`; `github_reconciliation_status` remains
+  `issue_backed`.
+
+### Authority Split And Files
+
+- Added `ai/schemas/host-native-trust.schema.json` and the frozen
+  `HostNativeTrust` value plus `load_host_native_trust(...)`.
+- Host descriptor, authoritative probe, and ledger paths must resolve outside
+  the repository and cannot be symlinks. Closed compiled checks repeat host and
+  producer identifiers, strict SemVer/range, lowercase SHA-256 fingerprint,
+  exact four-surface set, authoritative `PROBED` provenance/timestamp, and
+  descriptor/probe identity matching even when a copied schema is weakened.
+- `ai/schemas/native-runtime-adapters.schema.json` now constrains
+  `supportedHosts` to empty. Python semantic validation independently rejects
+  non-empty repository policy and preserves exactly four current-host
+  `UNSUPPORTED` surfaces.
+- `native_adapter_gate(...)` accepts explicit internal host trust. Public
+  `native-adapter-gate` no longer accepts descriptor, probe, ledger, policy,
+  runtime-snapshot, or bypass-attempt fixture inputs and always evaluates with
+  `host_trust=None`.
+- Signed producer/key/signature, freshness, challenge/callback/host mismatch,
+  replay, bypass event-set, and resolution-binding negative tests remain
+  active; supported lower-level tests now use external host context.
+
+### Exact TDD And Verification Evidence
+
+- Exact RED command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_repository_supported_host_and_temporary_key_cannot_promote_public_cli scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_repository_probed_host_fixture_remains_host_unsupported scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_external_host_context_can_verify_signed_snapshot_in_lower_level_evaluator -v`
+- RED result: exit `1`; 3 tests ran in `0.817s`. The public CLI returned a real
+  signed `PASS / 0` from repository-controlled supported-host/key material;
+  the external loader was absent; the repository-only `PROBED` control already
+  returned `UNSUPPORTED / HOST_UNSUPPORTED / 6`.
+- Initial GREEN: the same three tests exited `0`; 3 passed in `0.776s`.
+- Compiled contract/path/public-boundary focus exited `0`; 4 tests passed in
+  `2.556s`.
+- Final surrounding command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -q`
+- Final surrounding result: exit `0`; 118 tests passed in `48.903s` (23 Phase
+  2C and 95 Phase 3A).
+- Direct canonical gate exited `6` with `UNSUPPORTED`, `HOST_UNSUPPORTED`,
+  null/`UNPROBED` host version, four `UNSUPPORTED` surfaces, and repository-only
+  qualification. `git diff --check` exited `0` with line-ending warnings only;
+  recursive `__pycache__` and repository `.ai-runs` were absent.
+
+### Commit And Remaining Boundaries
+
+- Implementation/schema/tests commit: `841987e`
+  (`fix(ai): move native trust outside repository`). This role-log append is
+  committed separately; the detailed ignored report is
+  `.superpowers/sdd/task-7-phase3a-report.md`.
+- `ledger_root` is validated and carried but durable replay remains Task 8;
+  later resolution binding remains Task 9. Existing in-memory replay and
+  resolution tests were not weakened.
+- Gradle, build/product tests, server, Docker, HTTP/API, database, migration,
+  seed, deploy, infrastructure, real `.ai-runs`, push, PR, merge, and GitHub
+  Issue mutation were NOT RUN. No registry `VERIFIED`, phase-state, Issue
+  closure, native/CI enforcement, or unqualified overall completion claim is
+  made. Independent review remains with the parent.
