@@ -53,7 +53,9 @@ The canonical `ai/native-runtime-adapters.json` document contains repository-aut
 - Per-surface repository baseline status and reason code.
 - Completion policy and Phase 2C check mapping.
 
-Runtime discovery is a separate ephemeral snapshot supplied through an explicit `--runtime-snapshot` input. Repository files cannot create or modify that snapshot and can never self-promote `ENFORCED`. A snapshot is trusted only when its producer identifier is allowlisted by the supported-host entry, its host version satisfies the minimum, its observation time is no more than 300 seconds old, its one-use challenge matches the gate invocation challenge, and every claimed blocking callback passes the host producer's pre-execution challenge result. Phase 3A fixtures may model this protocol but are never trusted runtime evidence.
+Runtime discovery is a separate ephemeral snapshot supplied through an explicit `--runtime-snapshot` input. Repository files cannot create or modify that snapshot and can never self-promote `ENFORCED`. Each future supported-host entry must pin an Ed25519 public-key fingerprint and producer identifier. The host producer signs the RFC 8785 canonical JSON bytes of the snapshot without its `signature` member; the gate verifies the detached signature against the pinned key before reading capability claims. The private key remains host-owned and is never accepted from the repository, environment variables, command arguments, or the snapshot itself.
+
+A signed snapshot is trusted only when its signature and producer identifier match the supported-host entry, its host version satisfies the minimum, its observation time is no more than 300 seconds old, its one-use challenge matches the gate invocation challenge, and every claimed blocking callback passes the signed host producer pre-execution challenge result. Signature failure, unknown key, replay, or unavailable signature verification is `BLOCKED` for a supported host. Because the Phase 3A supported-host registry is empty, the implementation accepts no snapshot as trusted runtime evidence. Temporary fixtures validate rejection and contract shape only; they cannot produce real trusted evidence.
 
 Runtime observations override repository defaults only after every trust check passes. Missing, malformed, stale, replayed, repository-authored, or unallowlisted snapshots are rejected and completion-blocking. Allowed status transitions are `NOT_CONFIGURED -> AUDIT_ONLY -> ENFORCED`. `UNSUPPORTED` may become `NOT_CONFIGURED` only after the host identity and minimum version enter the supported-host registry. An adapter cannot jump to `ENFORCED` without a fresh trusted snapshot and a verified blocking callback for that surface.
 
@@ -91,19 +93,19 @@ Repository-only workflows may continue to report their existing qualified Phase 
 
 ## Phase 2C Integration
 
-Phase 3A adds a `native-runtime-adapter` leaf check to every Phase 2C change type without changing the approved minimum verification levels. It is optional for ordinary repository-only completion evaluation, where `UNSUPPORTED` or `NOT_CONFIGURED` must remain explicitly visible and cannot be presented as native enforcement. It becomes required for the separately qualified `Phase 3A host-native enforcement` completion claim for every change type. The Phase 2C result mapping remains authoritative when the leaf is required:
+Phase 3A adds `native-runtime-adapter` as a required leaf check to every Phase 2C change type without changing the approved minimum verification levels. The Phase 3A evaluator normalizes an `UNSUPPORTED` host to a Phase 2C `NOT_APPLICABLE` leaf with the host and four surface statuses retained in its reason and evidence contract. For a host present in the supported-host registry, `NOT_CONFIGURED`, stale discovery, signature failure, adapter fault, redaction uncertainty, or an unresolved attempt becomes `BLOCKED`; it can never pass ordinary or Phase 3A-qualified completion. This makes supported hosts completion-blocking while allowing unsupported hosts to continue only with an explicit repository-only qualification.
 
 - Valid required surfaces at `ENFORCED` with no unresolved bypass attempts: `PASS`.
 - Missing or stale required capability: `NOT_CONFIGURED`, mapped to overall `BLOCKED` when required.
 - Adapter or redaction failure: `BLOCKED`.
 - A bypass allowed despite an `ENFORCED` declaration, or an invalid contract: `FAIL`.
-- Host-native enforcement explicitly outside an optional gate: `NOT_APPLICABLE`.
+- Unsupported host-native enforcement: adapter result `UNSUPPORTED`, normalized to Phase 2C leaf `NOT_APPLICABLE` with an explicit repository-only qualification.
 
 Phase 1B-3 integrity results do not satisfy this leaf and cannot establish verification completeness.
 
 ## Verification Strategy
 
-Tests validate schemas, status transitions, discovery freshness, minimum versions, hook-specific semantics, bypass normalization, redaction, completion blocking, Phase 2C mapping, repository gateway authority, and current-host `NOT_CONFIGURED` behavior. All mutable artifacts are written under temporary directories.
+Tests validate schemas, status transitions, discovery freshness, minimum versions, signature and producer rejection, hook-specific semantics, bypass normalization, redaction, completion blocking, Phase 2C mapping, repository gateway authority, and current-host `UNSUPPORTED` behavior. All mutable artifacts are written under temporary directories.
 
 Static checks confirm that no repository `.ai-runs`, non-fixture `artifact-manifest.json`, finalized non-fixture `run.json`, or registry `VERIFIED` promotion is created.
 
