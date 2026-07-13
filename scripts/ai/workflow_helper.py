@@ -6037,44 +6037,33 @@ def load_verified_leaf_results(root, refs_file, task_key, gate_invocation_id, co
             "producerId": policy_check["producerId"],
             "evidenceSchema": policy_check["evidenceSchema"],
         }
-        by_id[check_id] = verified_leaf_result(root, reference, expected, policy_sha256)
+        verified = verified_leaf_result(root, reference, expected, policy_sha256)
+        verified["leafResultRef"] = Path(reference).as_posix()
+        verified["leafResultSha256"] = digest(resolve_repository_file(root, reference))
+        by_id[check_id] = verified
     return by_id
 
 
-def default_leaf_result_for_check(check_id, policy_check):
-    if check_id in ("review-gate", "done-claim-gate"):
-        return {
-            "checkId": check_id,
-            "result": "NOT_CONFIGURED",
-            "evidenceRef": None,
-            "reason": "Explicit Phase 2C review or done-claim leaf evidence was not provided.",
-        }
-    if policy_check.get("registryCommandId") is None:
-        return {
-            "checkId": check_id,
-            "result": "PASS",
-            "evidenceRef": "ai/verification-policy.json",
-            "reason": "Static Phase 2C gate input is satisfied by canonical policy and reviewable documents.",
-        }
+def default_leaf_result_for_check(check_id, _policy_check):
     return {
         "checkId": check_id,
         "result": "NOT_CONFIGURED",
         "evidenceRef": None,
-        "reason": "No leaf evidence was provided for this registry-backed check.",
+        "reason": "No verified leaf evidence was provided for this check.",
     }
 
 
-def map_verification_leaf(raw_result, required):
+def map_verification_leaf(raw_result, required, policy_allows_na):
+    if raw_result == "FAIL":
+        return "FAIL"
     if raw_result == "PASS":
         return "PASS"
-    if raw_result == "FAIL":
-        return "FAIL" if required else "NOT_APPLICABLE"
+    if raw_result == "NOT_APPLICABLE":
+        return "NOT_APPLICABLE" if policy_allows_na else "BLOCKED"
     if raw_result in ("BLOCKED", "NOT_CONFIGURED"):
         return "BLOCKED" if required else "NOT_APPLICABLE"
-    if raw_result == "NOT_APPLICABLE":
-        return "NOT_APPLICABLE"
     if raw_result == "SKIPPED_WITH_REASON":
-        return "SKIPPED_WITH_REASON" if not required else "BLOCKED"
+        return "BLOCKED" if required else "SKIPPED_WITH_REASON"
     return "BLOCKED"
 
 
@@ -6085,6 +6074,26 @@ def aggregate_verification_gate(mapped_checks):
     if "BLOCKED" in mapped_results or "NOT_CONFIGURED" in mapped_results:
         return "BLOCKED"
     return "PASS"
+
+
+def verification_check_result(check_id, required, raw, mapped_result):
+    evidence = raw.get("evidence")
+    evidence_ref = raw.get("evidenceRef")
+    if evidence_ref is None and isinstance(evidence, dict):
+        evidence_ref = evidence.get("ref")
+    return {
+        "checkId": check_id,
+        "required": required,
+        "rawResult": raw["result"],
+        "mappedResult": mapped_result,
+        "reason": raw.get("reason"),
+        "evidenceRef": evidence_ref,
+        "leafResultRef": raw.get("leafResultRef"),
+        "leafResultSha256": raw.get("leafResultSha256"),
+        "producerId": raw.get("producerId"),
+        "commitSha": raw.get("commitSha"),
+        "policySha256": raw.get("policySha256"),
+    }
 
 
 NATIVE_ADAPTER_SURFACES = ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
@@ -6764,6 +6773,9 @@ def native_adapter_phase2c_leaf(root, task_key, gate_invocation_id, runtime_snap
         "checkId": NATIVE_ADAPTER_CHECK_ID,
         "result": adapter_result["phase2cLeafResult"],
         "evidenceRef": "ai/native-runtime-adapters.json",
+        "leafResultRef": adapter_result["$id"],
+        "leafResultSha256": hashlib.sha256(compact(adapter_result).encode("utf-8")).hexdigest(),
+        "producerId": NATIVE_ADAPTER_CHECK_ID,
         "reason": adapter_result["reason"],
     }
 
@@ -6898,7 +6910,9 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                       gate_invocation_id=None, runtime_snapshot_ref=None, bypass_attempts_ref=None):
     root = Path(root).resolve()
     try:
-        policy = validate_repository_instance(root, root / "ai" / "verification-policy.json")
+        policy_path = root / "ai" / "verification-policy.json"
+        policy = validate_repository_instance(root, policy_path)
+        policy_sha256 = digest(policy_path)
         change_types = {item["id"]: item for item in policy["changeTypes"]}
         checks = {item["id"]: item for item in policy["checks"]}
         if change_type not in change_types:
@@ -6911,11 +6925,12 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                 "POLICY_VIOLATION", "UNKNOWN_ENTRY_POINT", None,
             ), 4)
         change = change_types[change_type]
+        if leaf_results_ref is not None:
+            verification_leaf_references(root, leaf_results_ref)
+        commit_sha = repository_commit_sha(root)
         if leaf_results_ref is None:
             leaf_results = {}
         else:
-            verification_leaf_references(root, leaf_results_ref)
-            commit_sha = repository_commit_sha(root)
             leaf_results = load_verified_leaf_results(
                 root,
                 leaf_results_ref,
@@ -6931,25 +6946,31 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
             runtime_snapshot_ref,
             bypass_attempts_ref,
         )
+        native_policy_check = checks.get(NATIVE_ADAPTER_CHECK_ID)
+        if native_policy_check is None:
+            raise InvalidStateError([validation_error(
+                "VERIFICATION_POLICY_CHECK_INVALID",
+                message="verification policy does not define the internal native check",
+            )])
+        native_leaf["producerId"] = native_policy_check["producerId"]
+        native_leaf["commitSha"] = commit_sha
+        native_leaf["policySha256"] = policy_sha256
         if not all(
             isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
             for value in (task_key, gate_invocation_id)
         ):
             raw = native_leaf
-            mapped_result = map_verification_leaf(raw["result"], True)
+            mapped_result = map_verification_leaf(
+                raw["result"], True, raw.get("reason") == "HOST_UNSUPPORTED",
+            )
             data = {
                 "changeType": change_type,
                 "entryPoint": entry_point,
                 "minimumVerificationLevel": change["minimumVerificationLevel"],
                 "completenessEvaluated": True,
-                "checks": [{
-                    "checkId": NATIVE_ADAPTER_CHECK_ID,
-                    "required": True,
-                    "rawResult": raw["result"],
-                    "mappedResult": mapped_result,
-                    "reason": raw["reason"],
-                    "evidenceRef": raw["evidenceRef"],
-                }],
+                "checks": [verification_check_result(
+                    NATIVE_ADAPTER_CHECK_ID, True, raw, mapped_result,
+                )],
                 "createdAiRuns": False,
             }
             overall = aggregate_verification_gate(data["checks"])
@@ -6957,22 +6978,20 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                 overall, None if overall == "PASS" else "VERIFICATION_GATE_" + overall, data,
             ), verification_gate_exit(overall))
         if entry_point not in change["entryPoints"]:
-            native_check = {
-                "checkId": NATIVE_ADAPTER_CHECK_ID,
-                "required": True,
-                "rawResult": native_leaf["result"],
-                "mappedResult": map_verification_leaf(native_leaf["result"], True),
-                "reason": native_leaf["reason"],
-                "evidenceRef": native_leaf["evidenceRef"],
-            }
-            entry_point_check = {
-                "checkId": entry_point,
-                "required": False,
-                "rawResult": "NOT_APPLICABLE",
-                "mappedResult": "NOT_APPLICABLE",
+            native_check = verification_check_result(
+                NATIVE_ADAPTER_CHECK_ID,
+                True,
+                native_leaf,
+                map_verification_leaf(
+                    native_leaf["result"], True,
+                    native_leaf.get("reason") == "HOST_UNSUPPORTED",
+                ),
+            )
+            entry_point_check = verification_check_result(entry_point, False, {
+                "result": "NOT_APPLICABLE",
                 "reason": "Entry point is not applicable to the selected change type.",
                 "evidenceRef": "ai/verification-policy.json",
-            }
+            }, "NOT_APPLICABLE")
             if native_check["mappedResult"] in {"BLOCKED", "FAIL"}:
                 data = {
                     "changeType": change_type,
@@ -7012,14 +7031,19 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                 raw = leaf_results.get(check_id, default_leaf_result_for_check(check_id, policy_check))
             required = check_id in change["requiredChecks"]
             raw_result = raw["result"]
-            mapped_checks.append({
-                "checkId": check_id,
-                "required": required,
-                "rawResult": raw_result,
-                "mappedResult": map_verification_leaf(raw_result, required),
-                "reason": raw.get("reason"),
-                "evidenceRef": raw.get("evidenceRef"),
-            })
+            mapped_checks.append(verification_check_result(
+                check_id,
+                required,
+                raw,
+                map_verification_leaf(
+                    raw_result,
+                    required,
+                    (
+                        check_id == NATIVE_ADAPTER_CHECK_ID
+                        and raw.get("reason") == "HOST_UNSUPPORTED"
+                    ) or change_type in policy_check["notApplicableFor"],
+                ),
+            ))
         overall = aggregate_verification_gate(mapped_checks)
         data = {
             "changeType": change_type,

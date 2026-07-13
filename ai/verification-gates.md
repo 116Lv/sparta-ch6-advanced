@@ -24,11 +24,15 @@ Verification completeness means every required check for the selected change typ
 
 - `NOT_CONFIGURED` on a required check maps to `BLOCKED`.
 - `NOT_CONFIGURED` on an irrelevant or optional check maps to `NOT_APPLICABLE`.
-- `NOT_APPLICABLE` is allowed only when the selected change type makes the check irrelevant.
+- A missing non-native leaf is `NOT_CONFIGURED`; canonical policy describes configuration and applicability but never supplies leaf `PASS` evidence.
+- Caller-supplied `NOT_APPLICABLE` is allowed only when the selected change type appears in that check's canonical `notApplicableFor` array. Otherwise it maps to `BLOCKED`, including for required checks.
+- The internal native adapter's canonical unsupported-host result remains the sole non-caller exception and keeps the explicit repository-only qualification.
 - `BLOCKED` on a required check remains `BLOCKED`.
-- `FAIL` on a required check remains `FAIL`.
+- `FAIL` remains visible as `FAIL` for required and optional checks, and takes precedence over `BLOCKED` in the aggregate result.
 
 `NOT_APPLICABLE` may be displayed as `N/A` in Markdown summaries, but executable JSON stores `NOT_APPLICABLE`.
+
+Every check output carries nullable verified-leaf identity fields. A verified external leaf records its `leafResultRef`, raw-byte `leafResultSha256`, `producerId`, `commitSha`, and canonical `policySha256`; its `evidenceRef` points to the bound evidence artifact when present. The internal native leaf records `ai/native-adapter-result.json`, the SHA-256 of that canonical in-process result, the canonical producer, checked-out commit, and canonical policy digest. Missing or policy-derived checks keep leaf identity fields null rather than implying verified evidence.
 
 ## Native Runtime Adapter Leaf
 
