@@ -17,7 +17,7 @@
     "data": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hostId", "hostVersion", "surfaces", "bypassAttemptRefs", "repositoryOnlyQualification"],
+      "required": ["hostId", "hostVersion", "surfaces", "bypassAttemptRefs", "repositoryOnlyQualification", "phase2CLeafResult"],
       "properties": {
         "hostId": { "$ref": "#/$defs/identifier" },
         "hostVersion": { "$ref": "#/$defs/version" },
@@ -29,11 +29,11 @@
     }
   },
   "allOf": [
-    { "if": { "properties": { "result": { "const": "PASS" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "PASS" } } } },
-    { "if": { "properties": { "result": { "const": "FAIL" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "FAIL" } } } },
-    { "if": { "properties": { "result": { "const": "BLOCKED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "BLOCKED" } } } },
-    { "if": { "properties": { "result": { "const": "NOT_CONFIGURED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "NOT_CONFIGURED" } } } },
-    { "if": { "properties": { "result": { "const": "UNSUPPORTED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "NOT_APPLICABLE" } } } }
+    { "if": { "properties": { "result": { "const": "PASS" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "PASS" }, "data": { "properties": { "phase2CLeafResult": { "const": "PASS" } } } } } },
+    { "if": { "properties": { "result": { "const": "FAIL" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "FAIL" }, "data": { "properties": { "phase2CLeafResult": { "const": "FAIL" } } } } } },
+    { "if": { "properties": { "result": { "const": "BLOCKED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "BLOCKED" }, "data": { "properties": { "phase2CLeafResult": { "const": "BLOCKED" } } } } } },
+    { "if": { "properties": { "result": { "const": "NOT_CONFIGURED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "NOT_CONFIGURED" }, "data": { "properties": { "phase2CLeafResult": { "const": "NOT_CONFIGURED" } } } } } },
+    { "if": { "properties": { "result": { "const": "UNSUPPORTED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "NOT_APPLICABLE" }, "data": { "properties": { "phase2CLeafResult": { "const": "NOT_APPLICABLE" } } } } } }
   ],
   "$defs": {
     "identifier": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },

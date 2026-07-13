@@ -6570,6 +6570,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 "surfaces": Phase3ANativeRuntimeAdapterTests.unsupported_surfaces(),
                 "bypassAttemptRefs": [],
                 "repositoryOnlyQualification": True,
+                "phase2CLeafResult": "NOT_APPLICABLE",
             },
         }
 
@@ -6638,6 +6639,12 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         result = self.adapter_result()
         result["phase2cLeafResult"] = "UNSUPPORTED"
         self.assert_invalid("native-adapter-result", result)
+        result = self.adapter_result()
+        del result["data"]["phase2CLeafResult"]
+        self.assert_invalid("native-adapter-result", result)
+        result = self.adapter_result()
+        result["data"]["phase2CLeafResult"] = "PASS"
+        self.assert_invalid("native-adapter-result", result)
 
     def test_bypass_lifecycle_requires_consistent_resolution_and_correlation(self):
         attempt = self.bypass_attempt()
@@ -6691,10 +6698,35 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(result["data"]["phase2CLeafResult"], "NOT_APPLICABLE")
         self.assertFalse((self.root / ".ai-runs").exists())
 
-    def test_repository_authored_or_unsigned_snapshot_cannot_self_promote(self):
-        snapshot = self.write_temp_snapshot({"producerId": "fixture", "surfaces": []})
+    def test_contract_valid_snapshot_cannot_self_promote_on_unsupported_host(self):
+        snapshot = self.write_temp_snapshot({
+            "fresh": True,
+            "signatureValid": True,
+            "callbackStatus": "OK",
+            "surfaces": [
+                {"surface": surface, "status": "ENFORCED", "reasonCode": "FIXTURE_ONLY"}
+                for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+            ],
+        })
         result, status = self.helper.native_adapter_gate(self.root, "issue-10", "gate-2", snapshot)
         self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
+
+    def test_supplied_runtime_snapshot_is_validated_before_unsupported_host_fallback(self):
+        invalid_snapshots = (
+            {},
+            {
+                "fresh": False,
+                "signatureValid": True,
+                "callbackStatus": "OK",
+                "surfaces": self.supported_surfaces(),
+            },
+        )
+        for snapshot in invalid_snapshots:
+            with self.subTest(snapshot=snapshot):
+                result, status = self.helper.native_adapter_gate(
+                    self.root, "issue-10", "gate-1", self.write_temp_snapshot(snapshot),
+                )
+                self.assertEqual((result["result"], status), ("BLOCKED", 2))
 
     def test_invalid_runtime_snapshot_reference_blocks_before_unsupported_host_fallback(self):
         result, status = self.helper.native_adapter_gate(
@@ -6764,6 +6796,15 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "Authorization: Bearer abc",
             "Cookie: session=abc",
             "password=abc",
+            "password: abc",
+            "secret: abc",
+            "token: abc",
+            "api_key: abc",
+            "credential: abc",
+            "Authorization: Basic dXNlcjpwYXNz",
+            "Basic dXNlcjpwYXNz",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature",
+            "-----BEGIN PRIVATE KEY-----",
             "raw request body: {\"password\": \"abc\"}",
             "request body: {\"password\": \"abc\"}",
             "raw payload: token=abc",
@@ -6784,6 +6825,24 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                     self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
                 )
                 self.assertEqual((result["result"], status), ("FAIL", 1))
+
+    def test_bypass_summary_allows_ordinary_non_secret_descriptions(self):
+        attempt = self.valid_attempt(
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            summary={
+                "target": "repository-relative-path",
+                "argumentSummary": "credential handling documentation",
+                "querySummary": "token budget metadata",
+                "toolPayloadSummary": "basic classification only",
+            },
+        )
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+        self.assertEqual(result["reason"], "NATIVE_BYPASS_RESOLUTION_INVALID")
 
     def test_bypass_resolution_requires_prior_detection_and_remains_untrusted_in_phase_3a(self):
         prior_detected = self.valid_attempt(

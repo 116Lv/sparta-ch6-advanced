@@ -2,6 +2,7 @@
 """Phase 1B helper owns closed gateway validation and POSIX-only command orchestration."""
 
 import argparse
+import base64
 import codecs
 import ctypes
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -5667,15 +5668,31 @@ def aggregate_verification_gate(mapped_checks):
 NATIVE_ADAPTER_SURFACES = ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
 NATIVE_SUMMARY_MAX_BYTES = 512
 NATIVE_SECRET_BEARING_SUMMARY = re.compile(
-    r"(?:\bauthorization\s*:|\bbearer\s+\S+|\bcookie\s*:|"
-    r"\b(?:password|passwd|secret|token|api[-_]?key|credential)\s*=|"
+    r"(?:\bauthorization\s*:\s*(?:bearer|basic)\s+\S+|\bbearer\s+\S+|\bcookie\s*:|"
+    r"\b(?:password|passwd|secret|token|api[-_]?key|credential)\s*(?:=|:)\s*\S+|"
+    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])|"
+    r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|"
     r"\b(?:request\s+body|raw\s+(?:credentials?|payload|query|argv|env(?:ironment)?)))",
     re.IGNORECASE,
 )
+NATIVE_BASIC_CREDENTIAL = re.compile(r"\bbasic\s+([A-Za-z0-9+/]+={0,2})(?=$|[\s,;])", re.IGNORECASE)
 
 
 class NativeBypassContractError(ValueError):
     pass
+
+
+def native_summary_has_secret(value):
+    if NATIVE_SECRET_BEARING_SUMMARY.search(value):
+        return True
+    for match in NATIVE_BASIC_CREDENTIAL.finditer(value):
+        try:
+            decoded = base64.b64decode(match.group(1), validate=True)
+        except ValueError:
+            continue
+        if b":" in decoded:
+            return True
+    return False
 
 
 def native_adapter_gate_result(result, reason, data):
@@ -5796,7 +5813,7 @@ def load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invoca
             for value in attempt["summary"].values():
                 if (len(value) > NATIVE_SUMMARY_MAX_BYTES
                         or len(value.encode("utf-8")) > NATIVE_SUMMARY_MAX_BYTES
-                        or NATIVE_SECRET_BEARING_SUMMARY.search(value)):
+                        or native_summary_has_secret(value)):
                     raise ValueError("native bypass summary is not safely redacted")
             event_id = attempt["eventId"]
             serialized = compact(attempt)
@@ -5868,6 +5885,20 @@ def native_snapshot_surfaces(snapshot, fallback_surfaces):
     return normalized, True
 
 
+def native_runtime_snapshot_contract(snapshot, fallback_surfaces):
+    required_fields = {"fresh", "signatureValid", "callbackStatus", "surfaces"}
+    if not isinstance(snapshot, dict) or set(snapshot) != required_fields:
+        return fallback_surfaces, "NATIVE_ADAPTER_SNAPSHOT_INVALID"
+    if not isinstance(snapshot["fresh"], bool) or not isinstance(snapshot["signatureValid"], bool):
+        return fallback_surfaces, "NATIVE_ADAPTER_SNAPSHOT_INVALID"
+    if snapshot["callbackStatus"] not in ("OK", "FAILED"):
+        return fallback_surfaces, "NATIVE_ADAPTER_SNAPSHOT_INVALID"
+    surfaces, valid_surfaces = native_snapshot_surfaces(snapshot, fallback_surfaces)
+    if not valid_surfaces:
+        return fallback_surfaces, "NATIVE_ADAPTER_SNAPSHOT_INVALID"
+    return surfaces, None
+
+
 def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref=None, bypass_attempts_ref=None,
                         policy_ref="ai/native-runtime-adapters.json"):
     root = Path(root).resolve()
@@ -5892,10 +5923,27 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
             )
 
         snapshot = None
+        snapshot_surfaces = None
         if runtime_snapshot_ref is not None:
             snapshot = read_json(native_adapter_fixture_path(root, runtime_snapshot_ref))
-            if not isinstance(snapshot, dict):
-                raise ValueError("native runtime snapshot must be an object")
+            snapshot_surfaces, snapshot_error = native_runtime_snapshot_contract(snapshot, current_host["surfaces"])
+            snapshot_data = native_adapter_data(current_host, snapshot_surfaces, attempt_refs)
+            if snapshot_error is not None:
+                return publish_native_adapter_gate_result(
+                    root, native_adapter_gate_result("BLOCKED", snapshot_error, snapshot_data), 2,
+                )
+            if snapshot["fresh"] is not True:
+                return publish_native_adapter_gate_result(
+                    root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SNAPSHOT_STALE", snapshot_data), 2,
+                )
+            if snapshot["signatureValid"] is not True:
+                return publish_native_adapter_gate_result(
+                    root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SIGNATURE_UNTRUSTED", snapshot_data), 2,
+                )
+            if snapshot["callbackStatus"] != "OK":
+                return publish_native_adapter_gate_result(
+                    root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_CALLBACK_FAILED", snapshot_data), 2,
+                )
 
         lifecycle_state = native_bypass_lifecycle_state(attempts, gate_invocation_id)
         if lifecycle_state == "UNRESOLVED":
@@ -5922,24 +5970,7 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                 root, native_adapter_gate_result("NOT_CONFIGURED", "NATIVE_ADAPTER_NOT_CONFIGURED", supported_data), 3,
             )
 
-        snapshot_surfaces, valid_surfaces = native_snapshot_surfaces(snapshot, supported_host["surfaces"])
         snapshot_data = native_adapter_data(current_host, snapshot_surfaces, attempt_refs)
-        if snapshot.get("fresh") is not True:
-            return publish_native_adapter_gate_result(
-                root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SNAPSHOT_STALE", snapshot_data), 2,
-            )
-        if snapshot.get("signatureValid") is not True:
-            return publish_native_adapter_gate_result(
-                root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SIGNATURE_UNTRUSTED", snapshot_data), 2,
-            )
-        if snapshot.get("callbackStatus") != "OK":
-            return publish_native_adapter_gate_result(
-                root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_CALLBACK_FAILED", snapshot_data), 2,
-            )
-        if not valid_surfaces:
-            return publish_native_adapter_gate_result(
-                root, native_adapter_gate_result("NOT_CONFIGURED", "NATIVE_ADAPTER_SURFACES_NOT_CONFIGURED", snapshot_data), 3,
-            )
         if any(surface["status"] != "ENFORCED" for surface in snapshot_surfaces):
             return publish_native_adapter_gate_result(
                 root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_ENFORCEMENT_INCOMPLETE", snapshot_data), 2,
