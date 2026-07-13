@@ -5670,8 +5670,9 @@ def aggregate_verification_gate(mapped_checks):
 
 NATIVE_ADAPTER_SURFACES = ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
 NATIVE_SUMMARY_MAX_BYTES = 512
+NATIVE_ADAPTER_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 NATIVE_SECRET_BEARING_SUMMARY = re.compile(
-    r"(?:\bauthorization\s*:\s*(?:bearer|basic)\s+\S+|\bcookie\s*:|"
+    r"(?:\bauthorization\s*:\s*(?:bearer|basic)\s+\S+|\bcookies?\s*(?:=|:)|"
     r"\b(?:password|passwd|secret|token|api[-_]?key|credential)\s*(?:=|:)\s*\S+|"
     r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])|"
     r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|"
@@ -5913,6 +5914,15 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
     root = Path(root).resolve()
     fallback_data = native_adapter_fallback_data()
     try:
+        if not all(
+            isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
+            for value in (task_key, gate_invocation_id)
+        ):
+            return publish_native_adapter_gate_result(
+                root,
+                native_adapter_gate_result("BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS", fallback_data),
+                2,
+            )
         policy_path = native_adapter_fixture_path(root, policy_ref, canonical=True)
         policy = validate_repository_instance(root, policy_path)
         current_host = policy["currentHost"]
@@ -5932,35 +5942,31 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
             )
 
         supported_host = native_adapter_supported_host(policy)
-        if supported_host is None and runtime_snapshot_ref is not None:
-            return publish_native_adapter_gate_result(
-                root,
-                native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_UNTRUSTED_UNSUPPORTED_PRODUCER", data),
-                2,
-            )
-
         snapshot = None
         snapshot_surfaces = None
         if runtime_snapshot_ref is not None:
             snapshot = read_json(native_adapter_fixture_path(root, runtime_snapshot_ref))
-            snapshot_surfaces, snapshot_error = native_runtime_snapshot_contract(snapshot, current_host["surfaces"])
-            snapshot_data = native_adapter_data(current_host, snapshot_surfaces, attempt_refs)
-            if snapshot_error is not None:
-                return publish_native_adapter_gate_result(
-                    root, native_adapter_gate_result("BLOCKED", snapshot_error, snapshot_data), 2,
-                )
-            if snapshot["fresh"] is not True:
-                return publish_native_adapter_gate_result(
-                    root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SNAPSHOT_STALE", snapshot_data), 2,
-                )
-            if snapshot["signatureValid"] is not True:
-                return publish_native_adapter_gate_result(
-                    root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SIGNATURE_UNTRUSTED", snapshot_data), 2,
-                )
-            if snapshot["callbackStatus"] != "OK":
-                return publish_native_adapter_gate_result(
-                    root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_CALLBACK_FAILED", snapshot_data), 2,
-                )
+            if not isinstance(snapshot, dict):
+                raise ValueError("native runtime snapshot must be a JSON object")
+            if supported_host is not None:
+                snapshot_surfaces, snapshot_error = native_runtime_snapshot_contract(snapshot, current_host["surfaces"])
+                snapshot_data = native_adapter_data(current_host, snapshot_surfaces, attempt_refs)
+                if snapshot_error is not None:
+                    return publish_native_adapter_gate_result(
+                        root, native_adapter_gate_result("BLOCKED", snapshot_error, snapshot_data), 2,
+                    )
+                if snapshot["fresh"] is not True:
+                    return publish_native_adapter_gate_result(
+                        root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SNAPSHOT_STALE", snapshot_data), 2,
+                    )
+                if snapshot["signatureValid"] is not True:
+                    return publish_native_adapter_gate_result(
+                        root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SIGNATURE_UNTRUSTED", snapshot_data), 2,
+                    )
+                if snapshot["callbackStatus"] != "OK":
+                    return publish_native_adapter_gate_result(
+                        root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_CALLBACK_FAILED", snapshot_data), 2,
+                    )
 
         lifecycle_state = native_bypass_lifecycle_state(attempts, gate_invocation_id)
         if lifecycle_state == "UNRESOLVED":
@@ -6006,6 +6012,19 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
 
 def run_native_adapter_gate_cli(arguments):
     root = Path(arguments.repository_root).resolve()
+    if not all(
+        isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
+        for value in (arguments.task_key, arguments.gate_invocation_id)
+    ) or any(value == "" for value in (arguments.runtime_snapshot, arguments.bypass_attempts) if value is not None):
+        result, status = invalid_cli_result("native-adapter-gate")
+        print(compact(result))
+        return result, status
+    if not isinstance(arguments.output, str) or not arguments.output:
+        result = native_adapter_gate_result(
+            "BLOCKED", "NATIVE_ADAPTER_OUTPUT_PATH_INVALID", native_adapter_fallback_data(),
+        )
+        print(compact(result))
+        return result, 2
     result, status = native_adapter_gate(
         root,
         arguments.task_key,
@@ -6015,11 +6034,13 @@ def run_native_adapter_gate_cli(arguments):
     )
     output_status = write_resolve_output(root, arguments.output, result)
     if output_status != 0:
-        return publish_native_adapter_gate_result(
+        fallback, fallback_status = publish_native_adapter_gate_result(
             root,
             native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_OUTPUT_PATH_INVALID", native_adapter_fallback_data()),
             2,
         )
+        print(compact(fallback))
+        return fallback, fallback_status
     return result, status
 
 

@@ -3,6 +3,8 @@ set -eu
 
 runtime_snapshot=
 bypass_attempts=
+runtime_snapshot_supplied=false
+bypass_attempts_supplied=false
 if [ "$#" -eq 6 ] && [ "$1" = "--task-key" ] && [ "$3" = "--gate-invocation-id" ] && [ "$5" = "--output" ]; then
   task_key=$2
   gate_invocation_id=$4
@@ -11,17 +13,21 @@ elif [ "$#" -eq 8 ] && [ "$1" = "--task-key" ] && [ "$3" = "--gate-invocation-id
   task_key=$2
   gate_invocation_id=$4
   runtime_snapshot=$6
+  runtime_snapshot_supplied=true
   output=$8
 elif [ "$#" -eq 8 ] && [ "$1" = "--task-key" ] && [ "$3" = "--gate-invocation-id" ] && [ "$5" = "--bypass-attempts" ] && [ "$7" = "--output" ]; then
   task_key=$2
   gate_invocation_id=$4
   bypass_attempts=$6
+  bypass_attempts_supplied=true
   output=$8
 elif [ "$#" -eq 10 ] && [ "$1" = "--task-key" ] && [ "$3" = "--gate-invocation-id" ] && [ "$5" = "--runtime-snapshot" ] && [ "$7" = "--bypass-attempts" ] && [ "$9" = "--output" ]; then
   task_key=$2
   gate_invocation_id=$4
   runtime_snapshot=$6
   bypass_attempts=$8
+  runtime_snapshot_supplied=true
+  bypass_attempts_supplied=true
   output=${10}
 else
   printf '%s\n' '{"$schema":"ai/schemas/native-adapter-result.schema.json","$id":"ai/native-adapter-result.json","schemaVersion":1,"operation":"NATIVE_ADAPTER_GATE","result":"BLOCKED","phase2cLeafResult":"BLOCKED","reason":"INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS","data":{"hostId":"unknown-host","hostVersion":"0.0.0","surfaces":[{"surface":"COMMAND","status":"NOT_CONFIGURED","reasonCode":"INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS"},{"surface":"FILE_READ","status":"NOT_CONFIGURED","reasonCode":"INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS"},{"surface":"SEARCH","status":"NOT_CONFIGURED","reasonCode":"INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS"},{"surface":"TOOL_CALL","status":"NOT_CONFIGURED","reasonCode":"INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS"}],"bypassAttemptRefs":[],"repositoryOnlyQualification":true,"phase2CLeafResult":"BLOCKED"}}'
@@ -42,10 +48,10 @@ for candidate_name in python3 python; do
   case "$result" in
     3\|Draft202012Validator\|FormatChecker)
       command=("$candidate" scripts/ai/workflow_helper.py native-adapter-gate --repository-root "$ROOT" --task-key "$task_key" --gate-invocation-id "$gate_invocation_id")
-      if [ -n "$runtime_snapshot" ]; then
+      if [ "$runtime_snapshot_supplied" = true ]; then
         command+=(--runtime-snapshot "$runtime_snapshot")
       fi
-      if [ -n "$bypass_attempts" ]; then
+      if [ "$bypass_attempts_supplied" = true ]; then
         command+=(--bypass-attempts "$bypass_attempts")
       fi
       command+=(--output "$output")

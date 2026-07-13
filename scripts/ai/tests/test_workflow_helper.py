@@ -6755,7 +6755,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(result["data"]["phase2CLeafResult"], "NOT_APPLICABLE")
         self.assertFalse((self.root / ".ai-runs").exists())
 
-    def test_snapshot_for_unsupported_host_blocks_as_untrusted_producer(self):
+    def test_canonical_empty_supported_hosts_ignores_snapshot_promotion(self):
         snapshot = self.write_temp_snapshot({
             "fresh": True,
             "signatureValid": True,
@@ -6766,10 +6766,12 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             ],
         })
         result, status = self.helper.native_adapter_gate(self.root, "issue-10", "gate-2", snapshot)
-        self.assertEqual((result["result"], status), ("BLOCKED", 2))
-        self.assertEqual(result["reason"], "NATIVE_ADAPTER_UNTRUSTED_UNSUPPORTED_PRODUCER")
+        self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
+        self.assertEqual((result["reason"], result["phase2cLeafResult"]), (
+            "HOST_UNSUPPORTED", "NOT_APPLICABLE",
+        ))
 
-    def test_unsupported_host_snapshot_claims_block_without_trusted_producer(self):
+    def test_canonical_empty_supported_hosts_accepts_unsigned_snapshot_as_non_promoting_input(self):
         invalid_snapshots = (
             {},
             {
@@ -6784,14 +6786,28 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 result, status = self.helper.native_adapter_gate(
                     self.root, "issue-10", "gate-1", self.write_temp_snapshot(snapshot),
                 )
-                self.assertEqual((result["result"], status), ("BLOCKED", 2))
-                self.assertEqual(result["reason"], "NATIVE_ADAPTER_UNTRUSTED_UNSUPPORTED_PRODUCER")
+                self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
+                self.assertEqual(result["phase2cLeafResult"], "NOT_APPLICABLE")
 
     def test_invalid_runtime_snapshot_reference_blocks_before_unsupported_host_fallback(self):
         result, status = self.helper.native_adapter_gate(
             self.root, "issue-10", "gate-1", runtime_snapshot_ref="ai/runtime-snapshot.json",
         )
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+        malformed = self.write_fixture("runtime-snapshot.json", [])
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", runtime_snapshot_ref=malformed,
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_native_adapter_gate_rejects_empty_contract_identifiers(self):
+        for task_key, gate_invocation_id in (("", "gate-1"), ("issue-10", "")):
+            with self.subTest(task_key=task_key, gate_invocation_id=gate_invocation_id):
+                result, status = self.helper.native_adapter_gate(self.root, task_key, gate_invocation_id)
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS", 2,
+                ))
 
     def test_enforced_bypass_allowed_for_audit_is_a_failure_before_unsupported_host_fallback(self):
         attempt = self.valid_attempt(decision="ALLOWED_AUDIT_ONLY")
@@ -6854,6 +6870,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         secret_summaries = (
             "Authorization: Bearer abc",
             "Cookie: session=abc",
+            "cookie=session=abc",
+            "cookies=session=abc",
             "password=abc",
             "password: abc",
             "secret: abc",
@@ -7101,6 +7119,63 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual((result["operation"], result["result"]), ("NATIVE_ADAPTER_GATE", "UNSUPPORTED"))
         self.assertFalse((REPOSITORY_ROOT / ".ai-runs").exists())
+
+    def test_native_adapter_cli_semantic_arguments_and_invalid_output_are_structured(self):
+        invalid_cases = (
+            ("--task-key", ""),
+            ("--gate-invocation-id", ""),
+            ("--runtime-snapshot", ""),
+            ("--bypass-attempts", ""),
+            ("--output", ""),
+            ("--output", "nested/result.json"),
+        )
+        for option, value in invalid_cases:
+            with self.subTest(option=option):
+                arguments = [
+                    "--repository-root", str(REPOSITORY_ROOT),
+                    "--task-key", "issue-10",
+                    "--gate-invocation-id", "gate-1",
+                    "--output", "-",
+                ]
+                if option in arguments:
+                    arguments[arguments.index(option) + 1] = value
+                else:
+                    arguments.extend([option, value])
+                completed = self.run_native_adapter_cli_subprocess(*arguments)
+                self.assertEqual(completed.returncode, 2, completed.stderr + completed.stdout)
+                self.assertNotIn("Traceback", completed.stderr)
+                result = json.loads(completed.stdout)
+                expected_reason = (
+                    "NATIVE_ADAPTER_OUTPUT_PATH_INVALID"
+                    if option == "--output" else "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS"
+                )
+                self.assertEqual((result["result"], result["reason"]), ("BLOCKED", expected_reason))
+
+    def test_native_adapter_shell_wrapper_preserves_explicit_empty_optional_arguments(self):
+        shell = REPOSITORY_ROOT / "scripts" / "ai" / "native-adapter-gate.sh"
+        bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        if not bash.is_file():
+            bash = Path("bash")
+        for option in ("--runtime-snapshot", "--bypass-attempts"):
+            with self.subTest(option=option):
+                completed = subprocess.run(
+                    [
+                        str(bash), str(shell), "--task-key", "issue-10", "--gate-invocation-id", "gate-1",
+                        option, "", "--output", "-",
+                    ],
+                    cwd=str(REPOSITORY_ROOT),
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 2, completed.stderr + completed.stdout)
+                result = json.loads(completed.stdout)
+                self.assertEqual((result["result"], result["reason"]), (
+                    "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+                ))
 
 
 if __name__ == "__main__":
