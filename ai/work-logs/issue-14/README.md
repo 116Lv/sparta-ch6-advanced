@@ -2,12 +2,12 @@
 issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 tracking_status: issue_backed
-status: in_review
+status: in_progress
 owning_feature: "none"
-current_owner: reviewer
+current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T08:08:42+09:00
+last_updated: 2026-07-14T08:25:56+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -77,7 +77,7 @@ Issue #14 tracks the isolated implementation and review of the four approved tru
 
 ## Current State
 
-Earlier tasks, Phase 3A host trust, and durable replay protection are approved. Original detection-resolution binding is under independent review.
+All Phase 1B-3, Phase 2, and Phase 3A tasks are approved. Phase 3B contract/enforcement status separation is next.
 
 ## Decisions
 
@@ -96,12 +96,12 @@ Earlier tasks, Phase 3A host trust, and durable replay protection are approved. 
 
 ## Next Handoff
 
-- Next role: reviewer
+- Next role: implementation-agent
 - Required reading:
   - [Trust-boundary design](../../docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md)
   - [Phase 1B-3 execution plan](../../docs/superpowers/plans/2026-07-14-phase-1b3-evidence-integrity-hardening.md)
 - Context links:
   - [Implementation role log](implementation-agent.md)
   - [Reviewer role log](reviewer.md)
-- Remaining work: Review global Task 9 / Phase 3A local Task 3.
-- Evidence required: Schema/lifecycle ordering, exact detection match/digest, signed resolution IDs, precedence and docs findings plus both verdicts.
+- Remaining work: Implement global Task 10 / Phase 3B local Task 1.
+- Evidence required: TDD RED/GREEN for contract versus enforcement status and NOT_CONFIGURED/BLOCKED required-check behavior, plus independent review.
