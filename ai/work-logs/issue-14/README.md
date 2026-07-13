@@ -2,12 +2,12 @@
 issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 tracking_status: issue_backed
-status: in_review
+status: in_progress
 owning_feature: "none"
-current_owner: reviewer
+current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T03:33:10+09:00
+last_updated: 2026-07-14T04:13:43+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -77,7 +77,7 @@ Issue #14 tracks the isolated implementation and review of the four approved tru
 
 ## Current State
 
-Global Tasks 1 and 2 are approved. Global Task 3 exact-CAS rollback implementation is under independent concurrency/recovery review.
+All three Phase 1B-3 tasks are independently approved after the durable-CAS recovery fix. Phase 2 verification-leaf hardening is next.
 
 ## Decisions
 
@@ -96,12 +96,12 @@ Global Tasks 1 and 2 are approved. Global Task 3 exact-CAS rollback implementati
 
 ## Next Handoff
 
-- Next role: reviewer
+- Next role: implementation-agent
 - Required reading:
   - [Trust-boundary design](../../docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md)
   - [Phase 1B-3 execution plan](../../docs/superpowers/plans/2026-07-14-phase-1b3-evidence-integrity-hardening.md)
 - Context links:
   - [Implementation role log](implementation-agent.md)
   - [Reviewer role log](reviewer.md)
-- Remaining work: Review global Task 3 / Phase 1B-3 local Task 3.
-- Evidence required: Lock-owner, exact-session CAS, publication-guard, cleanup-failure findings and both verdicts.
+- Remaining work: Implement global Task 4 / Phase 2 local Task 1.
+- Evidence required: TDD RED/GREEN for evidence-free and mismatched leaf inputs, commit range, and independent review.
