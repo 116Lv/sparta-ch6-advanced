@@ -107,6 +107,8 @@ SCHEMA_NAMES = (
     "artifact-manifest",
     "command-registry",
     "command-result",
+    "ci-capability-status",
+    "ci-gate-result",
     "context-map",
     "done-claim",
     "gateway-result",
@@ -6382,6 +6384,132 @@ def native_adapter_phase2c_leaf(root, task_key, gate_invocation_id, runtime_snap
     }
 
 
+
+
+CI_GATE_CHECK_ID = "phase-3b-ci-gates"
+
+
+def ci_evidence_gate_result(result, reason, data):
+    phase2c_leaf_result = {
+        "PASS": "PASS",
+        "FAIL": "FAIL",
+        "BLOCKED": "BLOCKED",
+        "NOT_CONFIGURED": "BLOCKED",
+        "UNSUPPORTED": "NOT_APPLICABLE",
+    }[result]
+    payload = {
+        "$schema": "ai/schemas/ci-gate-result.schema.json",
+        "$id": "ai/ci-gate-result.json",
+        "schemaVersion": 1,
+        "operation": "CI_EVIDENCE_GATE",
+        "result": result,
+        "phase2cLeafResult": phase2c_leaf_result,
+        "reason": reason,
+        "data": data,
+    }
+    payload["data"]["phase2CLeafResult"] = phase2c_leaf_result
+    return payload
+
+
+def ci_evidence_gate_exit(result):
+    return {
+        "PASS": 0,
+        "FAIL": 1,
+        "BLOCKED": 2,
+        "NOT_CONFIGURED": 3,
+        "UNSUPPORTED": 6,
+    }[result]
+
+
+def ci_evidence_gate_data(status, task_key, gate_invocation_id):
+    current_ci = status["currentCi"]
+    return {
+        "taskKey": task_key,
+        "gateInvocationId": gate_invocation_id,
+        "requiredCheck": current_ci["requiredCheck"],
+        "provider": current_ci["provider"],
+        "workflowRefs": current_ci["workflowRefs"],
+        "nativeAdapterInstallation": current_ci["nativeAdapterInstallation"],
+        "durableEvidence": current_ci["durableEvidence"],
+        "remoteRunner": current_ci["remoteRunner"],
+        "nativeAdapterLeaf": status["phase2cLink"],
+        "cachePolicy": status["cachePolicy"],
+        "phase2CLeafResult": "BLOCKED",
+    }
+
+
+def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-capability-status.json"):
+    root = Path(root).resolve()
+    fallback_data = {
+        "taskKey": task_key,
+        "gateInvocationId": gate_invocation_id,
+        "requiredCheck": CI_GATE_CHECK_ID,
+        "provider": "github-actions",
+        "workflowRefs": [],
+        "nativeAdapterInstallation": {"status": "NOT_CONFIGURED", "reasonCode": "CI_STATUS_UNAVAILABLE"},
+        "durableEvidence": {"status": "NOT_CONFIGURED", "retentionDays": 90, "artifactRefs": [], "retainedRun": None},
+        "remoteRunner": {"status": "NOT_CONFIGURED", "completionBlocking": True, "reasonCode": "CI_STATUS_UNAVAILABLE"},
+        "nativeAdapterLeaf": {"nativeAdapterCheckId": "native-runtime-adapter", "currentHostResult": "UNSUPPORTED"},
+        "cachePolicy": {"reuse": "FORBIDDEN_WITHOUT_MATCHING_RUN_ID", "handoff": "SUMMARY_ONLY"},
+        "phase2CLeafResult": "BLOCKED",
+    }
+    try:
+        if not all(isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value) for value in (task_key, gate_invocation_id)):
+            return ci_evidence_gate_result("BLOCKED", "INVALID_CI_GATE_ARGUMENTS", fallback_data), 2
+        status = validate_repository_instance(root, ci_status_ref)
+        data = ci_evidence_gate_data(status, task_key, gate_invocation_id)
+        workflows_configured = all((root / ref).is_file() for ref in status["currentCi"]["workflowRefs"])
+        evidence = status["currentCi"]["durableEvidence"]
+        native_install = status["currentCi"]["nativeAdapterInstallation"]
+        remote_runner = status["currentCi"]["remoteRunner"]
+        if not workflows_configured:
+            return ci_evidence_gate_result("NOT_CONFIGURED", "CI_WORKFLOW_NOT_CONFIGURED", data), 3
+        if evidence["status"] != "AVAILABLE":
+            return ci_evidence_gate_result("NOT_CONFIGURED", "CI_EVIDENCE_NOT_AVAILABLE", data), 3
+        retained_run = evidence.get("retainedRun")
+        artifact_refs = evidence.get("artifactRefs", [])
+        expected_bindings = {
+            "repository", "commitSha", "workflowRunId", "jobId", "attempt", "taskKey",
+            "gateInvocationId", "nativeAdapterStatusDigest", "bypassEventSetSha256", "resolutionEventIds",
+        }
+        if (
+            not isinstance(retained_run, dict)
+            or set(evidence.get("requiredBindings", [])) != expected_bindings
+            or not artifact_refs
+            or retained_run.get("taskKey") != task_key
+            or retained_run.get("gateInvocationId") != gate_invocation_id
+        ):
+            return ci_evidence_gate_result("BLOCKED", "CI_DURABLE_EVIDENCE_IDENTITY_MISSING", data), 2
+        if any(not (root / ref).is_file() for ref in artifact_refs):
+            return ci_evidence_gate_result("BLOCKED", "CI_DURABLE_EVIDENCE_ARTIFACT_MISSING", data), 2
+        if native_install["status"] != "INSTALLED":
+            return ci_evidence_gate_result("BLOCKED", "CI_NATIVE_ADAPTER_NOT_INSTALLED", data), 2
+        if remote_runner["status"] != "PASS":
+            return ci_evidence_gate_result("BLOCKED", "CI_REMOTE_RUNNER_NOT_PASSING", data), 2
+        return ci_evidence_gate_result("PASS", None, data), 0
+    except (InvalidStateError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError):
+        return ci_evidence_gate_result("BLOCKED", "CI_EVIDENCE_EVALUATION_INVALID", fallback_data), 2
+
+
+def run_ci_evidence_gate_cli(arguments):
+    result, status = ci_evidence_gate(
+        Path(arguments.repository_root).resolve(),
+        arguments.task_key,
+        arguments.gate_invocation_id,
+        arguments.ci_status,
+    )
+    output_status = write_resolve_output(Path(arguments.repository_root).resolve(), arguments.output, result)
+    if output_status != 0:
+        fallback, fallback_status = ci_evidence_gate(
+            Path(arguments.repository_root).resolve(), arguments.task_key, arguments.gate_invocation_id, arguments.ci_status,
+        )
+        fallback["result"] = "BLOCKED"
+        fallback["phase2cLeafResult"] = "BLOCKED"
+        fallback["reason"] = "CI_GATE_OUTPUT_PATH_INVALID"
+        print(compact(fallback))
+        return fallback, 2
+    return result, status
+
 def verification_gate(root, change_type, entry_point, leaf_results_ref=None, task_key=None,
                       gate_invocation_id=None, runtime_snapshot_ref=None, bypass_attempts_ref=None):
     root = Path(root).resolve()
@@ -6597,12 +6725,18 @@ def main():
     native_adapter_gate_parser.add_argument("--runtime-snapshot")
     native_adapter_gate_parser.add_argument("--bypass-attempts")
     native_adapter_gate_parser.add_argument("--output", required=True)
+    ci_evidence_gate_parser = subparsers.add_parser("ci-evidence-gate", add_help=False)
+    ci_evidence_gate_parser.add_argument("--repository-root", required=True)
+    ci_evidence_gate_parser.add_argument("--task-key", required=True)
+    ci_evidence_gate_parser.add_argument("--gate-invocation-id", required=True)
+    ci_evidence_gate_parser.add_argument("--ci-status", default="ai/ci-capability-status.json")
+    ci_evidence_gate_parser.add_argument("--output", required=True)
     try:
         arguments = parser.parse_args()
     except ValueError:
         if len(sys.argv) > 1 and sys.argv[1] in (
             "run-start", "pre-command", "execute-command", "post-command", "done-claim-prepare",
-            "verify-finalized", "verification-gate", "native-adapter-gate",
+            "verify-finalized", "verification-gate", "native-adapter-gate", "ci-evidence-gate",
         ):
             result, status = invalid_cli_result(sys.argv[1])
             print(compact(result))
@@ -6640,6 +6774,9 @@ def main():
         return status
     if arguments.operation == "native-adapter-gate":
         result, status = run_native_adapter_gate_cli(arguments)
+        return status
+    if arguments.operation == "ci-evidence-gate":
+        result, status = run_ci_evidence_gate_cli(arguments)
         return status
     result, status = run_resolve(arguments)
     result, status, output_status = publish_resolve_output(
