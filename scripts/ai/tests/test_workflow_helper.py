@@ -6605,6 +6605,33 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 del attempt[correlation_field]
                 self.assert_invalid("native-bypass-attempt", attempt)
 
+    def test_repository_helper_rejects_native_bypass_resolution_before_observation(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            schema_path = root / "ai/schemas/native-bypass-attempt.schema.json"
+            attempt_path = root / "ai/native-bypass-attempt.json"
+            schema_path.parent.mkdir(parents=True)
+            shutil.copyfile(REPOSITORY_ROOT / self.SCHEMA_PATHS["native-bypass-attempt"], schema_path)
+
+            valid_attempt = self.bypass_attempt()
+            valid_attempt.update({
+                "lifecycle": "RESOLVED",
+                "resolvedAt": "2026-07-13T01:00:01Z",
+                "resolutionReason": "REMEDIATED",
+            })
+            attempt_path.write_text(json.dumps(valid_attempt), encoding="utf-8")
+            self.helper.validate_repository_instance(root, "ai/native-bypass-attempt.json")
+
+            invalid_attempt = self.bypass_attempt()
+            invalid_attempt.update({
+                "lifecycle": "RESOLVED",
+                "resolvedAt": "2026-07-13T00:59:59Z",
+                "resolutionReason": "REMEDIATED",
+            })
+            attempt_path.write_text(json.dumps(invalid_attempt), encoding="utf-8")
+            with self.assertRaises(self.helper.InvalidStateError):
+                self.helper.validate_repository_instance(root, "ai/native-bypass-attempt.json")
+
 
 if __name__ == "__main__":
     unittest.main()

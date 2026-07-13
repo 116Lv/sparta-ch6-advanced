@@ -816,6 +816,24 @@ def validate(root, instance, schema_path):
     if errors:
         raise InvalidStateError(errors)
     validate_phase_1b2_contract(instance, schema_path)
+    if schema_path == "ai/schemas/native-bypass-attempt.schema.json":
+        validate_native_bypass_attempt(instance)
+
+
+def validate_native_bypass_attempt(instance):
+    if instance.get("lifecycle") != "RESOLVED":
+        return
+
+    observed_at = dt.datetime.fromisoformat(instance["observedAt"].replace("Z", "+00:00"))
+    resolved_at = dt.datetime.fromisoformat(instance["resolvedAt"].replace("Z", "+00:00"))
+    if resolved_at < observed_at:
+        raise InvalidStateError([
+            validation_error(
+                "NATIVE_BYPASS_RESOLUTION_BEFORE_OBSERVATION",
+                "/resolvedAt",
+                message="resolvedAt must not be earlier than observedAt",
+            )
+        ])
 
 
 def phase_1b2_error(code, instance_path, message):
