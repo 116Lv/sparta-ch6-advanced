@@ -42,7 +42,8 @@
     "issueNumber": 7,
     "issueUrl": "https://github.com/116Lv/sparta-ch6-advanced/issues/7",
     "trackingStatus": "issue_backed",
-    "reconciliationRequired": true,
+    "reconciliationRequired": false,
+    "reconciliationCommentUrl": "https://github.com/116Lv/sparta-ch6-advanced/issues/7#issuecomment-4953424231",
     "previousReconciliationError": "authorization failure: GitHub API 403 Resource not accessible by integration"
   },
   "notRunProjectCommands": [
@@ -60,7 +61,7 @@
   "laterPhaseBoundaries": [
     "Verification completeness remains Phase 2C or later.",
     "Registry VERIFIED promotion remains unsupported without durable command-runner evidence.",
-    "GitHub Issue #7 now backs the current Phase 2C handoff; the prior 403 remains historical evidence and the final migration comment is pending.",
+    "GitHub Issue #7 now backs the current Phase 2C handoff; the migration comment is recorded and the prior 403 remains historical evidence.",
     "Issue-backed tracking does not by itself close the Issue or authorize an unqualified overall DONE claim.",
     "Phase 2C static/helper gates define verification completeness and task/change applicability but do not execute product commands."
   ]

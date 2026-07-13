@@ -29,12 +29,13 @@
     "githubIssue": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["issueNumber", "issueUrl", "trackingStatus", "reconciliationRequired", "previousReconciliationError"],
+      "required": ["issueNumber", "issueUrl", "trackingStatus", "reconciliationRequired", "reconciliationCommentUrl", "previousReconciliationError"],
       "properties": {
         "issueNumber": { "const": 7 },
         "issueUrl": { "const": "https://github.com/116Lv/sparta-ch6-advanced/issues/7" },
         "trackingStatus": { "const": "issue_backed" },
-        "reconciliationRequired": { "const": true },
+        "reconciliationRequired": { "const": false },
+        "reconciliationCommentUrl": { "const": "https://github.com/116Lv/sparta-ch6-advanced/issues/7#issuecomment-4953424231" },
         "previousReconciliationError": { "const": "authorization failure: GitHub API 403 Resource not accessible by integration" }
       }
     },

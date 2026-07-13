@@ -5795,7 +5795,8 @@ class Phase1B2Task7RepositoryBoundaryTests(unittest.TestCase):
                 self.assertRegex(frontmatter, r"(?m)^started_at: \S+$")
                 self.assertRegex(frontmatter, r"(?m)^last_updated: \S+$")
                 self.assertRegex(frontmatter, r"(?m)^branch: main$")
-                self.assertIn("reconciliation_required: true", frontmatter)
+                self.assertIn("reconciliation_required: false", frontmatter)
+                self.assertIn("comment_url: https://github.com/116Lv/sparta-ch6-advanced/issues/4#issuecomment-", frontmatter)
                 self.assertIn(exact_attempt, frontmatter)
                 self.assertIn(exact_reason, frontmatter)
                 self.assertIn(exact_scope, frontmatter)
@@ -5810,7 +5811,7 @@ class Phase1B2Task7RepositoryBoundaryTests(unittest.TestCase):
         for frontmatter in (summary_frontmatter, final_review_frontmatter):
             self.assertRegex(frontmatter, r"(?m)^tracking_status: issue_backed$")
             self.assertRegex(frontmatter, r"(?m)^status: done$")
-            self.assertRegex(frontmatter, r"(?m)^reconciliation_required: true$")
+            self.assertRegex(frontmatter, r"(?m)^reconciliation_required: false$")
             self.assertIn(exact_reason, frontmatter)
         self.assertIn("Phase 1B-1", summary)
         self.assertIn("PASS / APPROVED", summary)
@@ -6069,7 +6070,8 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
         self.assertEqual(handoff["owningFeature"], "none")
         self.assertEqual(handoff["githubIssue"]["trackingStatus"], "issue_backed")
         self.assertEqual(handoff["githubIssue"]["issueNumber"], 7)
-        self.assertTrue(handoff["githubIssue"]["reconciliationRequired"])
+        self.assertFalse(handoff["githubIssue"]["reconciliationRequired"])
+        self.assertIn("issues/7#issuecomment-", handoff["githubIssue"]["reconciliationCommentUrl"])
         self.assertEqual(
             handoff["githubIssue"]["previousReconciliationError"],
             "authorization failure: GitHub API 403 Resource not accessible by integration",

@@ -8,7 +8,7 @@ owning_feature: none
 current_owner: orchestrator
 started_at: 2026-07-10T11:36:40+09:00
 ended_at:
-last_updated: 2026-07-13T08:54:37+09:00
+last_updated: 2026-07-13T09:32:29+09:00
 branch: codex/project-docs-and-agent-routing
 related_files:
   - ai/github-issue-planning.md
@@ -33,7 +33,7 @@ blockers: []
 historical_blockers:
   - GitHub app Issue creation returned HTTP 403 Resource not accessible by integration.
   - The local GitHub CLI token for account 116Lv is invalid.
-reconciliation_required: true
+reconciliation_required: false
 issue_creation_attempted_at: 2026-07-10T11:16:11+09:00
 issue_creation_failure_reason: GitHub app returned HTTP 403 Resource not accessible by integration; local GitHub CLI token for account 116Lv is invalid.
 expected_issue_scope: Repository-wide introduction of GitHub Issue-backed subagent logs. All listed workers are roles contributing to the same acceptance and closure decision, so they belong to one cohesive future GitHub Issue.
@@ -41,6 +41,7 @@ migration_history:
   - migrated_at: 2026-07-13T08:54:37+09:00
     from: ai/work-logs/no-issue/subagent-workflow-20260710
     to: ai/work-logs/issue-8
+    comment_url: https://github.com/116Lv/sparta-ch6-advanced/issues/8#issuecomment-4953424501
 ---
 
 ## Reconciliation Update

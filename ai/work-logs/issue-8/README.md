@@ -7,7 +7,7 @@ owning_feature: none
 current_owner: orchestrator
 started_at: 2026-07-10T11:16:11+09:00
 ended_at:
-last_updated: 2026-07-13T08:54:37+09:00
+last_updated: 2026-07-13T09:32:29+09:00
 branch: codex/project-docs-and-agent-routing
 related_files:
   - AGENTS.md
@@ -35,7 +35,7 @@ commands_run:
   - Final whole-change re-review and implementation-QA evidence recording
 tests_run: []
 blockers: []
-reconciliation_required: true
+reconciliation_required: false
 issue_creation_attempted_at: 2026-07-10T11:16:11+09:00
 issue_creation_failure_reason: GitHub app returned HTTP 403 Resource not accessible by integration; local GitHub CLI token for account 116Lv is invalid.
 expected_issue_scope: Repository-wide introduction of GitHub Issue-backed subagent logs. All listed workers are roles contributing to the same acceptance and closure decision, so they belong to one cohesive future GitHub Issue.
@@ -43,13 +43,14 @@ migration_history:
   - migrated_at: 2026-07-13T08:54:37+09:00
     from: ai/work-logs/no-issue/subagent-workflow-20260710
     to: ai/work-logs/issue-8
+    comment_url: https://github.com/116Lv/sparta-ch6-advanced/issues/8#issuecomment-4953424501
 ---
 
 # Issue Summary
 
 ## Recovery Summary
 
-GitHub Issue #8 covers the repository-wide introduction of Issue-backed subagent logs. The listed workers contributed roles to the same acceptance and closure decision; their participation does not create separate Issue boundaries. The final whole-change re-review found no Critical, Important, or Minor findings: documentation implementation is Approved, the recovery record is Reliable, and implementation QA is PASS. Directory and metadata migration are complete; the final Issue comment remains pending.
+GitHub Issue #8 covers the repository-wide introduction of Issue-backed subagent logs. The listed workers contributed roles to the same acceptance and closure decision; their participation does not create separate Issue boundaries. The final whole-change re-review found no Critical, Important, or Minor findings: documentation implementation is Approved, the recovery record is Reliable, and implementation QA is PASS. Directory, metadata, index, and Issue comment reconciliation are complete.
 
 ## Routing Outcome
 
@@ -125,4 +126,5 @@ Implementation, review, and recovery-recording work are complete. The final revi
 
 - GitHub Issue: https://github.com/116Lv/sparta-ch6-advanced/issues/8
 - Migrated from `ai/work-logs/no-issue/subagent-workflow-20260710/` to `ai/work-logs/issue-8/` at 2026-07-13T08:54:37+09:00.
-- The original authorization failure is retained as historical evidence. Directory and metadata migration are complete; the required Issue comment is pending, so reconciliation is not yet complete.
+- The original authorization failure is retained as historical evidence. Directory, metadata, index, and Issue comment reconciliation are complete.
+- Migration comment: https://github.com/116Lv/sparta-ch6-advanced/issues/8#issuecomment-4953424501
