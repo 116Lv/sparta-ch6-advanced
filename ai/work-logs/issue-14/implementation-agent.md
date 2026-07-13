@@ -158,3 +158,40 @@ Ready to begin global Task 1 (Phase 1B-3 local Task 1).
 - Task 2 helper/test changes were committed as `3ce67ae` with message `fix(ai): verify finalized run projection` and are ready for independent review.
 - The required ignored report is at `.superpowers/sdd/task-2-phase1b3-report.md`; the assigned role-log update is committed separately.
 - Gradle, build/product tests, server, Docker, HTTP/API, database, migration, seed, deploy, and infrastructure commands remain NOT RUN. No verification-completeness, registry `VERIFIED`, phase-completion, Issue closure, native/CI enforcement, or unqualified overall `DONE` claim is made.
+
+## Task 3 Update (2026-07-14)
+
+### Changed Files
+
+- `scripts/ai/tests/test_workflow_helper.py`: added validation and I/O failure-injection recovery/retry regressions plus an exact-FINALIZING-session conflict regression.
+- `scripts/ai/workflow_helper.py`: added same-owner, exact-session, pre-publication rollback and explicit recovery-required handling.
+- `docs/superpowers/specs/2026-07-10-ai-workflow-phase-1b-spec.md`: documented evidence closure, not-run contradiction handling, final projection verification, and the bounded rollback boundary.
+- `ai/work-logs/issue-14/implementation-agent.md`: recorded Task 3 TDD evidence and recovery state.
+
+### Decisions
+
+- Captured the exact validated OPEN session after immutable-publication resumption and derived the sole acceptable FINALIZING projection from it.
+- Required the same held run-lock owner before cleanup and before each deletion, then reused `replace_run_session(..., expected_session=expected_finalizing)` for the final exact compare-and-swap.
+- Limited cleanup to the exact done claim, PRE_DONE_CLAIM gate result, and manifest references through the secure run-artifact resolver; any `run.json` entry prevents rollback.
+- Mapped any rollback or precondition failure to `BLOCKED` with `FINALIZATION_RECOVERY_REQUIRED`, preserving FINALIZING for explicit recovery and avoiding false finalization.
+- Preserved Task 1 evidence binding, Task 2 final projection verification, validation/result precedence, `completenessEvaluated: false`, and `scope: INTEGRITY_ONLY`.
+
+### Exact Verification Evidence
+
+- Baseline command: `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests -v`
+- Baseline result: exit `0`; 12 tests passed in `15.487s`; repository `.ai-runs` was absent.
+- RED command: `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests.test_validation_failure_before_run_publication_rolls_back_and_retries scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests.test_io_failure_before_run_publication_rolls_back_and_retries scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests.test_mutated_finalizing_session_requires_explicit_recovery -v`
+- RED result: expected exit `1`; 3 tests failed for the intended missing-recovery reasons. Validation and I/O left `FINALIZING`; the mutated-session case returned the original `INVALID_STATE` instead of explicit recovery-required `BLOCKED`.
+- Focused GREEN command: same three-test command after implementation.
+- Focused GREEN result: exit `0`; 3 tests passed in `4.885s`.
+- Surrounding GREEN command: `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests -v`
+- Surrounding GREEN result after the secure-path refactor: exit `0`; 15 tests passed in `20.814s`; repository `.ai-runs` was absent.
+- Self-review command: `git diff --check`
+- Self-review result: exit `0`; no whitespace errors, only Git line-ending conversion warnings.
+
+### Recovery State
+
+- Task 3 helper/test/spec changes are committed as `7da8f15` with message `fix(ai): recover failed phase 1b3 finalization` and await independent review.
+- The required ignored report is at `.superpowers/sdd/task-3-phase1b3-report.md`; this assigned role-log update is committed separately.
+- No Task 4 or later-phase implementation was started. Gradle, build/product tests, server, Docker, HTTP/API, database, migration, seed, deploy, and infrastructure commands remain NOT RUN.
+- No verification-completeness, registry `VERIFIED`, phase-completion, Issue closure, native/CI enforcement, or unqualified overall `DONE` claim is made.
