@@ -7,7 +7,7 @@ owning_feature: none
 current_owner: reviewer
 started_at: 2026-07-13T11:03:43+09:00
 ended_at: 2026-07-13T19:35:05+09:00
-last_updated: 2026-07-13T19:35:05+09:00
+last_updated: 2026-07-13T19:48:48+09:00
 branch: codex/phase-3a-native-runtime-adapters
 related_files:
   - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
@@ -24,12 +24,32 @@ changed_files:
   - scripts/ai/workflow_helper.py
   - scripts/ai/tests/test_workflow_helper.py
 commands_run:
-  - python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v
-  - python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v
+  - "Historical Task 1 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v"
+  - "Historical Task 1 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v"
+  - "Task 5 (exit 0): git status --short [before; clean]"
+  - "Task 5 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v"
+  - "Task 5 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v"
+  - "Task 5 (exit 1; NOT PASS): python -m unittest scripts.ai.tests.test_workflow_helper -v"
+  - "Task 5 (exit 1; NOT PASS): bash scripts/ai/run-helper-tests.sh"
+  - "Task 5 (exit 0): bash scripts/ai/tests/run-contract-tests.sh"
+  - "Task 5 (exit 0): bash scripts/ai/runtime-preflight.sh"
+  - "Task 5 (exit 0): bash scripts/ai/repo-intake.sh --output -"
+  - "Task 5 (exit 1; expected non-PASS): bash scripts/ai/native-adapter-gate.sh --task-key issue-10 --gate-invocation-id final-static --output -"
+  - "Task 5 (exit 0): Test-Path .ai-runs; Get-ChildItem -Recurse -File -Filter artifact-manifest.json | Where-Object { $_.FullName -notmatch '\\ai\\fixtures\\' }; Get-ChildItem -Recurse -File -Filter run.json | Where-Object { $_.FullName -notmatch '\\ai\\fixtures\\' } [absent; 0; 0]"
+  - "Task 5 (exit 0): git diff --exit-code origin/main -- ai/command-registry.json"
+  - "Task 5 (exit 0): git ls-files --eol -- ai/fixtures/phase-1b/execution/fake-gradlew; git check-attr --all -- ai/fixtures/phase-1b/execution/fake-gradlew [i/lf w/crlf; text/eol unspecified]"
+  - "Task 5 (exit 0): git rev-parse origin/main:ai/fixtures/phase-1b/execution/fake-gradlew; git rev-parse :ai/fixtures/phase-1b/execution/fake-gradlew; git hash-object ai/fixtures/phase-1b/execution/fake-gradlew; git hash-object --no-filters ai/fixtures/phase-1b/execution/fake-gradlew [clean-filtered/index/origin 59c3111f32a22ddac701cf212b148160df516850; raw checkout 3d9c04428a49e35002a85aadd1feaa895d0c5dea]"
+  - "Task 5 (exit 0): git diff --check"
+  - "Task 5 (exit 0): git status --short [after; clean]"
 tests_run:
-  - RED: expected allowlist assertion failure before Task 1 implementation
-  - GREEN: focused allowlist and issue-backed work-log test passed (1 test).
-  - GREEN: Phase3ANativeRuntimeAdapterTests passed (4 tests).
+  - "Historical Task 1 RED: expected allowlist assertion failure before implementation."
+  - "Historical Task 1 GREEN (exit 0): focused allowlist and issue-backed work-log test passed (1 test)."
+  - "Historical Task 1 GREEN (exit 0): Phase3ANativeRuntimeAdapterTests passed (4 tests)."
+  - "Task 5 (exit 0): Phase3ANativeRuntimeAdapterTests passed (68 tests)."
+  - "Task 5 (exit 0): Phase2CVerificationGateTests plus Phase3ANativeRuntimeAdapterTests passed (75 tests)."
+  - "Task 5 (exit 1; NOT PASS): full helper unittest and run-helper-tests.sh each reported 319 tests, 1 CRLF fixture failure, and 17 skips."
+  - "Task 5 (exit 0): contract tests, runtime preflight without --record, and repo intake passed."
+  - "Task 5 (exit 1; expected non-PASS): native adapter gate returned UNSUPPORTED/HOST_UNSUPPORTED with phase2CLeafResult NOT_APPLICABLE."
 blockers: []
 skill_ids:
   - review-gate
@@ -80,7 +100,7 @@ Issue #10 tracks the cohesive Phase 3A native runtime adapter work. Task 1 resum
 
 ## Current State
 
-Task 1 is historical and complete; Tasks 2 through 4 are also complete. Task 5 records qualified Phase 3A static/helper evidence and independent final review. This does not establish native enforcement PASS, product-command verification, a registry `VERIFIED` transition, issue closure, reconciliation completion, or an unqualified overall DONE claim.
+Task 1 is historical and complete; Tasks 2 through 4 are also complete. Task 5 records qualified Phase 3A static/helper evidence and independent final review. The `done` status records only this work-log lifecycle; it does not establish native enforcement PASS, product-command verification, a registry `VERIFIED` transition, issue closure, reconciliation completion, or an unqualified overall DONE claim.
 
 ## Decisions
 
@@ -125,7 +145,7 @@ Task 1 is historical and complete; Tasks 2 through 4 are also complete. Task 5 r
 | `bash scripts/ai/native-adapter-gate.sh --task-key issue-10 --gate-invocation-id final-static --output -` | 1 | Expected non-PASS status: `UNSUPPORTED`, `HOST_UNSUPPORTED`, repository-only qualification, and Phase 2C leaf `NOT_APPLICABLE`. |
 | `git diff --check` | 0 | PASS: no whitespace errors. |
 
-The status was clean before the commands and remained clean afterward (`codex/phase-3a-native-runtime-adapters...origin/main [ahead 28]`). The full-suite failure is environmental: `git ls-files --eol` reports `i/lf w/crlf` for `ai/fixtures/phase-1b/execution/fake-gradlew`, and its working-tree hash equals both the index and `origin/main` (`59c3111f32a22ddac701cf212b148160df516850`). It is not attributed to the Phase 3A branch.
+The status was clean before the commands and remained clean afterward (`codex/phase-3a-native-runtime-adapters...origin/main [ahead 28]`). The full-suite failure is environmental: `git ls-files --eol` reports `i/lf w/crlf` for `ai/fixtures/phase-1b/execution/fake-gradlew`. Its clean-filtered working-tree hash (`git hash-object`) equals the index and `origin/main` blob hash (`59c3111f32a22ddac701cf212b148160df516850`); the distinct raw checkout hash (`git hash-object --no-filters`) is `3d9c04428a49e35002a85aadd1feaa895d0c5dea`. It is not attributed to the Phase 3A branch.
 
 ## Artifact And Promotion Checks
 

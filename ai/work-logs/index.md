@@ -1,6 +1,6 @@
 # Work Log Index
 
-The Orchestrator maintains this index. Each row links the active recovery record for one dispatchable unit. `pending_issue` rows must be reconciled to an `issue-{number}` directory when GitHub Issue creation becomes available.
+The Orchestrator maintains this index. Each row links the active recovery record for one dispatchable unit. `pending_issue` rows must be reconciled to an `issue-{number}` directory when GitHub Issue creation becomes available. A `done` workflow status records only that work-log lifecycle; it does not claim Issue closure, a registry `VERIFIED` transition, or unqualified overall DONE.
 
 | Issue | Tracking Status | Workflow Status | Owning Feature | Current Owner | Last Updated | Work Log | Reconciliation |
 |---|---|---|---|---|---|---|---|
@@ -9,4 +9,4 @@ The Orchestrator maintains this index. Each row links the active recovery record
 | #6 | issue_backed | done | none | orchestrator | 2026-07-13T09:32:29+09:00 | [Phase 2B skills and handoff reuse](issue-6/README.md) | complete |
 | #7 | issue_backed | done | none | implementation-agent | 2026-07-13T09:32:29+09:00 | [Phase 2C verification and document gates](issue-7/README.md) | complete |
 | #8 | issue_backed | done | none | orchestrator | 2026-07-13T09:32:29+09:00 | [subagent workflow](issue-8/README.md) | complete |
-| #10 | issue_backed | in_progress | none | implementation-agent | 2026-07-13T11:03:43+09:00 | [Phase 3A native runtime adapters](issue-10/README.md) | issue-backed |
+| #10 | issue_backed | done | none | reviewer | 2026-07-13T19:48:48+09:00 | [Phase 3A native runtime adapters](issue-10/README.md) | issue-backed |
