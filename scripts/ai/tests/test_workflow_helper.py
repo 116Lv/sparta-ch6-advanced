@@ -6757,13 +6757,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
     def test_canonical_empty_supported_hosts_ignores_snapshot_promotion(self):
         snapshot = self.write_temp_snapshot({
-            "fresh": True,
-            "signatureValid": True,
-            "callbackStatus": "OK",
-            "surfaces": [
-                {"surface": surface, "status": "ENFORCED", "reasonCode": "FIXTURE_ONLY"}
-                for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
-            ],
+            "producerId": "fixture",
+            "surfaces": [],
         })
         result, status = self.helper.native_adapter_gate(self.root, "issue-10", "gate-2", snapshot)
         self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
@@ -6771,23 +6766,33 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "HOST_UNSUPPORTED", "NOT_APPLICABLE",
         ))
 
-    def test_canonical_empty_supported_hosts_accepts_unsigned_snapshot_as_non_promoting_input(self):
+    def test_canonical_empty_supported_hosts_accepts_unsigned_minimum_snapshot_without_promotion(self):
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            self.write_temp_snapshot({"producerId": "fixture", "surfaces": []}),
+        )
+        self.assertEqual((result["result"], result["reason"], status), ("UNSUPPORTED", "HOST_UNSUPPORTED", 6))
+        self.assertEqual(result["phase2cLeafResult"], "NOT_APPLICABLE")
+
+    def test_canonical_empty_supported_hosts_block_malformed_unsigned_snapshot(self):
         invalid_snapshots = (
             {},
-            {
-                "fresh": False,
-                "signatureValid": True,
-                "callbackStatus": "OK",
-                "surfaces": self.supported_surfaces(),
-            },
+            {"producerId": "", "surfaces": []},
+            {"producerId": "fixture"},
+            {"producerId": [], "surfaces": []},
+            {"producerId": "fixture", "surfaces": {}},
+            {"producerId": "fixture", "surfaces": [], "fresh": False},
         )
         for snapshot in invalid_snapshots:
             with self.subTest(snapshot=snapshot):
                 result, status = self.helper.native_adapter_gate(
                     self.root, "issue-10", "gate-1", self.write_temp_snapshot(snapshot),
                 )
-                self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
-                self.assertEqual(result["phase2cLeafResult"], "NOT_APPLICABLE")
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "NATIVE_ADAPTER_SNAPSHOT_INVALID", 2,
+                ))
 
     def test_invalid_runtime_snapshot_reference_blocks_before_unsupported_host_fallback(self):
         result, status = self.helper.native_adapter_gate(
@@ -6912,6 +6917,18 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 )
                 self.assertEqual((result["result"], status), ("FAIL", 1))
 
+    def test_bypass_summary_rejects_any_authorization_header_marker_or_assignment(self):
+        for summary in (
+            "Authorization: Digest abc123",
+            "authorization: Basic",
+            "AUTHORIZATION: Bearer",
+            "Authorization: Arbitrary opaque-value",
+            "authorization=opaque-value",
+            "Authorization = bearer token documentation",
+        ):
+            with self.subTest(summary=summary):
+                self.assertTrue(self.helper.native_summary_has_secret(summary))
+
     def test_bypass_summary_rejects_bearer_credentials_regardless_of_trailing_non_whitespace(self):
         for suffix in ("", ".", ")", "]", ":", "!", "?", ",", ";", '"', "'", "}", "/"):
             with self.subTest(suffix=suffix):
@@ -6925,6 +6942,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     def test_bypass_summary_allows_bearer_token_documentation(self):
         self.assertFalse(self.helper.native_summary_has_secret("bearer token documentation"))
         self.assertTrue(self.helper.native_summary_has_secret("bearer token documentation extra"))
+        self.assertTrue(self.helper.native_summary_has_secret("Authorization: bearer token documentation"))
 
     def test_bypass_summary_allows_only_normalized_ascii_bearer_token_documentation(self):
         self.assertFalse(self.helper.native_summary_has_secret("Bearer Token Documentation"))
@@ -6986,6 +7004,39 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             bypass_attempts_ref=self.write_attempts([prior_detected, current_resolved]),
         )
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_mixed_resolution_times_in_one_deduplication_group_are_invalid(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        valid_resolution = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T01:01:00Z",
+            resolvedAt="2026-07-13T01:01:01Z",
+            resolutionReason="REMEDIATED",
+        )
+        invalid_resolution = self.valid_attempt(
+            attemptId="attempt-3",
+            eventId="event-3",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T00:58:00Z",
+            resolvedAt="2026-07-13T00:58:01Z",
+            resolutionReason="REMEDIATED",
+        )
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, valid_resolution, invalid_resolution]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", 2,
+        ))
 
     def test_current_detection_wins_over_resolution_in_the_same_deduplication_group(self):
         prior_detected = self.valid_attempt(

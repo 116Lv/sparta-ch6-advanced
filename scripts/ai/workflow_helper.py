@@ -5688,6 +5688,7 @@ NATIVE_SECRET_BEARING_SUMMARY = re.compile(
 )
 NATIVE_BASIC_CREDENTIAL = re.compile(r"\bbasic\s+\S+", re.IGNORECASE)
 NATIVE_BEARER_CREDENTIAL = re.compile(r"\bbearer\s+\S+", re.IGNORECASE)
+NATIVE_AUTHORIZATION_MARKER = re.compile(r"\bauthorization\s*(?::|=)", re.IGNORECASE)
 NATIVE_ALLOWED_BEARER_DOCUMENTATION = frozenset(("bearer token documentation",))
 
 
@@ -5700,7 +5701,11 @@ class NativeBypassReferenceError(ValueError):
 
 
 def native_summary_has_secret(value):
-    if NATIVE_SECRET_BEARING_SUMMARY.search(value) or NATIVE_BASIC_CREDENTIAL.search(value):
+    if (
+        NATIVE_SECRET_BEARING_SUMMARY.search(value)
+        or NATIVE_BASIC_CREDENTIAL.search(value)
+        or NATIVE_AUTHORIZATION_MARKER.search(value)
+    ):
         return True
     if (
         NATIVE_BEARER_CREDENTIAL.search(value)
@@ -5877,9 +5882,12 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
             if attempt["lifecycle"] == "DETECTED" and attempt["gateInvocationId"] != gate_invocation_id
         ]
         if current_resolutions:
-            if not any(
-                parse_rfc3339_timestamp(detection["observedAt"]) < parse_rfc3339_timestamp(resolution["observedAt"])
-                for detection in prior_detections
+            if any(
+                not any(
+                    parse_rfc3339_timestamp(detection["observedAt"])
+                    < parse_rfc3339_timestamp(resolution["observedAt"])
+                    for detection in prior_detections
+                )
                 for resolution in current_resolutions
             ):
                 return "INVALID_RESOLUTION"
@@ -5922,6 +5930,17 @@ def native_runtime_snapshot_contract(snapshot, fallback_surfaces):
     if not valid_surfaces:
         return fallback_surfaces, "NATIVE_ADAPTER_SNAPSHOT_INVALID"
     return surfaces, None
+
+
+def native_unsupported_runtime_snapshot_contract(snapshot):
+    required_fields = {"producerId", "surfaces"}
+    if not isinstance(snapshot, dict) or set(snapshot) != required_fields:
+        return "NATIVE_ADAPTER_SNAPSHOT_INVALID"
+    if not isinstance(snapshot["producerId"], str) or not snapshot["producerId"].strip():
+        return "NATIVE_ADAPTER_SNAPSHOT_INVALID"
+    if not isinstance(snapshot["surfaces"], list):
+        return "NATIVE_ADAPTER_SNAPSHOT_INVALID"
+    return None
 
 
 def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref=None, bypass_attempts_ref=None,
@@ -5981,6 +6000,12 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                 if snapshot["callbackStatus"] != "OK":
                     return publish_native_adapter_gate_result(
                         root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_CALLBACK_FAILED", snapshot_data), 2,
+                    )
+            else:
+                snapshot_error = native_unsupported_runtime_snapshot_contract(snapshot)
+                if snapshot_error is not None:
+                    return publish_native_adapter_gate_result(
+                        root, native_adapter_gate_result("BLOCKED", snapshot_error, data), 2,
                     )
 
         lifecycle_state = native_bypass_lifecycle_state(attempts, gate_invocation_id)
