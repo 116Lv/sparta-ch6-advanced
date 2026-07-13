@@ -319,3 +319,37 @@ Ready to begin global Task 1 (Phase 1B-3 local Task 1).
   created. No push, PR, merge, Issue modification/closure, registry `VERIFIED`,
   phase-complete, native/CI enforcement, or unqualified overall `DONE` claim is
   made.
+
+### Review Fix — Single-Read Evidence Binding (2026-07-14)
+
+- Independent review identified that evidence schema validation and digest
+  comparison reopened the same path, allowing different bytes to satisfy each
+  check. `verified_leaf_result` now resolves as before, checks the canonical
+  evidence schema before loading, opens once, reads at most 65,537 bytes, and
+  derives SHA-256, strict JSON parsing, and schema validation from the same
+  immutable bytes. The established schema-validation-before-digest reason
+  precedence is unchanged.
+- Focused RED command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_leaf_evidence_is_opened_once_and_verified_from_the_same_bytes scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_malformed_leaf_evidence_preserves_strict_json_reason scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_oversized_leaf_evidence_is_rejected_before_schema_validation -v`
+- Focused RED result: expected exit `1`; 3 tests ran in `2.230s`. The current
+  code reopened evidence and raised `VERIFICATION_LEAF_DIGEST_MISMATCH` when
+  the second open returned replacement bytes; oversized evidence incorrectly
+  reached normal BLOCKED aggregation. Malformed JSON already preserved
+  `MALFORMED_JSON`.
+- Focused GREEN command: the same three-test command after the minimal fix.
+- Focused GREEN result: exit `0`; 3 tests passed in `2.089s`.
+- Phase 2C command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests -v`
+- Phase 2C result: exit `0`; 17 tests passed in `14.824s`.
+- Phase 2C plus Phase 3A command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v`
+- Compatibility result: exit `0`; 105 tests passed in `39.820s` (17 Phase 2C,
+  88 Phase 3A); no compatibility adjustment was needed.
+- `git diff --check` and staged `git diff --cached --check` exited `0`;
+  recursive `__pycache__` search returned no paths; `.ai-runs` was absent.
+- Implementation/tests commit: `ae40d09` (`fix(ai): bind leaf evidence to one
+  read`). This evidence append is committed separately.
+- No Gradle, build/product tests, server, Docker, HTTP/API, database, migration,
+  seed, deploy, infrastructure, push, PR, merge, Issue modification/closure,
+  registry `VERIFIED`, phase-complete, native/CI enforcement, or unqualified
+  overall `DONE` action or claim was made.
