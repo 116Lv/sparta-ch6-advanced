@@ -493,3 +493,40 @@ exited `0`; 17 tests passed in `24.959s`.
   commands were NOT RUN. No registry state promotion, phase-state claim, Issue
   closure, native/CI enforcement, or unqualified overall completion claim is
   made.
+
+### Task 5 Re-Review Fix - Synthesized Mapped Result (2026-07-14)
+
+- Re-review found that the all-null synthesized check branch constrained
+  `rawResult` but still allowed mapped-only PASS or FAIL.
+- Added mapped-only mutations that preserve raw `NOT_CONFIGURED` and require
+  schema rejection for both PASS and FAIL.
+- Added the matching synthesized `mappedResult` enum for `BLOCKED`,
+  `NOT_CONFIGURED`, `NOT_APPLICABLE`, and `SKIPPED_WITH_REASON`. Verified
+  external/native record behavior and exact accepted-byte identity remain
+  unchanged.
+- Updated `ai/verification-gates.md` to state that synthesized records cannot
+  claim raw or mapped PASS/FAIL.
+
+Exact RED command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_gate_result_schema_distinguishes_verified_and_synthesized_checks -v`
+exited `1`; 1 test ran in `1.351s` with exactly two expected mapped-only
+subtest failures. Focused GREEN used the same command and exited `0`; 1 test
+passed in `1.497s`.
+
+Final covering command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -q`
+exited `0`; 111 tests passed in `45.295s` (23 Phase 2C, 88 Phase 3A).
+`git diff --check` and staged `git diff --cached --check` exited `0`; only
+line-ending warnings were emitted.
+
+- Implementation/schema/tests/docs commit: `c35aa24`
+  (`fix(ai): reject synthesized pass mappings`). This evidence append is
+  committed separately.
+- Implementation-agent metadata remains accurate and unchanged: skill IDs are
+  `verification-runner`, `failure-triage`, and `docs-sync`; reusable context
+  includes `ai/native-runtime-adapters.json`. `review-gate` belongs to the
+  reviewer handoff rather than this role.
+- Summary, index, reviewer log, Task 6 cache, skill/reusable-context metadata,
+  product, infrastructure, and GitHub Issue state were not edited. Prohibited
+  commands and real `.ai-runs` remained NOT RUN; no phase-state or closure
+  claim is made.
