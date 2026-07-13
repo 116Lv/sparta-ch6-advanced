@@ -764,3 +764,42 @@ warnings; `.ai-runs` and recursive `__pycache__` remained absent.
   Issue mutation were NOT RUN. No registry `VERIFIED`, phase-state, Issue
   closure, native/CI enforcement, or unqualified overall completion claim is
   made. Independent review remains with the parent.
+
+### Task 7 Review Fix - Deep Host Trust Immutability (2026-07-14)
+
+- Independent review found that `frozen=True` prevented dataclass field
+  rebinding but retained caller-owned mutable descriptor/probe dictionaries and
+  the nested surface list. The evaluator read those same aliases after
+  validation.
+- `HostNativeTrust.__post_init__` now recursively copies mappings into fresh
+  read-only `MappingProxyType` values and lists/tuples into tuples. Direct
+  construction and loader construction therefore expose no caller-mutable
+  evaluator facts. Mapping access and surface iteration remain compatible with
+  the existing evaluator; no mutable view is reconstructed.
+- The regression attempts top-level descriptor fingerprint/producer/host,
+  probe producer/host/version, and nested surface mutation; each raises. It
+  then mutates every original constructor input alias and proves the immutable
+  trust still retains the original facts and verifies the original signed
+  snapshot.
+
+Exact RED command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_host_native_trust_deep_freezes_values_and_detaches_input_aliases -v`
+exited `1`; 1 test ran in `0.136s` with seven intended mutation failures.
+
+Focused GREEN used the same command and exited `0`; 1 test passed in `0.231s`.
+The final immutability/external-evaluator/public-boundary focus exited `0`; 3
+tests passed in `2.180s`.
+
+Final surrounding command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -q`
+exited `0`; 119 tests passed in `48.692s` (23 Phase 2C and 96 Phase 3A).
+`git diff --check` exited `0` with line-ending warnings only; recursive
+`__pycache__` and repository `.ai-runs` remained absent.
+
+- Review-fix implementation/tests commit: `ed654a7`
+  (`fix(ai): deep freeze host native trust`). This evidence append is committed
+  separately.
+- Public CLI arguments, external path validation, canonical unsupported state,
+  summary, index, reviewer log, Task 8 replay scope, product/infrastructure
+  state, and GitHub state were not changed. Prohibited commands and claims
+  remain NOT RUN/not made. Independent rereview remains with the parent.
