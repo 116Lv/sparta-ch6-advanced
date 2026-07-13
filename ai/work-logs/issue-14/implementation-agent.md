@@ -435,3 +435,61 @@ Ready to begin global Task 1 (Phase 1B-3 local Task 1).
   Issue state commands were NOT RUN. No registry `VERIFIED`, phase completion,
   Issue closure, native/CI enforcement, or unqualified overall `DONE` claim is
   made.
+
+### Task 5 Independent Review Fix - Verified Identity Binding (2026-07-14)
+
+- Review found that verified external/native records could validate with null
+  identity values, and that `leafResultSha256` reopened the leaf after accepted
+  verification bytes had been read.
+- `ai/schemas/verification-gate-result.schema.json` now has exclusive closed
+  shapes: verified records require all five non-null identities; synthesized
+  records require all five null identities and cannot carry raw PASS or FAIL.
+  No new discriminator or broad contract field was added.
+- `scripts/ai/workflow_helper.py` now reads each referenced leaf once into a
+  normalized reference/exact-byte/parsed-value input, passes that input through
+  verified loading, and hashes those exact accepted bytes. Aggregation never
+  reopens the leaf. Bound evidence keeps its existing one-read validation and
+  schema-before-digest precedence.
+- `scripts/ai/tests/test_workflow_helper.py` now rejects missing/null verified
+  identity, accepts the explicit synthesized shape, forbids synthesized PASS,
+  and simulates a PASS first read followed by a valid FAIL replacement while
+  asserting one leaf-path open and accepted-byte identity output.
+- `ai/verification-gates.md` documents the two exclusive shapes and exact-byte
+  digest binding.
+
+Exact schema RED:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_gate_result_schema_distinguishes_verified_and_synthesized_checks -v`
+exited `1` in `1.222s` with 11 expected failures: ten external/native null
+identity mutations and one synthesized PASS-with-null record validated.
+The same command then exited `0`; 1 test passed in `1.313s`.
+
+Exact accepted-byte RED:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_gate_uses_single_read_leaf_identity_after_replacement -v`
+exited `1` in `0.888s`; the gate returned replacement `FAIL / 1` rather than
+accepted first-read `PASS / 0`.
+
+Focused GREEN:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_gate_uses_single_read_leaf_identity_after_replacement scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_leaf_evidence_is_opened_once_and_verified_from_the_same_bytes -v`
+exited `0`; 2 tests passed in `1.578s`. The broader eight-test schema, identity,
+evidence, and forged-native focus also exited `0`; 8 passed in `6.559s`.
+
+Final surrounding command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -q`
+exited `0`; 111 tests passed in `46.782s` (23 Phase 2C, 88 Phase 3A).
+Phase 1B-3 command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests -q`
+exited `0`; 17 tests passed in `24.959s`.
+
+- `git diff --check` and staged `git diff --cached --check` exited `0`; only
+  line-ending warnings were emitted. `.ai-runs` and recursive `__pycache__`
+  remained absent.
+- Review-fix implementation/tests/schema/docs commit: `138d39a`
+  (`fix(ai): bind phase 2 verified identities`). This evidence append is
+  committed separately.
+- Summary, index, reviewer log, Task 6 cache, exact skill/handoff sets, product,
+  infrastructure, and GitHub Issue state were not changed. Gradle,
+  build/product tests, server, Docker, HTTP/API, database, migration, seed,
+  deploy, infrastructure, real `.ai-runs`, push, PR, merge, and GitHub Issue
+  commands were NOT RUN. No registry state promotion, phase-state claim, Issue
+  closure, native/CI enforcement, or unqualified overall completion claim is
+  made.
