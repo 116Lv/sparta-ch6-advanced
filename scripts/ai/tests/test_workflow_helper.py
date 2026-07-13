@@ -7843,6 +7843,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     def valid_attempt(self, **overrides):
         attempt = self.bypass_attempt()
         attempt.update(overrides)
+        if attempt["lifecycle"] == "RESOLVED":
+            attempt.update({
+                "detectionEventId": overrides.get("detectionEventId", "event-1"),
+                "detectionGateInvocationId": overrides.get(
+                    "detectionGateInvocationId", "gate-prior",
+                ),
+                "detectionEventSha256": overrides.get("detectionEventSha256", "a" * 64),
+            })
         return attempt
 
     def validator(self, schema_name):
@@ -8048,6 +8056,9 @@ print(json.dumps({"result": result, "status": status}))
             "lifecycle": "DETECTED",
             "resolvedAt": None,
             "resolutionReason": None,
+            "detectionEventId": None,
+            "detectionGateInvocationId": None,
+            "detectionEventSha256": None,
             "summary": {
                 "target": {
                     "classification": "REPOSITORY_PATH",
@@ -8166,6 +8177,9 @@ print(json.dumps({"result": result, "status": status}))
             lifecycle="RESOLVED",
             resolvedAt="2026-07-13T01:01:00Z",
             resolutionReason="REMEDIATED",
+            detectionEventId=prior_detection["eventId"],
+            detectionGateInvocationId=prior_detection["gateInvocationId"],
+            detectionEventSha256=self.helper.native_detection_digest(prior_detection),
         )
         return [prior_detection, current_resolution]
 
@@ -8538,6 +8552,7 @@ print(json.dumps({"result": result, "status": status}))
         altered = json.loads(json.dumps(attempts))
         for attempt in altered:
             attempt["deduplicationKey"] = "grafted-group"
+        altered[1]["detectionEventSha256"] = self.helper.native_detection_digest(altered[0])
         altered_result, altered_status = self.helper.native_adapter_gate(
             self.root,
             "issue-10",
@@ -8675,6 +8690,93 @@ print(json.dumps({"result": result, "status": status}))
             {surface["status"] for surface in result["data"]["trustedSurfaces"]},
             {"ENFORCED"},
         )
+
+    def test_resolution_must_bind_the_exact_original_detection(self):
+        detection = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        detection_digest = hashlib.sha256(json.dumps(
+            {
+                key: value for key, value in detection.items()
+                if key not in {
+                    "resolvedAt", "resolutionReason", "detectionEventId",
+                    "detectionGateInvocationId", "detectionEventSha256",
+                }
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        resolution = self.valid_attempt(
+            attemptId="attempt-resolution",
+            eventId="event-resolution",
+            gateInvocationId="gate-resolution-binding",
+            observedAt="2026-07-13T01:00:00Z",
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            detectionEventId=detection["eventId"],
+            detectionGateInvocationId=detection["gateInvocationId"],
+            detectionEventSha256=detection_digest,
+        )
+        invalid_cases = {
+            "event": {"detectionEventId": "event-unrelated"},
+            "task": {"taskKey": "issue-unrelated"},
+            "original-gate": {"detectionGateInvocationId": "gate-unrelated"},
+            "digest": {"detectionEventSha256": "b" * 64},
+        }
+
+        for name, changes in invalid_cases.items():
+            with self.subTest(name=name):
+                unrelated_resolution = dict(resolution)
+                unrelated_resolution.update(changes)
+                state, resolution_ids = self.helper.native_bypass_lifecycle_state(
+                    [detection, unrelated_resolution], "gate-resolution-binding",
+                )
+                self.assertEqual((state, resolution_ids), ("INVALID_RESOLUTION", []))
+
+    def test_unrelated_resolution_cannot_clear_detection_at_gate(self):
+        detection = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        resolution = self.valid_attempt(
+            attemptId="attempt-resolution",
+            eventId="event-resolution",
+            gateInvocationId="gate-resolution-unrelated",
+            observedAt="2026-07-13T01:00:00Z",
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            detectionEventId=detection["eventId"],
+            detectionGateInvocationId=detection["gateInvocationId"],
+            detectionEventSha256=self.helper.native_detection_digest(detection),
+        )
+        invalid_cases = {
+            "event": {"detectionEventId": "event-unrelated"},
+            "task": {"taskKey": "issue-unrelated"},
+            "original-gate": {"detectionGateInvocationId": "gate-unrelated"},
+            "digest": {"detectionEventSha256": "b" * 64},
+        }
+
+        for name, changes in invalid_cases.items():
+            with self.subTest(name=name):
+                unrelated_resolution = dict(resolution)
+                unrelated_resolution.update(changes)
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    "gate-resolution-unrelated",
+                    bypass_attempts_ref=self.write_fixture(
+                        f"bypass-attempts-{name}.json",
+                        {"attempts": [detection, unrelated_resolution]},
+                    ),
+                )
+
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", 2,
+                ))
 
     def test_signed_resolution_binding_missing_mismatched_or_extra_blocks_precisely(self):
         cases = (
@@ -9531,6 +9633,39 @@ print(json.dumps({"result": result, "status": status}))
                 attempt[field] = "a" * (maximum_length + 1)
                 self.assert_invalid("native-bypass-attempt", attempt)
 
+    def test_detection_binding_fields_are_closed_by_lifecycle(self):
+        detected = self.bypass_attempt()
+        self.assert_valid("native-bypass-attempt", detected)
+        binding_values = {
+            "detectionEventId": "event-original",
+            "detectionGateInvocationId": "gate-original",
+            "detectionEventSha256": "a" * 64,
+        }
+        for field, value in binding_values.items():
+            with self.subTest(lifecycle="DETECTED", field=field):
+                missing = dict(detected)
+                missing.pop(field)
+                self.assert_invalid("native-bypass-attempt", missing)
+                non_null = dict(detected)
+                non_null[field] = value
+                self.assert_invalid("native-bypass-attempt", non_null)
+
+        resolved = self.valid_attempt(
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            **binding_values,
+        )
+        self.assert_valid("native-bypass-attempt", resolved)
+        for field in binding_values:
+            with self.subTest(lifecycle="RESOLVED", field=field):
+                missing = dict(resolved)
+                missing.pop(field)
+                self.assert_invalid("native-bypass-attempt", missing)
+                null = dict(resolved)
+                null[field] = None
+                self.assert_invalid("native-bypass-attempt", null)
+
     def test_bypass_lifecycle_requires_consistent_resolution_and_correlation(self):
         attempt = self.bypass_attempt()
         attempt.update({
@@ -9571,6 +9706,9 @@ print(json.dumps({"result": result, "status": status}))
                 "lifecycle": "RESOLVED",
                 "resolvedAt": "2026-07-13T01:00:01Z",
                 "resolutionReason": "REMEDIATED",
+                "detectionEventId": "event-original",
+                "detectionGateInvocationId": "gate-original",
+                "detectionEventSha256": "a" * 64,
             })
             attempt_path.write_text(json.dumps(valid_attempt), encoding="utf-8")
             self.helper.validate_repository_instance(root, "ai/native-bypass-attempt.json")
@@ -10420,6 +10558,9 @@ print(json.dumps({"result": result, "status": status}))
             observedAt="2026-07-13T01:01:00Z",
             resolvedAt="2026-07-13T01:01:01Z",
             resolutionReason="REMEDIATED",
+            detectionEventId=prior_detected["eventId"],
+            detectionGateInvocationId=prior_detected["gateInvocationId"],
+            detectionEventSha256=self.helper.native_detection_digest(prior_detected),
         )
         later_detected = self.valid_attempt(
             attemptId="attempt-3",

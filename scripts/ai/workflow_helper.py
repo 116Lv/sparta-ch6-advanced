@@ -6871,7 +6871,7 @@ def load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invoca
             if not isinstance(attempt, dict):
                 raise ValueError("native bypass attempt must be an object")
             validate(root, attempt, "ai/schemas/native-bypass-attempt.schema.json")
-            if attempt["taskKey"] != task_key:
+            if attempt["taskKey"] != task_key and attempt["lifecycle"] != "RESOLVED":
                 raise ValueError("native bypass attempt task does not match this gate")
             if attempt["gateInvocationId"] != gate_invocation_id and attempt["lifecycle"] != "DETECTED":
                 raise ValueError("native bypass attempt resolution does not match this gate")
@@ -6916,6 +6916,22 @@ def native_bypass_event_set_facts(attempts):
     return len(attempts), hashlib.sha256(canonical).hexdigest()
 
 
+def native_detection_digest(detection):
+    payload = {
+        key: value for key, value in detection.items()
+        if key not in {
+            "resolvedAt", "resolutionReason", "detectionEventId",
+            "detectionGateInvocationId", "detectionEventSha256",
+        }
+    }
+    return hashlib.sha256(json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+
+
 def native_bypass_lifecycle_state(attempts, gate_invocation_id):
     groups = {}
     for attempt in attempts:
@@ -6923,7 +6939,8 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
 
     resolved_transition = False
     resolution_event_ids = []
-    for attempts_in_group in groups.values():
+    unresolved_detection = False
+    for deduplication_key, attempts_in_group in groups.items():
         detections = [
             attempt for attempt in attempts_in_group
             if attempt["lifecycle"] == "DETECTED"
@@ -6938,30 +6955,32 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
             if attempt["lifecycle"] == "RESOLVED" and attempt["gateInvocationId"] == gate_invocation_id
         ]
         if current_resolutions:
-            if any(
-                not any(
-                    detection["gateInvocationId"] != gate_invocation_id
+            matched_detection_indexes = set()
+            for resolution in current_resolutions:
+                matching_indexes = [
+                    index for index, detection in enumerate(detections)
+                    if detection["eventId"] == resolution["detectionEventId"]
+                    and detection["taskKey"] == resolution["taskKey"]
+                    and detection["gateInvocationId"] == resolution["detectionGateInvocationId"]
+                    and detection["deduplicationKey"] == deduplication_key
+                    and native_detection_digest(detection) == resolution["detectionEventSha256"]
                     and parse_rfc3339_timestamp(detection["observedAt"])
                     < parse_rfc3339_timestamp(resolution["observedAt"])
-                    for detection in detections
-                )
-                for resolution in current_resolutions
-            ):
-                return "INVALID_RESOLUTION", []
-            if any(
-                parse_rfc3339_timestamp(detection["observedAt"])
-                >= parse_rfc3339_timestamp(resolution["observedAt"])
-                for detection in detections
-                for resolution in current_resolutions
-            ):
-                return "UNRESOLVED", []
+                ]
+                if len(matching_indexes) != 1:
+                    return "INVALID_RESOLUTION", []
+                matched_detection_indexes.add(matching_indexes[0])
+            if len(matched_detection_indexes) != len(detections):
+                unresolved_detection = True
             resolved_transition = True
             resolution_event_ids.extend(
                 resolution["eventId"] for resolution in current_resolutions
             )
             continue
         if detections:
-            return "UNRESOLVED", []
+            unresolved_detection = True
+    if unresolved_detection:
+        return "UNRESOLVED", []
     return ("RESOLVED_TRANSITION" if resolved_transition else None), resolution_event_ids
 
 
