@@ -126,6 +126,7 @@ SCHEMA_NAMES = (
     "run-session",
     "skill-catalog",
     "verification-gate-result",
+    "verification-leaf-result",
     "verification-policy",
     "workflow-cache",
 )
@@ -199,6 +200,14 @@ class RegistryBlockedError(ValueError):
     def __init__(self, errors):
         self.errors = errors
         super().__init__(errors[0]["message"] if errors else "registry resolution is blocked")
+
+
+class VerificationNotConfiguredError(ValueError):
+    result = "BLOCKED"
+
+    def __init__(self, errors):
+        self.errors = errors
+        super().__init__(errors[0]["message"] if errors else "verification input is not configured")
 
 
 class DuplicateJsonKey(ValueError):
@@ -5824,49 +5833,83 @@ def publish_verification_gate_result(root, result, status):
 
 
 NATIVE_ADAPTER_CHECK_ID = "native-runtime-adapter"
+VERIFICATION_LEAF_MAX_AGE = dt.timedelta(minutes=5)
+VERIFICATION_REPOSITORY_PATH = re.compile(
+    r"(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\s\S]*\\)(?![\s\S]*(?:^|/)\.\.(?:/|$)).+\Z"
+)
 
 
-def load_verification_leaf_results(root, leaf_results_ref):
-    if leaf_results_ref is None:
-        return {}
-    repository_root = Path(root).resolve(strict=True)
+def repository_commit_sha(root):
     try:
-        relative = Path(leaf_results_ref)
-        if relative.is_absolute() or any(part in ("", ".", "..") for part in relative.parts):
-            raise ValueError("invalid leaf result path")
-        path = (repository_root / relative).resolve(strict=True)
-        path.relative_to(repository_root)
-        payload = read_json(path)
-        results = payload.get("results")
-        if not isinstance(results, list):
-            raise ValueError("leaf results must contain results array")
-        if any(
+        completed = subprocess.run(
+            ["git", "-C", str(Path(root).resolve()), "rev-parse", "HEAD"],
+            shell=False,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise VerificationNotConfiguredError([validation_error(
+            "VERIFICATION_REPOSITORY_COMMIT_NOT_CONFIGURED",
+            message="the checked-out repository commit is unavailable",
+        )]) from error
+    matched = (
+        re.fullmatch(r"([a-f0-9]{40})(?:\r?\n)?", completed.stdout)
+        if isinstance(completed.stdout, str)
+        else None
+    )
+    if matched is None:
+        raise VerificationNotConfiguredError([validation_error(
+            "VERIFICATION_REPOSITORY_COMMIT_NOT_CONFIGURED",
+            message="the checked-out repository commit is malformed",
+        )])
+    return matched.group(1)
+
+
+def verification_leaf_references(root, refs_file):
+    try:
+        payload = read_json(resolve_repository_file(root, refs_file))
+        if not isinstance(payload, dict):
+            raise ValueError("leaf result references must be an object")
+
+        legacy_results = payload.get("results")
+        if isinstance(legacy_results, list) and any(
             isinstance(item, dict) and item.get("checkId") == NATIVE_ADAPTER_CHECK_ID
-            for item in results
+            for item in legacy_results
         ):
             raise InvalidStateError([validation_error(
                 "NATIVE_ADAPTER_LEAF_FORGED",
                 message="native runtime adapter leaf results are internal-only",
             )])
-        by_id = {}
-        for index, item in enumerate(results):
-            if not isinstance(item, dict):
-                raise ValueError("leaf result must be an object")
-            check_id = item.get("checkId")
-            raw_result = item.get("result")
-            if not isinstance(check_id, str) or raw_result not in (
-                "PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON",
+        if set(payload) != {"leafResultRefs"}:
+            raise ValueError("leaf result references have an invalid shape")
+
+        references = payload["leafResultRefs"]
+        if not isinstance(references, list) or len(references) != len(set(
+            item for item in references if isinstance(item, str)
+        )):
+            raise ValueError("leaf result references must be a unique array")
+        for reference in references:
+            if (
+                not isinstance(reference, str)
+                or VERIFICATION_REPOSITORY_PATH.fullmatch(reference) is None
+                or any(part in ("", ".", "..") for part in reference.split("/"))
             ):
-                raise ValueError("invalid leaf result")
-            if check_id in by_id:
-                raise ValueError("duplicate leaf result")
-            by_id[check_id] = {
-                "checkId": check_id,
-                "result": raw_result,
-                "evidenceRef": item.get("evidenceRef"),
-                "reason": item.get("reason"),
-            }
-        return by_id
+                raise ValueError("invalid leaf result reference")
+
+        unverified_leaves = [
+            read_json(resolve_repository_file(root, reference))
+            for reference in references
+        ]
+        if any(
+            isinstance(leaf, dict) and leaf.get("checkId") == NATIVE_ADAPTER_CHECK_ID
+            for leaf in unverified_leaves
+        ):
+            raise InvalidStateError([validation_error(
+                "NATIVE_ADAPTER_LEAF_FORGED",
+                message="native runtime adapter leaf results are internal-only",
+            )])
+        return references
     except InvalidStateError:
         raise
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
@@ -5874,6 +5917,94 @@ def load_verification_leaf_results(root, leaf_results_ref):
             "VERIFICATION_LEAF_RESULTS_INVALID",
             message="verification leaf results are invalid",
         )]) from error
+
+
+def verified_leaf_result(root, reference, expected, policy_sha256):
+    path = resolve_repository_file(root, reference)
+    leaf = read_json(path)
+    validate(root, leaf, "ai/schemas/verification-leaf-result.schema.json")
+    if leaf["checkId"] == NATIVE_ADAPTER_CHECK_ID:
+        raise InvalidStateError([validation_error(
+            "NATIVE_ADAPTER_LEAF_FORGED",
+            message="native runtime adapter leaf results are internal-only",
+        )])
+    if leaf["$id"] != Path(reference).as_posix():
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_ID_MISMATCH",
+            message="verification leaf ID does not match its repository reference",
+        )])
+    if leaf["checkId"] != expected["checkId"]:
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_CORRELATION_MISMATCH",
+            message="verification leaf check identity does not match canonical policy",
+        )])
+    for field in ("taskKey", "gateInvocationId", "commitSha"):
+        if leaf[field] != expected[field]:
+            raise InvalidStateError([validation_error(
+                "VERIFICATION_LEAF_CORRELATION_MISMATCH",
+                message="verification leaf correlation does not match the current gate",
+            )])
+    if leaf["policySha256"] != policy_sha256:
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_POLICY_MISMATCH",
+            message="verification leaf policy digest does not match canonical policy",
+        )])
+    if leaf["producerId"] != expected["producerId"]:
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_PRODUCER_MISMATCH",
+            message="verification leaf producer does not match canonical policy",
+        )])
+
+    produced = parse_rfc3339_timestamp(leaf["producedAt"])[0]
+    expires = parse_rfc3339_timestamp(leaf["expiresAt"])[0]
+    now = dt.datetime.now(dt.timezone.utc)
+    if not produced <= now <= expires or expires - produced > VERIFICATION_LEAF_MAX_AGE:
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_STALE",
+            message="verification leaf is outside its bounded freshness window",
+        )])
+
+    evidence = leaf["evidence"]
+    if evidence is not None:
+        if evidence["schema"] != expected["evidenceSchema"]:
+            raise InvalidStateError([validation_error(
+                "VERIFICATION_LEAF_EVIDENCE_SCHEMA_MISMATCH",
+                message="verification leaf evidence schema does not match canonical policy",
+            )])
+        evidence_path = resolve_repository_file(root, evidence["ref"])
+        validate(root, read_json(evidence_path), evidence["schema"])
+        if digest(evidence_path) != evidence["sha256"]:
+            raise InvalidStateError([validation_error(
+                "VERIFICATION_LEAF_DIGEST_MISMATCH",
+                message="verification leaf evidence digest does not match",
+            )])
+    return leaf
+
+
+def load_verified_leaf_results(root, refs_file, task_key, gate_invocation_id, commit_sha, policy):
+    references = verification_leaf_references(root, refs_file)
+    policy_checks = {check["id"]: check for check in policy["checks"]}
+    policy_sha256 = digest(resolve_repository_file(root, "ai/verification-policy.json"))
+    by_id = {}
+    for reference in references:
+        leaf = read_json(resolve_repository_file(root, reference))
+        check_id = leaf.get("checkId") if isinstance(leaf, dict) else None
+        policy_check = policy_checks.get(check_id)
+        if policy_check is None or check_id in by_id:
+            raise InvalidStateError([validation_error(
+                "VERIFICATION_LEAF_RESULTS_INVALID",
+                message="verification leaf check identity is unknown or duplicated",
+            )])
+        expected = {
+            "checkId": check_id,
+            "taskKey": task_key,
+            "gateInvocationId": gate_invocation_id,
+            "commitSha": commit_sha,
+            "producerId": policy_check["producerId"],
+            "evidenceSchema": policy_check["evidenceSchema"],
+        }
+        by_id[check_id] = verified_leaf_result(root, reference, expected, policy_sha256)
+    return by_id
 
 
 def default_leaf_result_for_check(check_id, policy_check):
@@ -6746,7 +6877,19 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                 "POLICY_VIOLATION", "UNKNOWN_ENTRY_POINT", None,
             ), 4)
         change = change_types[change_type]
-        leaf_results = load_verification_leaf_results(root, leaf_results_ref)
+        if leaf_results_ref is None:
+            leaf_results = {}
+        else:
+            verification_leaf_references(root, leaf_results_ref)
+            commit_sha = repository_commit_sha(root)
+            leaf_results = load_verified_leaf_results(
+                root,
+                leaf_results_ref,
+                task_key,
+                gate_invocation_id,
+                commit_sha,
+                policy,
+            )
         native_leaf = native_adapter_phase2c_leaf(
             root,
             task_key,
@@ -6861,6 +7004,10 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
         else:
             reason = None if overall == "PASS" else "VERIFICATION_GATE_" + overall
         return publish_verification_gate_result(root, verification_gate_result(overall, reason, data), verification_gate_exit(overall))
+    except VerificationNotConfiguredError as error:
+        return publish_verification_gate_result(root, verification_gate_result(
+            "BLOCKED", error.errors[0]["code"], None, errors=error.errors,
+        ), 2)
     except InvalidStateError as error:
         return publish_verification_gate_result(root, verification_gate_result(
             "INVALID_STATE", error.errors[0]["code"], None, errors=error.errors,

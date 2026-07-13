@@ -341,7 +341,7 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
         self.assertTrue(phase_2a.issubset(self.helper.SCHEMA_NAMES))
         phase_2b = {"agent-handoff", "skill-catalog"}
         self.assertTrue(phase_2b.issubset(self.helper.SCHEMA_NAMES))
-        phase_2c = {"verification-policy", "verification-gate-result"}
+        phase_2c = {"verification-policy", "verification-gate-result", "verification-leaf-result"}
         self.assertTrue(phase_2c.issubset(self.helper.SCHEMA_NAMES))
         phase_3a = {
             "native-adapter-result",
@@ -350,7 +350,7 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
             "native-runtime-snapshot",
         }
         self.assertTrue(phase_3a.issubset(self.helper.SCHEMA_NAMES))
-        self.assertEqual(len(self.helper.SCHEMA_NAMES), 25)
+        self.assertEqual(len(self.helper.SCHEMA_NAMES), 26)
         self.assertEqual(
             {name for name in self.helper.SCHEMA_NAMES if name in additions},
             additions,
@@ -6421,6 +6421,7 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
 
 
 class Phase2CVerificationGateTests(unittest.TestCase):
+    COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567"
     ENTRY_POINTS = (
         "verification-level",
         "api-smoke",
@@ -6443,15 +6444,90 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp()) / "repository"
         self.addCleanup(remove_readonly_tree, self.root.parent)
         shutil.copytree(REPOSITORY_ROOT, self.root, ignore=shutil.ignore_patterns(".git", ".ai-runs", "__pycache__"))
+        self.commit_probe = mock.patch.object(
+            self.helper, "repository_commit_sha", return_value=self.COMMIT_SHA, create=True,
+        )
+        self.commit_probe.start()
+        self.addCleanup(self.commit_probe.stop)
+        self.leaf_sequence = 0
 
     def read_repository_text(self, relative_path):
         return (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
 
-    def write_leaf_results(self, results):
+    def write_legacy_leaf_results(self, results):
         path = self.root / "ai" / "fixtures" / "phase-2c-leaf-results.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"results": results}), encoding="utf-8")
         return "ai/fixtures/phase-2c-leaf-results.json"
+
+    def write_leaf_results(self, results, gate_invocation_id):
+        references = []
+        for result in results:
+            self.leaf_sequence += 1
+            references.append(self.write_bound_leaf(
+                result["checkId"],
+                result=result["result"],
+                reason=result.get("reason"),
+                gate_invocation_id=gate_invocation_id,
+                name=f"{result['checkId']}-{self.leaf_sequence}",
+            ))
+        self.leaf_sequence += 1
+        return self.write_leaf_result_refs(
+            references, name=f"phase-2c-leaf-result-refs-{self.leaf_sequence}.json",
+        )
+
+    def write_leaf_result_refs(self, references, name="phase-2c-leaf-result-refs.json"):
+        path = self.root / "ai" / "fixtures" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"leafResultRefs": references}), encoding="utf-8")
+        return path.relative_to(self.root).as_posix()
+
+    def write_bound_leaf(
+            self, check_id="review-gate", *, result="PASS", reason=None,
+            gate_invocation_id="gate-review", mutate=None, name="review-gate"):
+        policy = json.loads((self.root / "ai" / "verification-policy.json").read_text(encoding="utf-8"))
+        policy_check = next(check for check in policy["checks"] if check["id"] == check_id)
+        evidence = None
+        if result in ("PASS", "FAIL"):
+            if policy_check["evidenceSchema"] == "ai/schemas/gateway-result.schema.json":
+                evidence_path = self.root / "ai" / "fixtures" / "phase-2c" / f"{name}-evidence.json"
+                evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                evidence_path.write_text(json.dumps(preflight_pass(), sort_keys=True), encoding="utf-8")
+            else:
+                evidence_path = self.root / "ai" / "fixtures" / "phase-1a" / "valid" / "command-result.json"
+            evidence = {
+                "ref": evidence_path.relative_to(self.root).as_posix(),
+                "schema": policy_check["evidenceSchema"],
+                "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+            }
+
+        leaf_path = self.root / "ai" / "fixtures" / "phase-2c" / f"{name}.json"
+        leaf_path.parent.mkdir(parents=True, exist_ok=True)
+        leaf_ref = leaf_path.relative_to(self.root).as_posix()
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        produced_at = now - dt.timedelta(minutes=1)
+        leaf = {
+            "$schema": "ai/schemas/verification-leaf-result.schema.json",
+            "$id": leaf_ref,
+            "schemaVersion": 1,
+            "checkId": check_id,
+            "result": result,
+            "taskKey": "issue-10",
+            "gateInvocationId": gate_invocation_id,
+            "commitSha": self.COMMIT_SHA,
+            "policySha256": hashlib.sha256(
+                (self.root / "ai" / "verification-policy.json").read_bytes()
+            ).hexdigest(),
+            "producerId": check_id,
+            "producedAt": produced_at.isoformat().replace("+00:00", "Z"),
+            "expiresAt": (produced_at + dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+            "evidence": evidence,
+            "reason": reason,
+        }
+        if mutate is not None:
+            mutate(leaf)
+        leaf_path.write_text(json.dumps(leaf, sort_keys=True), encoding="utf-8")
+        return leaf_ref
 
     def write_json_fixture(self, name, payload):
         path = self.root / "ai" / "fixtures" / name
@@ -6459,9 +6535,175 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path.relative_to(self.root).as_posix()
 
+    def test_evidence_free_legacy_leaf_result_is_rejected(self):
+        legacy = self.write_legacy_leaf_results([
+            {"checkId": "review-gate", "result": "PASS", "evidenceRef": None, "reason": None},
+        ])
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            legacy,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "VERIFICATION_LEAF_RESULTS_INVALID", 5,
+        ))
+
+    def test_bound_leaf_mismatches_are_rejected_before_aggregation(self):
+        future = (
+            dt.datetime.now(dt.timezone.utc).replace(microsecond=0) + dt.timedelta(minutes=1)
+        ).isoformat().replace("+00:00", "Z")
+        matrix = (
+            ("leaf-id", lambda leaf: leaf.update({"$id": "ai/fixtures/phase-2c/other.json"}), "VERIFICATION_LEAF_ID_MISMATCH"),
+            ("task-key", lambda leaf: leaf.update(taskKey="other-task"), "VERIFICATION_LEAF_CORRELATION_MISMATCH"),
+            ("gate-invocation", lambda leaf: leaf.update(gateInvocationId="other-gate"), "VERIFICATION_LEAF_CORRELATION_MISMATCH"),
+            ("commit", lambda leaf: leaf.update(commitSha="f" * 40), "VERIFICATION_LEAF_CORRELATION_MISMATCH"),
+            ("policy", lambda leaf: leaf.update(policySha256="a" * 64), "VERIFICATION_LEAF_POLICY_MISMATCH"),
+            ("producer", lambda leaf: leaf.update(producerId="done-claim-gate"), "VERIFICATION_LEAF_PRODUCER_MISMATCH"),
+            (
+                "evidence-schema",
+                lambda leaf: leaf["evidence"].update(schema="ai/schemas/command-result.schema.json"),
+                "VERIFICATION_LEAF_EVIDENCE_SCHEMA_MISMATCH",
+            ),
+            ("evidence-digest", lambda leaf: leaf["evidence"].update(sha256="b" * 64), "VERIFICATION_LEAF_DIGEST_MISMATCH"),
+            ("produced-at", lambda leaf: leaf.update(producedAt=future), "VERIFICATION_LEAF_STALE"),
+            (
+                "expires-at",
+                lambda leaf: leaf.update(expiresAt=(
+                    dt.datetime.fromisoformat(leaf["producedAt"].replace("Z", "+00:00"))
+                    + dt.timedelta(minutes=6)
+                ).isoformat().replace("+00:00", "Z")),
+                "VERIFICATION_LEAF_STALE",
+            ),
+        )
+
+        for name, mutate, expected_reason in matrix:
+            with self.subTest(field=name):
+                leaf_ref = self.write_bound_leaf(mutate=mutate, name=f"review-gate-{name}")
+                refs = self.write_leaf_result_refs([leaf_ref], name=f"refs-{name}.json")
+                result, status = self.helper.verification_gate(
+                    self.root,
+                    "documentation-only",
+                    "review",
+                    refs,
+                    task_key="issue-10",
+                    gate_invocation_id="gate-review",
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "INVALID_STATE", expected_reason, 5,
+                ))
+                self.assertIsNone(result["data"])
+
+    def test_repository_commit_probe_is_strict_and_missing_git_blocks(self):
+        self.commit_probe.stop()
+        try:
+            completed = SimpleNamespace(stdout=self.COMMIT_SHA + "\n")
+            with mock.patch.object(self.helper.subprocess, "run", return_value=completed) as run:
+                self.assertEqual(self.helper.repository_commit_sha(self.root), self.COMMIT_SHA)
+            run.assert_called_once_with(
+                ["git", "-C", str(self.root.resolve()), "rev-parse", "HEAD"],
+                shell=False,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+            for malformed in (self.COMMIT_SHA.upper() + "\n", self.COMMIT_SHA + " trailing\n", "", None):
+                with self.subTest(malformed=repr(malformed)):
+                    with mock.patch.object(
+                            self.helper.subprocess, "run", return_value=SimpleNamespace(stdout=malformed)):
+                        with self.assertRaises(self.helper.VerificationNotConfiguredError):
+                            self.helper.repository_commit_sha(self.root)
+        finally:
+            self.commit_probe.start()
+
+        leaf_ref = self.write_bound_leaf()
+        refs = self.write_leaf_result_refs([leaf_ref])
+        unavailable = self.helper.VerificationNotConfiguredError([
+            self.helper.validation_error("VERIFICATION_REPOSITORY_COMMIT_NOT_CONFIGURED")
+        ])
+        with mock.patch.object(self.helper, "repository_commit_sha", side_effect=unavailable):
+            result, status = self.helper.verification_gate(
+                self.root,
+                "documentation-only",
+                "review",
+                refs,
+                task_key="issue-10",
+                gate_invocation_id="gate-review",
+            )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "VERIFICATION_REPOSITORY_COMMIT_NOT_CONFIGURED", 2,
+        ))
+
+    def test_leaf_schema_patterns_reject_terminal_newlines(self):
+        leaf_ref = self.write_bound_leaf()
+        leaf = json.loads((self.root / leaf_ref).read_text(encoding="utf-8"))
+        cases = (
+            ("id", lambda value: value.update({"$id": value["$id"] + "\n"})),
+            ("task-key", lambda value: value.update(taskKey=value["taskKey"] + "\n")),
+            ("commit", lambda value: value.update(commitSha=value["commitSha"] + "\n")),
+            ("policy-digest", lambda value: value.update(policySha256=value["policySha256"] + "\n")),
+            ("evidence-digest", lambda value: value["evidence"].update(sha256=value["evidence"]["sha256"] + "\n")),
+        )
+        for field, mutate in cases:
+            with self.subTest(field=field):
+                invalid = json.loads(json.dumps(leaf))
+                mutate(invalid)
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        self.root, invalid, "ai/schemas/verification-leaf-result.schema.json",
+                    )
+
+    def test_valid_bound_leaf_reaches_aggregation(self):
+        leaf_ref = self.write_bound_leaf()
+        refs = self.write_leaf_result_refs([leaf_ref])
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+        checks = {check["checkId"]: check for check in result["data"]["checks"]}
+        self.assertEqual(checks["review-gate"]["rawResult"], "PASS")
+
+    def test_external_native_bound_leaf_is_rejected_before_evidence_lookup(self):
+        def forge_native(leaf):
+            leaf.update(checkId="native-runtime-adapter", producerId="native-runtime-adapter")
+            leaf["evidence"].update({
+                "ref": "ai/fixtures/phase-2c/missing-native-result.json",
+                "schema": "ai/schemas/native-adapter-result.schema.json",
+                "sha256": "c" * 64,
+            })
+
+        leaf_ref = self.write_bound_leaf(mutate=forge_native, name="forged-native")
+        refs = self.write_leaf_result_refs([leaf_ref], name="forged-native-refs.json")
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "verification-level",
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "NATIVE_ADAPTER_LEAF_FORGED", 5,
+        ))
+
     def test_verification_policy_and_result_schemas_are_allowlisted(self):
         self.assertIn("verification-policy", self.helper.SCHEMA_NAMES)
         self.assertIn("verification-gate-result", self.helper.SCHEMA_NAMES)
+        self.assertIn("verification-leaf-result", self.helper.SCHEMA_NAMES)
         policy = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/verification-policy.json")
         self.assertEqual(policy["schemaVersion"], 1)
         self.assertEqual({entry["id"] for entry in policy["entryPoints"]}, set(self.ENTRY_POINTS))
@@ -6473,13 +6715,18 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.assertIn("verify.api-smoke", by_change["auth-permission"]["requiredChecks"])
         self.assertIn("verify.e2e", by_change["critical-data"]["requiredChecks"])
         self.assertIn("failure-triage", by_change["static-workflow"]["entryPoints"])
+        by_check = {item["id"]: item for item in policy["checks"]}
+        self.assertEqual(by_check["review-gate"]["evidenceSchema"], "ai/schemas/gateway-result.schema.json")
+        self.assertEqual(by_check["verify.api-smoke"]["evidenceSchema"], "ai/schemas/command-result.schema.json")
+        self.assertEqual(by_check["native-runtime-adapter"]["producerId"], "native-runtime-adapter")
 
     def test_verification_gate_maps_leaf_results_by_change_type(self):
-        not_configured = self.write_leaf_results([
+        leaf_results = [
             {"checkId": "review-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/reviewer.md", "reason": "Independent static review evidence is present."},
             {"checkId": "done-claim-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/README.md", "reason": "Completion claim checklist evidence is present."},
             {"checkId": "verify.api-smoke", "result": "NOT_CONFIGURED", "evidenceRef": None, "reason": "No API smoke runner is configured."},
-        ])
+        ]
+        not_configured = self.write_leaf_results(leaf_results, "gate-doc")
         doc_result, doc_status = self.helper.verification_gate(
             self.root, "documentation-only", "verification-level", not_configured,
             task_key="issue-10", gate_invocation_id="gate-doc",
@@ -6490,12 +6737,13 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.assertEqual(doc_result["data"]["completenessEvaluated"], True)
 
         not_applicable_result, not_applicable_status = self.helper.verification_gate(
-            self.root, "documentation-only", "api-smoke", not_configured,
+            self.root, "documentation-only", "api-smoke",
             task_key="issue-10", gate_invocation_id="gate-na",
         )
         self.assertEqual((not_applicable_result["result"], not_applicable_status), ("NOT_APPLICABLE", 6))
         self.assertEqual(not_applicable_result["data"]["entryPoint"], "api-smoke")
 
+        not_configured = self.write_leaf_results(leaf_results, "gate-api")
         api_result, api_status = self.helper.verification_gate(
             self.root, "db-api", "api-smoke", not_configured,
             task_key="issue-10", gate_invocation_id="gate-api",
@@ -6506,7 +6754,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
 
         failed = self.write_leaf_results([
             {"checkId": "verify.unit", "result": "FAIL", "evidenceRef": "ai/fixtures/fake-unit-result.json", "reason": "Fixture failure."},
-        ])
+        ], "gate-logic")
         logic_result, logic_status = self.helper.verification_gate(
             self.root, "domain-logic", "verification-level", failed,
             task_key="issue-10", gate_invocation_id="gate-logic",
@@ -6537,7 +6785,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         explicit = self.write_leaf_results([
             {"checkId": "review-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/reviewer.md", "reason": "Independent static review evidence is present."},
             {"checkId": "done-claim-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/README.md", "reason": "Completion claim checklist evidence is present."},
-        ])
+        ], "gate-review-pass")
         passed_result, passed_status = self.helper.verification_gate(
             self.root, "documentation-only", "review", explicit,
             task_key="issue-10", gate_invocation_id="gate-review-pass",
@@ -6561,11 +6809,6 @@ class Phase2CVerificationGateTests(unittest.TestCase):
             "issue-10",
             "--gate-invocation-id",
             "gate-shell",
-            "--leaf-results-file",
-            str(self.write_leaf_results([
-                {"checkId": "review-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/reviewer.md", "reason": "Independent static review evidence is present."},
-                {"checkId": "done-claim-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/README.md", "reason": "Completion claim checklist evidence is present."},
-            ])),
             "--runtime-snapshot",
             self.write_json_fixture("runtime-snapshot.json", {"producerId": "fixture", "surfaces": []}),
             "--bypass-attempts",
@@ -6583,9 +6826,9 @@ class Phase2CVerificationGateTests(unittest.TestCase):
             stderr=subprocess.PIPE,
             check=False,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        self.assertEqual(completed.returncode, 2, completed.stderr + completed.stdout)
         result = json.loads(completed.stdout)
-        self.assertEqual((result["operation"], result["result"]), ("VERIFICATION_GATE", "PASS"))
+        self.assertEqual((result["operation"], result["result"]), ("VERIFICATION_GATE", "BLOCKED"))
         self.assertFalse((REPOSITORY_ROOT / ".ai-runs").exists())
 
         not_applicable = subprocess.run(
@@ -6711,6 +6954,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
 
 
 class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
+    COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567"
     SCHEMA_PATHS = {
         "native-runtime-adapters": "ai/schemas/native-runtime-adapters.schema.json",
         "native-bypass-attempt": "ai/schemas/native-bypass-attempt.schema.json",
@@ -6735,6 +6979,11 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             self.root / "ai" / "verification-policy.json",
         )
         (self.root / "ai" / "fixtures").mkdir()
+        commit_probe = mock.patch.object(
+            self.helper, "repository_commit_sha", return_value=self.COMMIT_SHA,
+        )
+        commit_probe.start()
+        self.addCleanup(commit_probe.stop)
         if hasattr(self.helper, "NATIVE_CONSUMED_CHALLENGES"):
             self.helper.NATIVE_CONSUMED_CHALLENGES.clear()
 
@@ -6748,6 +6997,42 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
     def write_verification_leaf_results(self, results, name="phase-3a-leaf-results.json"):
         return self.write_fixture(name, {"results": results})
+
+    def write_bound_verification_leaf_results(self, results, gate_invocation_id):
+        references = []
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        produced_at = now - dt.timedelta(minutes=1)
+        policy_sha256 = hashlib.sha256(
+            (self.root / "ai" / "verification-policy.json").read_bytes()
+        ).hexdigest()
+        for index, result in enumerate(results):
+            check_id = result["checkId"]
+            evidence_ref = self.write_fixture(f"{check_id}-{index}-gateway-result.json", preflight_pass())
+            evidence_path = self.root / evidence_ref
+            leaf_ref = f"ai/fixtures/{check_id}-{index}-leaf-result.json"
+            leaf = {
+                "$schema": "ai/schemas/verification-leaf-result.schema.json",
+                "$id": leaf_ref,
+                "schemaVersion": 1,
+                "checkId": check_id,
+                "result": result["result"],
+                "taskKey": "issue-10",
+                "gateInvocationId": gate_invocation_id,
+                "commitSha": self.COMMIT_SHA,
+                "policySha256": policy_sha256,
+                "producerId": check_id,
+                "producedAt": produced_at.isoformat().replace("+00:00", "Z"),
+                "expiresAt": (produced_at + dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                "evidence": {
+                    "ref": evidence_ref,
+                    "schema": "ai/schemas/gateway-result.schema.json",
+                    "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+                },
+                "reason": result.get("reason"),
+            }
+            self.write_fixture(Path(leaf_ref).name, leaf)
+            references.append(leaf_ref)
+        return self.write_fixture("phase-3a-bound-leaf-results.json", {"leafResultRefs": references})
 
     def copy_repository_fixture(self):
         directory = tempfile.TemporaryDirectory()
@@ -7949,10 +8234,10 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 self.assertEqual(self.native_check(blocked_result)["rawResult"], "NOT_CONFIGURED")
 
     def test_unsupported_host_pass_is_explicitly_repository_qualified(self):
-        explicit = self.write_verification_leaf_results([
+        explicit = self.write_bound_verification_leaf_results([
             {"checkId": "review-gate", "result": "PASS"},
             {"checkId": "done-claim-gate", "result": "PASS"},
-        ])
+        ], "gate-qualified")
         result, status = self.helper.verification_gate(
             self.root,
             "documentation-only",

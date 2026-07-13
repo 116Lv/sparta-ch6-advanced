@@ -61,24 +61,120 @@
     "check": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "entryPoint", "registryCommandId"],
+      "required": ["id", "entryPoint", "registryCommandId", "producerId", "evidenceSchema", "notApplicableFor"],
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" },
         "entryPoint": { "enum": ["verification-level", "api-smoke", "failure-triage", "review", "done-claim"] },
-        "registryCommandId": { "type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9.-]*$" }
-      },
-      "allOf": [{
-        "if": {
-          "properties": { "id": { "const": "native-runtime-adapter" } },
-          "required": ["id"]
+        "registryCommandId": { "type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9.-]*$" },
+        "producerId": {
+          "enum": [
+            "review-gate",
+            "done-claim-gate",
+            "failure-triage",
+            "verify.static",
+            "native-runtime-adapter",
+            "verify.unit",
+            "verify.integration",
+            "verify.api-smoke",
+            "verify.e2e"
+          ]
         },
-        "then": {
-          "properties": {
-            "entryPoint": { "const": "verification-level" },
-            "registryCommandId": { "type": "null" }
+        "evidenceSchema": {
+          "enum": [
+            "ai/schemas/gateway-result.schema.json",
+            "ai/schemas/command-result.schema.json",
+            "ai/schemas/native-adapter-result.schema.json"
+          ]
+        },
+        "notApplicableFor": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["documentation-only", "static-workflow", "domain-logic", "db-api", "auth-permission", "critical-data", "user-flow"]
           }
         }
-      }]
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "id": { "const": "native-runtime-adapter" } },
+            "required": ["id"]
+          },
+          "then": {
+            "properties": {
+              "entryPoint": { "const": "verification-level" },
+              "registryCommandId": { "type": "null" }
+            }
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "id": { "const": "review-gate" },
+                "producerId": { "const": "review-gate" },
+                "evidenceSchema": { "const": "ai/schemas/gateway-result.schema.json" }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "done-claim-gate" },
+                "producerId": { "const": "done-claim-gate" },
+                "evidenceSchema": { "const": "ai/schemas/gateway-result.schema.json" }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "failure-triage" },
+                "producerId": { "const": "failure-triage" },
+                "evidenceSchema": { "const": "ai/schemas/gateway-result.schema.json" }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "verify.static" },
+                "producerId": { "const": "verify.static" },
+                "evidenceSchema": { "const": "ai/schemas/gateway-result.schema.json" }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "native-runtime-adapter" },
+                "producerId": { "const": "native-runtime-adapter" },
+                "evidenceSchema": { "const": "ai/schemas/native-adapter-result.schema.json" }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "verify.unit" },
+                "producerId": { "const": "verify.unit" },
+                "evidenceSchema": { "const": "ai/schemas/command-result.schema.json" }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "verify.integration" },
+                "producerId": { "const": "verify.integration" },
+                "evidenceSchema": { "const": "ai/schemas/command-result.schema.json" }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "verify.api-smoke" },
+                "producerId": { "const": "verify.api-smoke" },
+                "evidenceSchema": { "const": "ai/schemas/command-result.schema.json" }
+              }
+            },
+            {
+              "properties": {
+                "id": { "const": "verify.e2e" },
+                "producerId": { "const": "verify.e2e" },
+                "evidenceSchema": { "const": "ai/schemas/command-result.schema.json" }
+              }
+            }
+          ]
+        }
+      ]
     },
     "changeType": {
       "type": "object",

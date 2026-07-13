@@ -2,7 +2,7 @@
   "$schema": "./schemas/verification-policy.schema.json",
   "$id": "ai/verification-policy.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-13T00:00:00Z",
+  "updatedAt": "2026-07-14T00:00:00Z",
   "entryPoints": [
     {
       "id": "verification-level",
@@ -31,15 +31,78 @@
     }
   ],
   "checks": [
-    { "id": "review-gate", "entryPoint": "review", "registryCommandId": null },
-    { "id": "done-claim-gate", "entryPoint": "done-claim", "registryCommandId": null },
-    { "id": "failure-triage", "entryPoint": "failure-triage", "registryCommandId": null },
-    { "id": "verify.static", "entryPoint": "verification-level", "registryCommandId": null },
-    { "id": "native-runtime-adapter", "entryPoint": "verification-level", "registryCommandId": null },
-    { "id": "verify.unit", "entryPoint": "verification-level", "registryCommandId": "verify.unit" },
-    { "id": "verify.integration", "entryPoint": "verification-level", "registryCommandId": "verify.integration" },
-    { "id": "verify.api-smoke", "entryPoint": "api-smoke", "registryCommandId": "verify.api-smoke" },
-    { "id": "verify.e2e", "entryPoint": "verification-level", "registryCommandId": "verify.e2e" }
+    {
+      "id": "review-gate",
+      "entryPoint": "review",
+      "registryCommandId": null,
+      "producerId": "review-gate",
+      "evidenceSchema": "ai/schemas/gateway-result.schema.json",
+      "notApplicableFor": []
+    },
+    {
+      "id": "done-claim-gate",
+      "entryPoint": "done-claim",
+      "registryCommandId": null,
+      "producerId": "done-claim-gate",
+      "evidenceSchema": "ai/schemas/gateway-result.schema.json",
+      "notApplicableFor": []
+    },
+    {
+      "id": "failure-triage",
+      "entryPoint": "failure-triage",
+      "registryCommandId": null,
+      "producerId": "failure-triage",
+      "evidenceSchema": "ai/schemas/gateway-result.schema.json",
+      "notApplicableFor": ["documentation-only", "static-workflow", "domain-logic", "db-api", "auth-permission", "critical-data", "user-flow"]
+    },
+    {
+      "id": "verify.static",
+      "entryPoint": "verification-level",
+      "registryCommandId": null,
+      "producerId": "verify.static",
+      "evidenceSchema": "ai/schemas/gateway-result.schema.json",
+      "notApplicableFor": ["documentation-only", "domain-logic", "db-api", "auth-permission", "critical-data", "user-flow"]
+    },
+    {
+      "id": "native-runtime-adapter",
+      "entryPoint": "verification-level",
+      "registryCommandId": null,
+      "producerId": "native-runtime-adapter",
+      "evidenceSchema": "ai/schemas/native-adapter-result.schema.json",
+      "notApplicableFor": []
+    },
+    {
+      "id": "verify.unit",
+      "entryPoint": "verification-level",
+      "registryCommandId": "verify.unit",
+      "producerId": "verify.unit",
+      "evidenceSchema": "ai/schemas/command-result.schema.json",
+      "notApplicableFor": ["documentation-only", "static-workflow"]
+    },
+    {
+      "id": "verify.integration",
+      "entryPoint": "verification-level",
+      "registryCommandId": "verify.integration",
+      "producerId": "verify.integration",
+      "evidenceSchema": "ai/schemas/command-result.schema.json",
+      "notApplicableFor": ["documentation-only", "static-workflow", "domain-logic"]
+    },
+    {
+      "id": "verify.api-smoke",
+      "entryPoint": "api-smoke",
+      "registryCommandId": "verify.api-smoke",
+      "producerId": "verify.api-smoke",
+      "evidenceSchema": "ai/schemas/command-result.schema.json",
+      "notApplicableFor": ["documentation-only", "static-workflow", "domain-logic"]
+    },
+    {
+      "id": "verify.e2e",
+      "entryPoint": "verification-level",
+      "registryCommandId": "verify.e2e",
+      "producerId": "verify.e2e",
+      "evidenceSchema": "ai/schemas/command-result.schema.json",
+      "notApplicableFor": ["documentation-only", "static-workflow", "domain-logic", "db-api", "auth-permission"]
+    }
   ],
   "changeTypes": [
     {
