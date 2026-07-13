@@ -1,0 +1,13 @@
+{
+  "$schema": "ai/schemas/approval-record.schema.json",
+  "$id": ".ai-runs/run-1/approvals/approval-1.json",
+  "schemaVersion": 1,
+  "approvalId": "approval-1",
+  "runId": "run-1",
+  "type": "RISKY_COMMAND",
+  "approver": "external-reviewer",
+  "scope": "verify.unit",
+  "reason": "Audit evidence for the requested command",
+  "approvedAt": "2026-07-11T03:00:00Z",
+  "externalReference": "CHANGE-123"
+}

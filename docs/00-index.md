@@ -55,6 +55,18 @@ For interrupted or resumed delegated work, start with `ai/work-logs/index.md`, t
 | Document | Purpose |
 |---|---|
 | `ai/document-routing.md` | First ownership and reading-order gate for every task |
+| `ai/context-map.md` | Phase 2A route IDs, repository surfaces, generated/excluded paths, and minimal reading routes |
+| `ai/cache-policy.md` | Phase 2A cache keys, freshness, reuse, and conservative invalidation rules |
+| `ai/tool-call-policy.md` | Phase 2A policy for broad searches, repeated reads, command rediscovery, and host-tool limits |
+| `ai/resource-budget.md` | Phase 2A default discovery budgets and exception-recording rules |
+| `ai/workflow-cache.md` | Phase 2A reviewable summary for reusable workflow-cache records |
+| `ai/skills/README.md` | Phase 2B skill contract index |
+| `ai/skill-catalog.json` | Canonical Phase 2B skill catalog |
+| `ai/agent-handoff.md` | Phase 2B handoff state and reusable context policy |
+| `ai/agent-handoff.json` | Canonical Phase 2B handoff packet |
+| `ai/verification-gates.md` | Phase 2C verification completeness, task/change applicability, and result-mapping policy |
+| `ai/verification-policy.json` | Canonical Phase 2C verification policy |
+| `scripts/ai/verification-gate.sh` | Phase 2C static/helper verification gate entry point |
 | `ai/subagent-workflow.md` | Dispatch, handoff, agent-role, and orchestrator rules |
 | `ai/github-issue-planning.md` | GitHub Issue boundaries, tracking/progress statuses, lifecycle, and reconciliation |
 | `ai/github-issue-template.md` | Required GitHub Issue body for delegated work |
@@ -73,6 +85,9 @@ For interrupted or resumed delegated work, start with `ai/work-logs/index.md`, t
 - API and DB contracts live in `docs/07-data-and-api-contracts.md`.
 - Testing and operations rules live in `docs/09-quality-operations-and-rules.md`.
 - Document routing rules live in `ai/document-routing.md`.
+- Phase 2A route and cache-control rules live in `ai/context-map.md`, `ai/cache-policy.md`, `ai/tool-call-policy.md`, `ai/resource-budget.md`, and `ai/workflow-cache.md`.
+- Phase 2B skill and handoff reuse rules live in `ai/skills/README.md`, `ai/skill-catalog.json`, `ai/agent-handoff.md`, and `ai/agent-handoff.json`.
+- Phase 2C verification completeness and task/change applicability rules live in `ai/verification-gates.md`, `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh`. `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` mapping is change-type specific. Product commands remain NOT RUN for static/helper gates.
 - AI workflow rules live in `ai/*`.
 - Delegated work uses GitHub Issues for external task tracking and `ai/work-logs/issue-{number}/` for durable execution evidence. `tracking_status` records Issue availability; `status` records workflow progress. A complete pending fallback may pass implementation QA but must be reconciled before an issue-backed claim, unqualified overall `DONE`, reconciliation completion, or Issue closure.
 - Feature-specific execution details live in `specs/*`.

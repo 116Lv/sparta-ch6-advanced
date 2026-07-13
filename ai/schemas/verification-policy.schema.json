@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:verification-policy:v1",
+  "schemaVersion": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "updatedAt", "entryPoints", "checks", "changeTypes", "resultMapping"],
+  "properties": {
+    "$schema": { "enum": ["./schemas/verification-policy.schema.json", "ai/schemas/verification-policy.schema.json"] },
+    "$id": { "const": "ai/verification-policy.json" },
+    "schemaVersion": { "const": 1 },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
+    },
+    "entryPoints": {
+      "type": "array",
+      "minItems": 5,
+      "items": { "$ref": "#/$defs/entryPoint" }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "changeTypes": {
+      "type": "array",
+      "minItems": 7,
+      "items": { "$ref": "#/$defs/changeType" }
+    },
+    "resultMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["notConfiguredRequired", "notConfiguredOptional", "failRequired", "blockedRequired", "notApplicable"],
+      "properties": {
+        "notConfiguredRequired": { "const": "BLOCKED" },
+        "notConfiguredOptional": { "const": "NOT_APPLICABLE" },
+        "failRequired": { "const": "FAIL" },
+        "blockedRequired": { "const": "BLOCKED" },
+        "notApplicable": { "const": "NOT_APPLICABLE" }
+      }
+    }
+  },
+  "$defs": {
+    "entryPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "purpose", "script"],
+      "properties": {
+        "id": { "enum": ["verification-level", "api-smoke", "failure-triage", "review", "done-claim"] },
+        "purpose": { "type": "string", "minLength": 1 },
+        "script": { "const": "scripts/ai/verification-gate.sh" }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "entryPoint", "registryCommandId"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" },
+        "entryPoint": { "enum": ["verification-level", "api-smoke", "failure-triage", "review", "done-claim"] },
+        "registryCommandId": { "type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9.-]*$" }
+      }
+    },
+    "changeType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "minimumVerificationLevel", "entryPoints", "requiredChecks", "optionalChecks", "applicabilityReason"],
+      "properties": {
+        "id": { "enum": ["documentation-only", "static-workflow", "domain-logic", "db-api", "auth-permission", "critical-data", "user-flow"] },
+        "minimumVerificationLevel": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "entryPoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["verification-level", "api-smoke", "failure-triage", "review", "done-claim"] }
+        },
+        "requiredChecks": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" }
+        },
+        "optionalChecks": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" }
+        },
+        "applicabilityReason": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

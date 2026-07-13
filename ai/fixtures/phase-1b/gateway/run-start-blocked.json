@@ -1,0 +1,1 @@
+{"$schema":"ai/schemas/gateway-result.schema.json","$id":"ai/gateway-result.json","schemaVersion":1,"operation":"RUN_START","result":"BLOCKED","reason":"run lock is held","errors":[{"code":"LOCK_HELD","instancePath":"","schemaPath":"","message":"fixture blocked"}],"data":null}

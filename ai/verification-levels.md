@@ -95,3 +95,7 @@ Required evidence:
 
 If the required level cannot be completed because the project is not scaffolded, dependencies are missing, or infrastructure is unavailable, report `BLOCKED` or `NOT RUN` with the exact reason. Do not downgrade the required level silently.
 
+## Phase 2C Executable Gate
+
+Use `ai/verification-gates.md`, canonical `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh` to evaluate verification completeness and task/change applicability before QA or done-claim reporting. The Phase 2C gate maps `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` by change type. Product commands remain NOT RUN for static/helper gate evaluation.
+

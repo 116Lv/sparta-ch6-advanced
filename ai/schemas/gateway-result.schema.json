@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:gateway-result:v1",
+  "schemaVersion": 1,
+  "title": "AI Workflow Gateway Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "operation", "result", "reason", "errors", "data"],
+  "properties": {
+    "$schema": { "const": "ai/schemas/gateway-result.schema.json" },
+    "$id": { "const": "ai/gateway-result.json" },
+    "schemaVersion": { "const": 1 },
+    "operation": { "enum": ["PREFLIGHT", "RESOLVE", "RUN_START", "PRE_COMMAND", "POST_COMMAND", "PRE_DONE_CLAIM"] },
+    "result": { "enum": ["PASS", "FAIL", "BLOCKED", "INVALID_STATE", "NOT_CONFIGURED", "POLICY_VIOLATION"] },
+    "reason": { "type": ["string", "null"] },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "instancePath", "schemaPath", "message"],
+        "properties": {
+          "code": { "type": "string", "minLength": 1 },
+          "instancePath": { "type": "string" },
+          "schemaPath": { "type": "string" },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "data": { "type": ["object", "null"] }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "operation": { "const": "PREFLIGHT" }, "result": { "const": "PASS" }, "reason": { "type": "null" }, "errors": { "maxItems": 0 },
+        "data": { "type": "object", "additionalProperties": false, "required": ["runtimeCommand", "runtimeExecutableHash", "pythonVersion", "jsonschemaVersion", "validator", "formatChecker"], "properties": { "runtimeCommand": { "enum": ["python3", "python"] }, "runtimeExecutableHash": { "$ref": "#/$defs/digest" }, "pythonVersion": { "type": "string", "minLength": 1 }, "jsonschemaVersion": { "type": "string", "minLength": 1 }, "validator": { "const": "Draft202012Validator" }, "formatChecker": { "const": true } } }
+      }
+    },
+    { "properties": { "operation": { "const": "PREFLIGHT" }, "result": { "enum": ["BLOCKED", "INVALID_STATE", "NOT_CONFIGURED"] }, "reason": { "type": "string", "minLength": 1 }, "data": { "type": "null" } } },
+    {
+      "properties": {
+        "operation": { "const": "RESOLVE" }, "result": { "const": "PASS" }, "reason": { "type": "null" }, "errors": { "maxItems": 0 },
+        "data": { "type": "object", "additionalProperties": false, "required": ["commandId", "classification", "workingDirectory", "argv", "prerequisiteIds"], "properties": { "commandId": { "type": "string", "minLength": 1 }, "classification": { "enum": ["SAFE", "RISKY", "DESTRUCTIVE", "UNAVAILABLE"] }, "workingDirectory": { "$ref": "#/$defs/repositoryPath" }, "argv": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }, "prerequisiteIds": { "$ref": "#/$defs/identifiers" } } }
+      }
+    },
+    { "properties": { "operation": { "const": "RESOLVE" }, "result": { "const": "BLOCKED" }, "reason": { "type": "string", "minLength": 1 }, "data": { "type": "object", "additionalProperties": false, "required": ["prerequisiteIds"], "properties": { "prerequisiteIds": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } } } } } },
+    { "properties": { "operation": { "const": "RESOLVE" }, "result": { "const": "BLOCKED" }, "reason": { "type": "string", "minLength": 1 }, "data": { "type": "null" } } },
+    { "properties": { "operation": { "const": "RESOLVE" }, "result": { "enum": ["INVALID_STATE", "NOT_CONFIGURED", "POLICY_VIOLATION"] }, "reason": { "type": "string", "minLength": 1 }, "data": { "type": "null" } } },
+    {
+      "properties": {
+        "operation": { "const": "RUN_START" }, "result": { "const": "PASS" }, "reason": { "type": "null" }, "errors": { "maxItems": 0 },
+        "data": { "$ref": "#/$defs/runStartData" }
+      }
+    },
+    { "properties": { "operation": { "const": "RUN_START" }, "result": { "enum": ["BLOCKED", "NOT_CONFIGURED", "POLICY_VIOLATION", "INVALID_STATE"] }, "reason": { "type": "string", "minLength": 1 }, "data": { "type": "null" } } },
+    {
+      "properties": {
+        "operation": { "const": "PRE_COMMAND" }, "result": { "const": "PASS" }, "reason": { "type": "null" }, "errors": { "maxItems": 0 },
+        "data": { "$ref": "#/$defs/preCommandData" }
+      }
+    },
+    { "properties": { "operation": { "const": "PRE_COMMAND" }, "result": { "enum": ["BLOCKED", "NOT_CONFIGURED", "POLICY_VIOLATION", "INVALID_STATE"] }, "reason": { "type": "string", "minLength": 1 }, "data": { "type": "null" } } },
+    {
+      "properties": {
+        "operation": { "const": "POST_COMMAND" }, "result": { "const": "PASS" }, "reason": { "type": "null" }, "errors": { "maxItems": 0 },
+        "data": { "allOf": [{ "$ref": "#/$defs/postCommandData" }, { "properties": { "processExitCode": { "const": 0 } } }] }
+      }
+    },
+    {
+      "properties": {
+        "operation": { "const": "POST_COMMAND" }, "result": { "const": "FAIL" }, "reason": { "type": "string", "minLength": 1 },
+        "data": { "allOf": [{ "$ref": "#/$defs/postCommandData" }, { "properties": { "processExitCode": { "type": "integer", "not": { "const": 0 } } } }] }
+      }
+    },
+    { "properties": { "operation": { "const": "POST_COMMAND" }, "result": { "const": "BLOCKED" }, "reason": { "type": "string", "minLength": 1 }, "data": { "$ref": "#/$defs/postCommandData" } } },
+    { "properties": { "operation": { "const": "POST_COMMAND" }, "result": { "enum": ["NOT_CONFIGURED", "POLICY_VIOLATION", "INVALID_STATE"] }, "reason": { "type": "string", "minLength": 1 }, "data": { "type": "null" } } },
+    {
+      "properties": {
+        "operation": { "const": "PRE_DONE_CLAIM" }, "result": { "const": "PASS" }, "reason": { "type": "null" }, "errors": { "maxItems": 0 },
+        "data": { "$ref": "#/$defs/preDoneClaimData" }
+      }
+    },
+    { "properties": { "operation": { "const": "PRE_DONE_CLAIM" }, "result": { "enum": ["FAIL", "BLOCKED", "NOT_CONFIGURED", "POLICY_VIOLATION", "INVALID_STATE"] }, "reason": { "type": "string", "minLength": 1 }, "data": { "type": "null" } } }
+  ],
+  "$defs": {
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "commandId": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$" },
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "repositoryPath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|$)).+$" },
+    "identifiers": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "runStartData": { "type": "object", "additionalProperties": false, "required": ["runId", "taskKey", "sessionRef"], "properties": { "runId": { "$ref": "#/$defs/identifier" }, "taskKey": { "type": "string", "minLength": 1 }, "sessionRef": { "$ref": "#/$defs/repositoryPath" } } },
+    "preCommandData": { "type": "object", "additionalProperties": false, "required": ["runId", "commandId", "attemptId", "argvHash", "inputFingerprint", "environmentFingerprint", "workingDirectory", "argv"], "properties": { "runId": { "$ref": "#/$defs/identifier" }, "commandId": { "$ref": "#/$defs/commandId" }, "attemptId": { "$ref": "#/$defs/identifier" }, "argvHash": { "$ref": "#/$defs/digest" }, "inputFingerprint": { "$ref": "#/$defs/digest" }, "environmentFingerprint": { "$ref": "#/$defs/digest" }, "workingDirectory": { "$ref": "#/$defs/repositoryPath" }, "argv": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } } } },
+    "postCommandData": { "type": "object", "additionalProperties": false, "required": ["runId", "commandId", "attemptId", "processExitCode", "processAttemptRef", "commandResultRef"], "properties": { "runId": { "$ref": "#/$defs/identifier" }, "commandId": { "$ref": "#/$defs/commandId" }, "attemptId": { "$ref": "#/$defs/identifier" }, "processExitCode": { "type": ["integer", "null"] }, "processAttemptRef": { "$ref": "#/$defs/repositoryPath" }, "commandResultRef": { "$ref": "#/$defs/repositoryPath" } } },
+    "preDoneClaimData": { "type": "object", "additionalProperties": false, "required": ["runId", "taskKey", "doneClaimRef", "manifestRef", "runRef", "gateResultRef", "completenessEvaluated", "scope"], "properties": { "runId": { "$ref": "#/$defs/identifier" }, "taskKey": { "type": "string", "minLength": 1 }, "doneClaimRef": { "$ref": "#/$defs/repositoryPath" }, "manifestRef": { "$ref": "#/$defs/repositoryPath" }, "runRef": { "$ref": "#/$defs/repositoryPath" }, "gateResultRef": { "$ref": "#/$defs/repositoryPath" }, "completenessEvaluated": { "const": false }, "scope": { "const": "INTEGRITY_ONLY" } } }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:approval-record:v1",
+  "schemaVersion": 1,
+  "title": "AI Workflow Approval Audit Record",
+  "$comment": "This is an audit record only. It cannot independently authorize an action.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "$id",
+    "schemaVersion",
+    "approvalId",
+    "runId",
+    "type",
+    "approver",
+    "scope",
+    "reason",
+    "approvedAt",
+    "externalReference"
+  ],
+  "properties": {
+    "$schema": { "const": "ai/schemas/approval-record.schema.json" },
+    "$id": { "$ref": "#/$defs/repositoryPath" },
+    "schemaVersion": { "const": 1 },
+    "approvalId": { "$ref": "#/$defs/identifier" },
+    "runId": { "$ref": "#/$defs/identifier" },
+    "type": {
+      "enum": [
+        "REGISTRY_UPDATE",
+        "RISKY_COMMAND",
+        "DESTRUCTIVE_COMMAND",
+        "PRODUCTION_OPERATION",
+        "DEPLOYMENT",
+        "SECRET_CHANGE"
+      ]
+    },
+    "approver": { "type": "string", "minLength": 1 },
+    "scope": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1 },
+    "approvedAt": { "$ref": "#/$defs/timestamp" },
+    "externalReference": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$",
+      "$comment": "Phase 1B validation must enable the Draft 2020-12 FormatChecker so calendar validity, including leap years, is enforced in addition to this UTC shape."
+    },
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|$)).+$"
+    }
+  }
+}

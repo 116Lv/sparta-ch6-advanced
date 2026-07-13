@@ -1,0 +1,22 @@
+{
+  "$schema": "ai/schemas/command-registry.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/command-registry-invalid-enum.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-10T08:26:30Z",
+  "commands": [
+    {
+      "id": "verify.unit",
+      "purpose": "Reject an invented capability status",
+      "configurationStatus": "READY",
+      "classification": "UNAVAILABLE",
+      "argv": null,
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [],
+      "inputPaths": ["build.gradle"],
+      "lastVerifiedAt": null,
+      "notes": []
+    }
+  ]
+}

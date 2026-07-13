@@ -1,0 +1,13 @@
+{
+  "$schema": "ai/schemas/approval-record.schema.json",
+  "$id": "ai/fixtures/phase-1a/valid/approval-record.json",
+  "schemaVersion": 1,
+  "approvalId": "approval-001",
+  "runId": "fixture-run-001",
+  "type": "REGISTRY_UPDATE",
+  "approver": "repository-owner",
+  "scope": "Add one reviewed command registry entry.",
+  "reason": "The static registry change was reviewed outside the workflow record.",
+  "approvedAt": "2026-07-10T08:00:00Z",
+  "externalReference": "host-approval-event-001"
+}

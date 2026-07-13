@@ -1,0 +1,20 @@
+{
+  "$schema": "ai/schemas/project-state.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/project-state-malformed-utc-timestamp.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-99-99T99:99:99Z",
+  "project": {
+    "name": "sparta-ch6-advanced",
+    "productType": "Spring Boot backend API assignment",
+    "mainLanguage": "Java 21",
+    "framework": "Spring Boot 4.1.0",
+    "buildSystem": "Gradle Wrapper 9.0.0"
+  },
+  "facts": [],
+  "importantPaths": [],
+  "ports": [],
+  "environments": [],
+  "helperRuntimes": [],
+  "commandRegistryRef": "ai/command-registry.json",
+  "cacheInvalidationInputs": []
+}

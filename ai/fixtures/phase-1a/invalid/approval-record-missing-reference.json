@@ -1,0 +1,12 @@
+{
+  "$schema": "ai/schemas/approval-record.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/approval-record-missing-reference.json",
+  "schemaVersion": 1,
+  "approvalId": "approval-invalid",
+  "runId": "fixture-run-invalid",
+  "type": "REGISTRY_UPDATE",
+  "approver": "repository-owner",
+  "scope": "Add one reviewed command registry entry.",
+  "reason": "This fixture intentionally omits the external audit reference.",
+  "approvedAt": "2026-07-10T08:00:00Z"
+}

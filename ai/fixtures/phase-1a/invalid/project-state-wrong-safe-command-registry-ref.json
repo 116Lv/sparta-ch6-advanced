@@ -1,0 +1,65 @@
+{
+  "$schema": "ai/schemas/project-state.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/project-state-wrong-safe-command-registry-ref.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-10T08:26:30Z",
+  "project": {
+    "name": "sparta-ch6-advanced",
+    "productType": "Spring Boot backend API assignment",
+    "mainLanguage": "Java 21",
+    "framework": "Spring Boot 4.1.0",
+    "buildSystem": "Gradle Wrapper 9.0.0"
+  },
+  "facts": [
+    {
+      "id": "test.framework",
+      "value": "JUnit Platform via Spring Boot Test",
+      "confidence": "CONFIRMED",
+      "evidence": [
+        { "kind": "STATIC_FILE", "path": "build.gradle", "claim": "The test task uses JUnit Platform." }
+      ],
+      "observedAt": "2026-07-10T08:26:30Z"
+    }
+  ],
+  "importantPaths": [
+    { "purpose": "AI workflow policy", "path": "ai" }
+  ],
+  "ports": [
+    {
+      "service": "application",
+      "value": 8080,
+      "confidence": "INFERRED",
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "src/main/resources/application.yml",
+          "claim": "No explicit server.port is configured."
+        }
+      ]
+    }
+  ],
+  "environments": [
+    { "kind": "LOCAL", "configurationStatus": "UNKNOWN", "notes": ["No runtime preflight was executed."] },
+    { "kind": "CI", "configurationStatus": "NOT_CONFIGURED", "notes": ["No CI workflow exists."] }
+  ],
+  "helperRuntimes": [
+    {
+      "environment": "LOCAL",
+      "targetRuntime": "Python 3",
+      "detectedRuntime": null,
+      "configurationStatus": "UNKNOWN",
+      "version": null,
+      "evidence": []
+    },
+    {
+      "environment": "CI",
+      "targetRuntime": "Python 3",
+      "detectedRuntime": null,
+      "configurationStatus": "NOT_CONFIGURED",
+      "version": null,
+      "evidence": []
+    }
+  ],
+  "commandRegistryRef": "ai/command-registry-copy.json",
+  "cacheInvalidationInputs": ["build.gradle", "src/main/resources/application.yml"]
+}

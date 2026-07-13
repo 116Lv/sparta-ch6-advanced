@@ -47,6 +47,13 @@ After this section passes, run `ai/qa-gate.md` and record `implementation_status
 
 Run this phase only after the QA result and done claim exist. While `tracking_status` is `pending_issue`, report `pending_issue_reconciliation`; do not report an issue-backed claim, reconciliation completion, unqualified overall `DONE`, or GitHub Issue closure.
 
+### Phase 2C Verification Gate
+
+- [ ] `ai/verification-gates.md`, canonical `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh` were used or explicitly reported as NOT RUN with a reason.
+- [ ] The selected change type records task/change applicability and verification completeness.
+- [ ] `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` mappings match the selected change type.
+- [ ] Product commands remain NOT RUN unless separately executed through the supported evidence path.
+
 ### `pending_issue` Reconciliation
 
 Complete these checks when the work used the fallback; otherwise record them as not applicable.

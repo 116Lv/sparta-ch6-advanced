@@ -1,0 +1,71 @@
+{
+  "$schema": "./schemas/skill-catalog.schema.json",
+  "$id": "ai/skill-catalog.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-13T00:00:00Z",
+  "skills": [
+    {
+      "id": "repo-intake",
+      "document": "ai/skills/repo-intake.md",
+      "routeId": "repo-wide-ai-workflow",
+      "allowedEntryPoint": "scripts/ai/repo-intake.sh --output -",
+      "prohibitedOperations": ["product command execution", "registry VERIFIED promotion", "repository .ai-runs creation"],
+      "evidenceOutputs": ["ai/workflow-cache.md", "ai/work-logs/issue-6/README.md"],
+      "handoffFields": ["skillIds", "handoffStateRef", "reusableContextRefs", "notRunProjectCommands"]
+    },
+    {
+      "id": "command-runner",
+      "document": "ai/skills/command-runner.md",
+      "routeId": "repo-wide-ai-workflow",
+      "allowedEntryPoint": "contract-only Phase 2B skill selection",
+      "prohibitedOperations": ["Phase 2B product command execution", "direct shell execution", "RISKY or DESTRUCTIVE execution"],
+      "evidenceOutputs": ["ai/work-logs/issue-6/README.md"],
+      "handoffFields": ["skillIds", "handoffStateRef", "reusableContextRefs", "notRunProjectCommands"]
+    },
+    {
+      "id": "verification-runner",
+      "document": "ai/skills/verification-runner.md",
+      "routeId": "repo-wide-ai-workflow",
+      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point verification-level --output -",
+      "prohibitedOperations": ["verification completeness claim", "product command execution", "unqualified DONE claim"],
+      "evidenceOutputs": ["ai/work-logs/issue-6/README.md"],
+      "handoffFields": ["skillIds", "handoffStateRef", "reusableContextRefs", "notRunProjectCommands"]
+    },
+    {
+      "id": "api-smoke-verifier",
+      "document": "ai/skills/api-smoke-verifier.md",
+      "routeId": "repo-wide-ai-workflow",
+      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point api-smoke --output -",
+      "prohibitedOperations": ["HTTP/curl/API calls", "server start", "API verification complete claim"],
+      "evidenceOutputs": ["ai/work-logs/issue-6/README.md"],
+      "handoffFields": ["skillIds", "handoffStateRef", "reusableContextRefs", "notRunProjectCommands"]
+    },
+    {
+      "id": "failure-triage",
+      "document": "ai/skills/failure-triage.md",
+      "routeId": "repo-wide-ai-workflow",
+      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point failure-triage --output -",
+      "prohibitedOperations": ["rerun authorization", "failure hiding", "product command execution"],
+      "evidenceOutputs": ["ai/work-logs/issue-6/README.md"],
+      "handoffFields": ["skillIds", "handoffStateRef", "reusableContextRefs", "notRunProjectCommands"]
+    },
+    {
+      "id": "docs-sync",
+      "document": "ai/skills/docs-sync.md",
+      "routeId": "repo-wide-ai-workflow",
+      "allowedEntryPoint": "route-selected documentation synchronization",
+      "prohibitedOperations": ["canonical JSON contradiction", "generated-summary manual override", "product command execution"],
+      "evidenceOutputs": ["ai/workflow-cache.md", "ai/work-logs/issue-6/README.md"],
+      "handoffFields": ["skillIds", "handoffStateRef", "reusableContextRefs", "notRunProjectCommands"]
+    },
+    {
+      "id": "review-gate",
+      "document": "ai/skills/review-gate.md",
+      "routeId": "repo-wide-ai-workflow",
+      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point review --output -",
+      "prohibitedOperations": ["issue-backed closure while pending_issue", "reconciliation-complete claim", "unqualified overall DONE"],
+      "evidenceOutputs": ["ai/work-logs/issue-6/reviewer.md"],
+      "handoffFields": ["skillIds", "handoffStateRef", "reusableContextRefs", "notRunProjectCommands", "githubReconciliationStatus"]
+    }
+  ]
+}

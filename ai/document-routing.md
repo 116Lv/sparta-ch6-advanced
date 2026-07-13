@@ -6,6 +6,8 @@ Use this guide to choose the minimum owner documents and feature-spec files befo
 
 This is not a read-everything rule. Read the owner docs for the change, the owning feature-spec files required for the current phase, and linked ADRs or AI rules only when the route calls for them.
 
+Phase 2A route IDs and repository surfaces are summarized in `ai/context-map.md`. Use `ai/cache-policy.md`, `ai/tool-call-policy.md`, `ai/resource-budget.md`, and `ai/workflow-cache.md` before rediscovering stable workflow context.
+
 ## Mandatory Routing Gate
 
 Run this gate before subject-specific planning, implementation, verification, review, or normative documentation work.
@@ -64,6 +66,9 @@ For the owning `specs/{feature}/` directory:
 | DB schema, API request/response, error contract, events | `docs/07-data-and-api-contracts.md`, owning `spec.md` | Add `docs/02-users-and-permissions.md` too if identity or authorization semantics change. |
 | UI behavior, screens, client-side flows | `docs/08-ui-and-frontend-guidelines.md`, `docs/04-user-flows.md`, owning `spec.md` | UI-only permission checks are not enough; include auth route when needed. |
 | Testing rules, verification, security checks, release rules, completion criteria | `docs/09-quality-operations-and-rules.md`, `checklist.md`, relevant `ai/*` file | Use for QA gate, done-claim, verification-level, or DoD changes. |
+| AI workflow context, cache, tool-call limits, resource budgets, or repo intake | `ai/context-map.md`, `ai/cache-policy.md`, `ai/tool-call-policy.md`, `ai/resource-budget.md`, `ai/workflow-cache.md` | Use for Phase 2A repo-wide workflow infrastructure. Product commands remain NOT RUN. |
+| AI workflow skills, handoff state, reusable context links, issue-summary reuse, or work-log reuse | `ai/skills/README.md`, `ai/skill-catalog.json`, `ai/agent-handoff.md`, `ai/agent-handoff.json`, `ai/workflow-cache.md` | Use for Phase 2B repo-wide skill and handoff infrastructure. Product commands remain NOT RUN. |
+| AI workflow verification completeness, task/change applicability, executable gate entry points, or result mapping | `ai/verification-gates.md`, `ai/verification-policy.json`, `scripts/ai/verification-gate.sh`, relevant QA/work-log docs | Use for Phase 2C repo-wide verification gate integration. `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` are mapped by change type. Product commands remain NOT RUN for static/helper gates. |
 | Documentation-only wording, index, status, report text | Only the directly affected doc | This route is only for non-normative edits. If the doc changes requirements, behavior, contracts, architecture, auth, verification, or completion criteria, route by that subject instead. |
 
 ## Documentation-Only Lane
@@ -104,6 +109,9 @@ Examples:
 Every handoff should carry:
 
 - Owning feature/spec.
+- Skill IDs from `ai/skill-catalog.json` when a Phase 2B skill applies.
+- Handoff state reference such as `ai/agent-handoff.json`.
+- Reusable context references from `ai/workflow-cache.json`.
 - Files already read.
 - Decisions already made.
 - Open questions.

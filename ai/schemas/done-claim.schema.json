@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:done-claim:v1",
+  "schemaVersion": 1,
+  "title": "AI Workflow Done Claim",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "$id",
+    "schemaVersion",
+    "runId",
+    "taskKey",
+    "generatedAt",
+    "implementationStatus",
+    "overallResult",
+    "checks",
+    "notRunItems",
+    "evidenceRefs",
+    "unexpected500Status",
+    "unhandledExceptionStatus",
+    "blockers",
+    "remainingRisks"
+  ],
+  "properties": {
+    "$schema": { "const": "ai/schemas/done-claim.schema.json" },
+    "$id": { "$ref": "#/$defs/repositoryPath" },
+    "schemaVersion": { "const": 1 },
+    "runId": { "$ref": "#/$defs/identifier" },
+    "taskKey": { "type": "string", "minLength": 1 },
+    "generatedAt": { "$ref": "#/$defs/timestamp" },
+    "implementationStatus": { "$ref": "#/$defs/implementationStatus" },
+    "overallResult": { "$ref": "#/$defs/workflowResult" },
+    "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } },
+    "notRunItems": { "type": "array", "items": { "$ref": "#/$defs/notRunItem" } },
+    "evidenceRefs": { "$ref": "#/$defs/referenceList" },
+    "unexpected500Status": { "$ref": "#/$defs/workflowResult" },
+    "unhandledExceptionStatus": { "$ref": "#/$defs/workflowResult" },
+    "blockers": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "remainingRisks": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "overallResult": { "const": "PASS" } }, "required": ["overallResult"] },
+      "then": {
+        "properties": {
+          "implementationStatus": { "const": "PASS" },
+          "checks": {
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["result"],
+              "properties": {
+                "result": { "enum": ["PASS", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"] }
+              }
+            }
+          },
+          "evidenceRefs": { "minItems": 1 },
+          "unexpected500Status": { "enum": ["PASS", "NOT_APPLICABLE"] },
+          "unhandledExceptionStatus": { "enum": ["PASS", "NOT_APPLICABLE"] },
+          "blockers": { "maxItems": 0 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
+    },
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "workflowResult": {
+      "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"]
+    },
+    "implementationStatus": {
+      "enum": ["PASS", "FAIL", "BLOCKED", "PARTIAL"]
+    },
+    "referenceList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/repositoryPath" }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "result", "evidenceRefs", "reason"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "result": { "$ref": "#/$defs/workflowResult" },
+        "evidenceRefs": { "$ref": "#/$defs/referenceList" },
+        "reason": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "result": { "enum": ["PASS", "FAIL"] } }, "required": ["result"] },
+          "then": { "properties": { "evidenceRefs": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "result": { "const": "SKIPPED_WITH_REASON" } }, "required": ["result"] },
+          "then": { "properties": { "reason": { "type": "string", "minLength": 1 } } }
+        }
+      ]
+    },
+    "notRunItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "reason"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

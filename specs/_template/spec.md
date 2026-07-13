@@ -75,3 +75,6 @@ Acceptance Criteria:
 
 - ...
 
+# Phase 2C Verification Gate
+
+Feature specs must reference `ai/verification-gates.md`, canonical `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh` when defining verification completeness or task/change applicability. Record how `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` map for this feature's change type. Product commands remain NOT RUN unless separately executed through a supported evidence path.

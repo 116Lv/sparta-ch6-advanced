@@ -43,6 +43,7 @@ For the detailed lifecycle, statuses, and strict fallback rules, use `ai/github-
 Every subagent handoff must include:
 
 - `tracking_status` plus `issue` and `issue_url`, or the complete `pending_issue` fallback metadata;
+- `skill_ids`, `handoff_state_ref`, `reusable_context_refs`, `not_run_project_commands`, and `github_reconciliation_status` when Phase 2B skill or handoff reuse applies;
 - `owning_feature`, routing reason, and route-selected files already read;
 - Markdown document links to route-selected files and phase-gated files required for this task;
 - context links to the GitHub Issue when available, the issue summary, and relevant prior role logs or decisions;
@@ -68,6 +69,10 @@ Workers initialize or update the assigned `{role}.md` from `ai/work-log-template
 The Orchestrator keeps the issue summary, `ai/work-logs/index.md`, and GitHub Issue comments aligned with the role logs. Workers may propose `handoff_needed`, `blocked`, or `done` for their assigned role, but only the Orchestrator sets the final issue status or closes an issue.
 
 On resume, read `README.md` in the issue directory and the latest relevant role log before making changes. Append to an existing role log when the role scope is unchanged.
+
+When reusable context exists, resume from `ai/agent-handoff.json`, `ai/skill-catalog.json`, and the referenced `ai/workflow-cache.json` records before rediscovering repository context.
+
+When verification completeness or task/change applicability is in scope, handoffs must reference `ai/verification-gates.md`, `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh`. The handoff must preserve `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` mapping evidence by change type. Product commands remain NOT RUN for Phase 2C static/helper gates.
 
 ## Pause, Block, And Resume
 

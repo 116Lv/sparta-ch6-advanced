@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:command-result:v1",
+  "schemaVersion": 1,
+  "title": "AI Workflow Command Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "$id",
+    "schemaVersion",
+    "runId",
+    "commandId",
+    "startedAt",
+    "endedAt",
+    "result",
+    "processExitCode",
+    "argvHash",
+    "inputFingerprint",
+    "environmentFingerprint",
+    "stdoutPath",
+    "stderrPath",
+    "redactionApplied",
+    "reason"
+  ],
+  "properties": {
+    "$schema": { "const": "ai/schemas/command-result.schema.json" },
+    "$id": { "$ref": "#/$defs/repositoryPath" },
+    "schemaVersion": { "const": 1 },
+    "runId": { "$ref": "#/$defs/identifier" },
+    "commandId": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$" },
+    "attemptId": { "$ref": "#/$defs/identifier" },
+    "processAttemptRef": { "$ref": "#/$defs/repositoryPath" },
+    "startedAt": { "$ref": "#/$defs/timestamp" },
+    "endedAt": { "$ref": "#/$defs/timestamp" },
+    "result": { "$ref": "#/$defs/scriptControlOutcome" },
+    "processExitCode": { "type": ["integer", "null"] },
+    "argvHash": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+    "inputFingerprint": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+    "environmentFingerprint": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+    "stdoutPath": { "oneOf": [{ "$ref": "#/$defs/repositoryPath" }, { "type": "null" }] },
+    "stderrPath": { "oneOf": [{ "$ref": "#/$defs/repositoryPath" }, { "type": "null" }] },
+    "redactionApplied": { "type": "boolean" },
+    "reason": { "type": ["string", "null"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "result": { "const": "PASS" } }, "required": ["result"] },
+      "then": {
+        "properties": {
+          "processExitCode": { "const": 0 },
+          "argvHash": { "type": "string" },
+          "inputFingerprint": { "type": "string" },
+          "environmentFingerprint": { "type": "string" },
+          "stdoutPath": { "$ref": "#/$defs/repositoryPath" },
+          "stderrPath": { "$ref": "#/$defs/repositoryPath" },
+          "redactionApplied": { "const": true }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "result": { "const": "FAIL" } }, "required": ["result"] },
+      "then": {
+        "properties": {
+          "processExitCode": { "type": "integer", "not": { "const": 0 } },
+          "argvHash": { "type": "string" },
+          "inputFingerprint": { "type": "string" },
+          "environmentFingerprint": { "type": "string" },
+          "stdoutPath": { "$ref": "#/$defs/repositoryPath" },
+          "stderrPath": { "$ref": "#/$defs/repositoryPath" },
+          "redactionApplied": { "const": true }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "enum": [
+              "BLOCKED",
+              "NOT_CONFIGURED",
+              "POLICY_VIOLATION",
+              "INVALID_STATE",
+              "NOT_APPLICABLE",
+              "SKIPPED_WITH_REASON"
+            ]
+          }
+        },
+        "required": ["result"]
+      },
+      "then": {
+        "properties": {
+          "processExitCode": { "type": "null" },
+          "argvHash": { "type": "null" },
+          "inputFingerprint": { "type": "null" },
+          "environmentFingerprint": { "type": "null" },
+          "stdoutPath": { "type": "null" },
+          "stderrPath": { "type": "null" },
+          "redactionApplied": { "const": false },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "result": { "const": "SKIPPED_WITH_REASON" } }, "required": ["result"] },
+      "then": { "properties": { "reason": { "type": "string", "minLength": 1 } } }
+    }
+  ],
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
+    },
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "scriptControlOutcome": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCKED",
+        "NOT_CONFIGURED",
+        "POLICY_VIOLATION",
+        "INVALID_STATE",
+        "NOT_APPLICABLE",
+        "SKIPPED_WITH_REASON"
+      ]
+    }
+  }
+}

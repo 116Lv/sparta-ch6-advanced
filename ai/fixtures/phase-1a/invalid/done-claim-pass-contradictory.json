@@ -1,0 +1,24 @@
+{
+  "$schema": "ai/schemas/done-claim.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/done-claim-pass-contradictory.json",
+  "schemaVersion": 1,
+  "runId": "fixture-run-contradictory-pass",
+  "taskKey": "contradictory-pass-fixture",
+  "generatedAt": "2026-07-10T08:02:00Z",
+  "implementationStatus": "PASS",
+  "overallResult": "PASS",
+  "checks": [
+    {
+      "id": "verify.unit",
+      "result": "PASS",
+      "evidenceRefs": [".ai-runs/fixture-run-contradictory-pass/commands/verify.unit.json"],
+      "reason": null
+    }
+  ],
+  "notRunItems": [],
+  "evidenceRefs": [".ai-runs/fixture-run-contradictory-pass/run.json"],
+  "unexpected500Status": "PASS",
+  "unhandledExceptionStatus": "PASS",
+  "blockers": ["Unexpected failure remains unresolved."],
+  "remainingRisks": []
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "ai/schemas/gateway-result.schema.json",
+  "$id": "ai/gateway-result.json",
+  "schemaVersion": 1,
+  "operation": "PREFLIGHT",
+  "result": "PASS",
+  "reason": null,
+  "errors": [],
+  "data": {
+    "runtimeCommand": "python3",
+    "runtimeExecutableHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "pythonVersion": "3.13.0",
+    "jsonschemaVersion": "4.25.0",
+    "validator": "Draft202012Validator",
+    "formatChecker": true
+  }
+}

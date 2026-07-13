@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:repo-intake-result:v1",
+  "schemaVersion": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "operation", "result", "reason", "errors", "data"],
+  "properties": {
+    "$schema": { "const": "ai/schemas/repo-intake-result.schema.json" },
+    "$id": { "const": "ai/repo-intake-result.json" },
+    "schemaVersion": { "const": 1 },
+    "operation": { "const": "REPO_INTAKE" },
+    "result": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "POLICY_VIOLATION", "INVALID_STATE", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"] },
+    "reason": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1 }
+      ]
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "instancePath", "schemaPath", "message"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+          "instancePath": { "type": "string" },
+          "schemaPath": { "type": "string" },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "data": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["contextMapRef", "workflowCacheRef", "projectStateRefresh", "commandDiscoveryUpdates", "cacheInvalidation", "createdAiRuns"],
+          "properties": {
+            "contextMapRef": { "$ref": "#/$defs/repositoryPath" },
+            "workflowCacheRef": { "$ref": "#/$defs/repositoryPath" },
+            "projectStateRefresh": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/projectStateRefresh" }
+            },
+            "commandDiscoveryUpdates": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/commandDiscoveryUpdate" }
+            },
+            "cacheInvalidation": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/cacheInvalidation" }
+            },
+            "createdAiRuns": { "const": false }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*\\\\).+$"
+    },
+    "projectStateRefresh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section", "status", "reason", "inputPaths"],
+      "properties": {
+        "section": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["CURRENT", "STALE", "UNCERTAIN"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "inputPaths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/repositoryPath" }
+        }
+      }
+    },
+    "commandDiscoveryUpdate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commandId", "status", "proposedStatus", "reason"],
+      "properties": {
+        "commandId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+        "status": { "enum": ["CURRENT", "STALE", "UNCERTAIN"] },
+        "proposedStatus": { "enum": ["UNKNOWN", "CONFIGURED_UNVERIFIED", "NOT_CONFIGURED", "STALE", "UNCERTAIN"] },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "cacheInvalidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entryId", "status", "reason"],
+      "properties": {
+        "entryId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+        "status": { "enum": ["FRESH", "STALE", "UNCERTAIN"] },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

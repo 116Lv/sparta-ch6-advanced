@@ -1,0 +1,108 @@
+{
+  "$schema": "./schemas/verification-policy.schema.json",
+  "$id": "ai/verification-policy.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-13T00:00:00Z",
+  "entryPoints": [
+    {
+      "id": "verification-level",
+      "purpose": "Evaluate required verification level and registered check applicability for a classified change.",
+      "script": "scripts/ai/verification-gate.sh"
+    },
+    {
+      "id": "api-smoke",
+      "purpose": "Evaluate whether real API smoke verification is required, not applicable, blocked, or failed.",
+      "script": "scripts/ai/verification-gate.sh"
+    },
+    {
+      "id": "failure-triage",
+      "purpose": "Evaluate failed or blocked leaf results before rerun or continuation claims.",
+      "script": "scripts/ai/verification-gate.sh"
+    },
+    {
+      "id": "review",
+      "purpose": "Evaluate independent review evidence and delegated-work readiness.",
+      "script": "scripts/ai/verification-gate.sh"
+    },
+    {
+      "id": "done-claim",
+      "purpose": "Evaluate completion-claim applicability before any done-claim report.",
+      "script": "scripts/ai/verification-gate.sh"
+    }
+  ],
+  "checks": [
+    { "id": "review-gate", "entryPoint": "review", "registryCommandId": null },
+    { "id": "done-claim-gate", "entryPoint": "done-claim", "registryCommandId": null },
+    { "id": "failure-triage", "entryPoint": "failure-triage", "registryCommandId": null },
+    { "id": "verify.static", "entryPoint": "verification-level", "registryCommandId": null },
+    { "id": "verify.unit", "entryPoint": "verification-level", "registryCommandId": "verify.unit" },
+    { "id": "verify.integration", "entryPoint": "verification-level", "registryCommandId": "verify.integration" },
+    { "id": "verify.api-smoke", "entryPoint": "api-smoke", "registryCommandId": "verify.api-smoke" },
+    { "id": "verify.e2e", "entryPoint": "verification-level", "registryCommandId": "verify.e2e" }
+  ],
+  "changeTypes": [
+    {
+      "id": "documentation-only",
+      "minimumVerificationLevel": 0,
+      "entryPoints": ["verification-level", "review", "done-claim"],
+      "requiredChecks": ["review-gate", "done-claim-gate"],
+      "optionalChecks": ["verify.static", "verify.unit", "verify.integration", "verify.api-smoke", "verify.e2e", "failure-triage"],
+      "applicabilityReason": "Non-normative documentation changes require review and done-claim evidence; product verification is not applicable unless the document changes behavior or completion criteria."
+    },
+    {
+      "id": "static-workflow",
+      "minimumVerificationLevel": 1,
+      "entryPoints": ["verification-level", "failure-triage", "review", "done-claim"],
+      "requiredChecks": ["verify.static", "review-gate", "done-claim-gate"],
+      "optionalChecks": ["verify.unit", "verify.integration", "verify.api-smoke", "verify.e2e", "failure-triage"],
+      "applicabilityReason": "Workflow scripts, schemas, and policy contracts require static/helper verification and review, not product command execution."
+    },
+    {
+      "id": "domain-logic",
+      "minimumVerificationLevel": 2,
+      "entryPoints": ["verification-level", "failure-triage", "review", "done-claim"],
+      "requiredChecks": ["verify.unit", "review-gate", "done-claim-gate"],
+      "optionalChecks": ["verify.static", "verify.integration", "verify.api-smoke", "verify.e2e", "failure-triage"],
+      "applicabilityReason": "Domain behavior requires unit-level verification when configured."
+    },
+    {
+      "id": "db-api",
+      "minimumVerificationLevel": 4,
+      "entryPoints": ["verification-level", "api-smoke", "failure-triage", "review", "done-claim"],
+      "requiredChecks": ["verify.unit", "verify.integration", "verify.api-smoke", "review-gate", "done-claim-gate"],
+      "optionalChecks": ["verify.static", "verify.e2e", "failure-triage"],
+      "applicabilityReason": "DB or API behavior requires integration and real API smoke evidence; missing API smoke is BLOCKED."
+    },
+    {
+      "id": "auth-permission",
+      "minimumVerificationLevel": 4,
+      "entryPoints": ["verification-level", "api-smoke", "failure-triage", "review", "done-claim"],
+      "requiredChecks": ["verify.unit", "verify.integration", "verify.api-smoke", "review-gate", "done-claim-gate"],
+      "optionalChecks": ["verify.static", "verify.e2e", "failure-triage"],
+      "applicabilityReason": "Auth, permission, and identity changes require API-visible verification when runnable."
+    },
+    {
+      "id": "critical-data",
+      "minimumVerificationLevel": 5,
+      "entryPoints": ["verification-level", "api-smoke", "failure-triage", "review", "done-claim"],
+      "requiredChecks": ["verify.unit", "verify.integration", "verify.api-smoke", "verify.e2e", "review-gate", "done-claim-gate"],
+      "optionalChecks": ["verify.static", "failure-triage"],
+      "applicabilityReason": "Critical data, payment, permission, and operational flows require the highest available verification; missing required capability is BLOCKED."
+    },
+    {
+      "id": "user-flow",
+      "minimumVerificationLevel": 5,
+      "entryPoints": ["verification-level", "api-smoke", "failure-triage", "review", "done-claim"],
+      "requiredChecks": ["verify.unit", "verify.integration", "verify.api-smoke", "verify.e2e", "review-gate", "done-claim-gate"],
+      "optionalChecks": ["verify.static", "failure-triage"],
+      "applicabilityReason": "User-flow changes require end-to-end or operational verification when configured."
+    }
+  ],
+  "resultMapping": {
+    "notConfiguredRequired": "BLOCKED",
+    "notConfiguredOptional": "NOT_APPLICABLE",
+    "failRequired": "FAIL",
+    "blockedRequired": "BLOCKED",
+    "notApplicable": "NOT_APPLICABLE"
+  }
+}

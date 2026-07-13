@@ -1,0 +1,18 @@
+{
+  "$schema": "ai/schemas/run.schema.json",
+  "$id": "ai/fixtures/phase-1a/valid/run.json",
+  "schemaVersion": 1,
+  "runId": "fixture-run-001",
+  "taskKey": "phase-1b-contract-fixture",
+  "startedAt": "2026-07-10T08:00:00Z",
+  "endedAt": "2026-07-10T08:01:00Z",
+  "workingDirectory": ".",
+  "environment": "LOCAL",
+  "result": "PASS",
+  "commandResultRefs": [".ai-runs/fixture-run-001/commands/verify.unit.json"],
+  "approvalRefs": [],
+  "policyViolationRefs": [],
+  "evidenceRefs": [".ai-runs/fixture-run-001/run.json"],
+  "redactionApplied": true,
+  "reason": null
+}

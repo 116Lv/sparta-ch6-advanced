@@ -1,0 +1,12 @@
+{
+  "$schema": "ai/schemas/policy-violation.schema.json",
+  "$id": ".ai-runs/run-1/policy-violations/event-1.json",
+  "schemaVersion": 1,
+  "violationId": "event-1",
+  "runId": "run-1",
+  "type": "UNREGISTERED_COMMAND",
+  "description": "Execution intent named an unregistered command",
+  "detectedAt": "2026-07-11T03:00:00Z",
+  "blocking": true,
+  "context": {"commandId": "verify.unknown", "toolName": null, "path": null, "operation": "PRE_COMMAND"}
+}

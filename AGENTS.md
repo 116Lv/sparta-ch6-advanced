@@ -14,6 +14,40 @@ That routing step must explicitly determine the owning feature, or explicitly re
 
 Do not invent requirements. Do not claim tests passed unless you actually ran them. Do not claim completion without verification evidence.
 
+## Mandatory Workflow State
+
+Before rediscovering repository structure, commands, ports, environments, or verification capabilities, read:
+
+1. `ai/project-state.json` - canonical project state
+2. `ai/command-registry.json` - canonical command capability registry
+3. `ai/project-state.md` and `ai/command-registry.md` - human policy and summaries
+4. `ai/context-map.md`, `ai/cache-policy.md`, `ai/tool-call-policy.md`, `ai/resource-budget.md`, and `ai/workflow-cache.md` when route, cache, or rediscovery policy is relevant
+5. `ai/skills/README.md`, `ai/skill-catalog.json`, `ai/agent-handoff.md`, and `ai/agent-handoff.json` when skill selection, delegated handoff, or reusable context is relevant
+
+JSON is canonical. Markdown summaries must not override or contradict JSON.
+
+Phase 1A provides state and registry contracts only. It does not provide a command gateway, native tool interception, or CI enforcement. Do not describe Phase 1A as complete command enforcement.
+
+During Phase 1A work, do not execute project commands. Keep `verify.unit` as `CONFIGURED_UNVERIFIED`; keep lint, dedicated integration test, E2E, migration, seed, and API smoke as `NOT_CONFIGURED`; and keep application port 8080 as `INFERRED`.
+
+Phase 1B-1 provides current recorded LOCAL runtime preflight and pure command resolution. A successful recorded preflight makes the LOCAL helper runtime `VERIFIED` using durable scrubbed environment-local evidence. A current-preflight mismatch blocks invocation and makes cached evidence stale for that invocation. CI remains `NOT_CONFIGURED`.
+
+Phase 1B-2 adds the repository execution gateway and structured per-run evidence. `scripts/ai/command-runner.sh` is the only supported project-command path after Phase 1B-2. Direct project-command execution remains prohibited. `RISKY` and `DESTRUCTIVE` commands remain prohibited; approval records are audit-only and never grant execution authority. Non-POSIX project-command execution remains `NOT_CONFIGURED` and prohibited. Standalone `workflow-gate.sh` stages never launch project commands.
+
+Phase 1B-3 adds integrity-only finalization, artifact manifests, finalized `run.json`, and done-claim checks for supported-path run evidence. Phase 1B-3 reports `completenessEvaluated: false` and `scope: INTEGRITY_ONLY`; it does not prove verification completeness, registry `VERIFIED`, reconciliation-complete, issue-backed closure, or unqualified overall `DONE` claims.
+
+Phase 2A adds context intake and cache-control policy through `ai/context-map.md`, `ai/cache-policy.md`, `ai/tool-call-policy.md`, `ai/resource-budget.md`, `ai/workflow-cache.md`, and their canonical JSON records where present. Phase 2A repo intake is read-only/proposal-only for project-state refresh and command-discovery updates. It does not execute product commands, create repository `.ai-runs` evidence, mark registry commands `VERIFIED`, evaluate verification completeness, or claim host-wide file-read/search/tool-call interception.
+
+Phase 2B adds skill contracts and handoff reuse through `ai/skills/README.md`, `ai/skill-catalog.json`, `ai/agent-handoff.md`, and `ai/agent-handoff.json`. Phase 2B does not execute product commands, create repository `.ai-runs` evidence, create artifact manifests or finalized `run.json`, mark registry commands `VERIFIED`, evaluate verification completeness, reconcile GitHub Issues, or support issue-backed closure, reconciliation-complete, or unqualified overall DONE claims.
+
+Phase 2C adds verification completeness and task/change applicability policy through `ai/verification-gates.md`, `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh`. Phase 2C static/helper gates map `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` by change type. Product commands remain NOT RUN; the Phase 2C gate must not create repository `.ai-runs`, artifact manifests, finalized `run.json`, registry `VERIFIED` transitions, issue-backed closure, reconciliation-complete claims, or unqualified overall DONE claims while `tracking_status` remains `pending_issue`.
+
+AI agents must not directly run Gradle, build, product or unit project tests, application server, Docker Compose, HTTP/curl/API, database, migration, seed, or infrastructure commands. There is no temporary direct-command exception for AI agents. Static file inspection, documentation edits, and host-approved version-control operations remain allowed administrative workflow operations.
+
+A command run manually by a human outside the AI workflow does not make a registry entry `VERIFIED`, does not count as workflow evidence, and must not be reported by an agent as a passed check. Only Phase 1B-2 command-runner evidence may transition a project-command entry to `VERIFIED`.
+
+Commands with `NOT_CONFIGURED`, `UNKNOWN`, `STALE`, or `UNCERTAIN` status are not executable. No command may be marked `VERIFIED` without recorded runtime evidence.
+
 ## Document Map
 
 Start with `ai/document-routing.md` for routing, owning-feature detection, and phase-gated reading order. Then use only the owner documents selected by that route.
@@ -30,6 +64,19 @@ Start with `ai/document-routing.md` for routing, owning-feature detection, and p
 - `docs/08-ui-and-frontend-guidelines.md`: UI guidance, if frontend is added
 - `docs/09-quality-operations-and-rules.md`: test, security, release, DoD
 - `ai/document-routing.md`: routing rules for which docs/spec files to load and when
+- `ai/project-state.json`: canonical project facts, paths, ports, environments, and helper-runtime state
+- `ai/command-registry.json`: canonical command capability and verification state
+- `ai/project-state.md` and `ai/command-registry.md`: human policy notes and generated state summaries
+- `ai/context-map.md`: repository context routes, surfaces, generated/excluded paths, and minimal reading routes
+- `ai/cache-policy.md`: cache keys, freshness, reuse, and conservative invalidation rules
+- `ai/tool-call-policy.md`: broad search, file-read, command rediscovery, and host-tool boundary policy
+- `ai/resource-budget.md`: numeric discovery budgets and exception-recording rules
+- `ai/workflow-cache.md`: human policy and summary for reusable scrubbed workflow-cache records
+- `ai/skills/README.md`: Phase 2B skill contract index
+- `ai/skill-catalog.json`: canonical Phase 2B skill catalog
+- `ai/agent-handoff.md` and `ai/agent-handoff.json`: Phase 2B handoff state and reusable context packet
+- `ai/verification-gates.md`, `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh`: Phase 2C executable verification/applicability gates
+- `ai/schemas/`: closed JSON Schema contracts for executable AI workflow state
 - `ai/*`: AI workflow, delegated-work tracking, verification, QA gate, and done-claim rules
 - `ai/subagent-workflow.md`: mandatory dispatch and handoff rules for delegated work
 - `ai/github-issue-planning.md`: Issue boundaries, tracking/progress statuses, lifecycle, and `pending_issue` reconciliation

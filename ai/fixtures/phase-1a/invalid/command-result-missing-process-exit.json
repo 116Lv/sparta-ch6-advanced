@@ -1,0 +1,17 @@
+{
+  "$schema": "ai/schemas/command-result.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/command-result-missing-process-exit.json",
+  "schemaVersion": 1,
+  "runId": "fixture-run-invalid",
+  "commandId": "verify.unit",
+  "startedAt": "2026-07-10T08:00:00Z",
+  "endedAt": "2026-07-10T08:01:00Z",
+  "result": "PASS",
+  "argvHash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "inputFingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+  "environmentFingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+  "stdoutPath": ".ai-runs/fixture-run-invalid/logs/verify.unit.stdout.log",
+  "stderrPath": ".ai-runs/fixture-run-invalid/logs/verify.unit.stderr.log",
+  "redactionApplied": true,
+  "reason": null
+}

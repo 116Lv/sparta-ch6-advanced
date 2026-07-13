@@ -1,0 +1,30 @@
+{
+  "$schema": "ai/schemas/project-state.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/project-state-invalid-confidence.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-10T08:26:30Z",
+  "project": {
+    "name": "sparta-ch6-advanced",
+    "productType": "Spring Boot backend API assignment",
+    "mainLanguage": "Java 21",
+    "framework": "Spring Boot 4.1.0",
+    "buildSystem": "Gradle Wrapper 9.0.0"
+  },
+  "facts": [
+    {
+      "id": "test.framework",
+      "value": "JUnit Platform",
+      "confidence": "LIKELY",
+      "evidence": [
+        { "kind": "STATIC_FILE", "path": "build.gradle", "claim": "The test task uses JUnit Platform." }
+      ],
+      "observedAt": "2026-07-10T08:26:30Z"
+    }
+  ],
+  "importantPaths": [],
+  "ports": [],
+  "environments": [],
+  "helperRuntimes": [],
+  "commandRegistryRef": "ai/command-registry.json",
+  "cacheInvalidationInputs": []
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:helper-runtime-evidence:v1",
+  "schemaVersion": 1,
+  "title": "Scrubbed Local Helper Runtime Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["environment", "targetRuntime", "detectedRuntime", "runtimeCommand", "version", "jsonschemaVersion", "validator", "formatChecker", "interpreterSha256", "observedAt"],
+  "properties": {
+    "environment": { "const": "LOCAL" },
+    "targetRuntime": { "const": "Python 3" },
+    "detectedRuntime": { "const": "Python 3" },
+    "runtimeCommand": { "enum": ["python3", "python"] },
+    "version": { "type": "string", "minLength": 1 },
+    "jsonschemaVersion": { "type": "string", "minLength": 1 },
+    "validator": { "const": "Draft202012Validator" },
+    "formatChecker": { "const": true },
+    "interpreterSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "observedAt": { "type": "string", "format": "date-time" }
+  }
+}

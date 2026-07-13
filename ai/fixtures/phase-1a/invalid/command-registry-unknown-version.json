@@ -1,0 +1,7 @@
+{
+  "$schema": "ai/schemas/command-registry.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/command-registry-unknown-version.json",
+  "schemaVersion": 2,
+  "updatedAt": "2026-07-10T08:26:30Z",
+  "commands": []
+}

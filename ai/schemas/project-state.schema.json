@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:project-state:v1",
+  "schemaVersion": 1,
+  "title": "AI Workflow Project State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "$id",
+    "schemaVersion",
+    "updatedAt",
+    "project",
+    "facts",
+    "importantPaths",
+    "ports",
+    "environments",
+    "helperRuntimes",
+    "commandRegistryRef",
+    "cacheInvalidationInputs"
+  ],
+  "properties": {
+    "$schema": {
+      "enum": [
+        "./schemas/project-state.schema.json",
+        "ai/schemas/project-state.schema.json"
+      ]
+    },
+    "$id": { "$ref": "#/$defs/repositoryPath" },
+    "schemaVersion": { "const": 1 },
+    "updatedAt": { "$ref": "#/$defs/timestamp" },
+    "project": { "$ref": "#/$defs/project" },
+    "facts": { "type": "array", "items": { "$ref": "#/$defs/fact" } },
+    "importantPaths": { "type": "array", "items": { "$ref": "#/$defs/importantPath" } },
+    "ports": { "type": "array", "items": { "$ref": "#/$defs/port" } },
+    "environments": { "type": "array", "items": { "$ref": "#/$defs/environment" } },
+    "helperRuntimes": { "type": "array", "items": { "$ref": "#/$defs/helperRuntime" } },
+    "commandRegistryRef": { "const": "ai/command-registry.json" },
+    "cacheInvalidationInputs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/repositoryPath" }
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$",
+      "$comment": "Phase 1B validation must enable the Draft 2020-12 FormatChecker so calendar validity, including leap years, is enforced in addition to this UTC shape."
+    },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "confidence": { "enum": ["CONFIRMED", "INFERRED", "UNKNOWN", "STALE", "UNCERTAIN"] },
+    "configurationStatus": {
+      "enum": ["UNKNOWN", "CONFIGURED_UNVERIFIED", "VERIFIED", "NOT_CONFIGURED", "STALE", "UNCERTAIN"]
+    },
+    "environmentKind": { "enum": ["LOCAL", "CI"] },
+    "evidenceKind": { "enum": ["STATIC_FILE", "RUNTIME_COMMAND", "EXTERNAL_APPROVAL", "CI_ARTIFACT"] },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "claim"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/evidenceKind" },
+        "path": { "$ref": "#/$defs/repositoryPath" },
+        "claim": { "type": "string", "minLength": 1 }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "productType", "mainLanguage", "framework", "buildSystem"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "productType": { "type": "string", "minLength": 1 },
+        "mainLanguage": { "type": "string", "minLength": 1 },
+        "framework": { "type": "string", "minLength": 1 },
+        "buildSystem": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "value", "confidence", "evidence", "observedAt"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$" },
+        "value": { "type": "string", "minLength": 1 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence" } },
+        "observedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "importantPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purpose", "path"],
+      "properties": {
+        "purpose": { "type": "string", "minLength": 1 },
+        "path": { "$ref": "#/$defs/repositoryPath" }
+      }
+    },
+    "port": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service", "value", "confidence", "evidence"],
+      "properties": {
+        "service": { "type": "string", "minLength": 1 },
+        "value": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence" } }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "configurationStatus", "notes"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/environmentKind" },
+        "configurationStatus": { "$ref": "#/$defs/configurationStatus" },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "helperRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment",
+        "targetRuntime",
+        "detectedRuntime",
+        "configurationStatus",
+        "version",
+        "evidence"
+      ],
+      "properties": {
+        "environment": { "$ref": "#/$defs/environmentKind" },
+        "targetRuntime": { "type": "string", "minLength": 1 },
+        "detectedRuntime": { "type": ["string", "null"] },
+        "configurationStatus": { "$ref": "#/$defs/configurationStatus" },
+        "version": { "type": ["string", "null"] },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "configurationStatus": { "enum": ["UNKNOWN", "NOT_CONFIGURED"] } },
+            "required": ["configurationStatus"]
+          },
+          "then": {
+            "properties": {
+              "detectedRuntime": { "type": "null" },
+              "version": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "configurationStatus": { "enum": ["CONFIGURED_UNVERIFIED", "VERIFIED"] } },
+            "required": ["configurationStatus"]
+          },
+          "then": {
+            "properties": {
+              "detectedRuntime": { "type": "string", "minLength": 1 },
+              "version": { "type": "string", "minLength": 1 },
+              "evidence": { "minItems": 1 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "configurationStatus": { "const": "VERIFIED" } },
+            "required": ["configurationStatus"]
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "contains": {
+                  "type": "object",
+                  "required": ["kind"],
+                  "properties": { "kind": { "const": "RUNTIME_COMMAND" } }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

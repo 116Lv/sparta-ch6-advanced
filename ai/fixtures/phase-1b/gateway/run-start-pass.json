@@ -1,0 +1,1 @@
+{"$schema":"ai/schemas/gateway-result.schema.json","$id":"ai/gateway-result.json","schemaVersion":1,"operation":"RUN_START","result":"PASS","reason":null,"errors":[],"data":{"runId":"run-1","taskKey":"phase-1b-2-task-1","sessionRef":".ai-runs/run-1/.state/run-session.json"}}

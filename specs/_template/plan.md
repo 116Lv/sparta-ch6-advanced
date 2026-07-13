@@ -56,3 +56,6 @@
 
 - ...
 
+# Phase 2C Verification Gate
+
+Implementation plans must include the selected change type from `ai/verification-policy.json`, link `ai/verification-gates.md`, and identify whether `scripts/ai/verification-gate.sh` will be run as a static/helper gate. Record expected `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` mapping. Product commands remain NOT RUN unless separately authorized through supported evidence.

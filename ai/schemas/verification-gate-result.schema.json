@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:verification-gate-result:v1",
+  "schemaVersion": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "operation", "result", "reason", "errors", "data"],
+  "properties": {
+    "$schema": { "enum": ["ai/schemas/verification-gate-result.schema.json", "./schemas/verification-gate-result.schema.json"] },
+    "$id": { "const": "ai/verification-gate-result.json" },
+    "schemaVersion": { "const": 1 },
+    "operation": { "const": "VERIFICATION_GATE" },
+    "result": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "POLICY_VIOLATION", "INVALID_STATE", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"] },
+    "reason": { "type": ["string", "null"] },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "instancePath", "schemaPath", "message"],
+        "properties": {
+          "code": { "type": "string", "minLength": 1 },
+          "instancePath": { "type": "string" },
+          "schemaPath": { "type": "string" },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "data": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["changeType", "entryPoint", "minimumVerificationLevel", "completenessEvaluated", "checks", "createdAiRuns"],
+      "properties": {
+        "changeType": { "type": "string" },
+        "entryPoint": { "type": "string" },
+        "minimumVerificationLevel": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "completenessEvaluated": { "type": "boolean" },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["checkId", "required", "rawResult", "mappedResult", "reason", "evidenceRef"],
+            "properties": {
+              "checkId": { "type": "string" },
+              "required": { "type": "boolean" },
+              "rawResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"] },
+              "mappedResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"] },
+              "reason": { "type": ["string", "null"] },
+              "evidenceRef": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "createdAiRuns": { "const": false }
+      }
+    }
+  }
+}

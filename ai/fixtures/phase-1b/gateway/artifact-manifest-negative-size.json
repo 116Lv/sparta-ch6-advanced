@@ -1,0 +1,4 @@
+{
+  "$schema": "ai/schemas/artifact-manifest.schema.json", "$id": ".ai-runs/run-1/artifact-manifest.json", "schemaVersion": 1, "runId": "run-1", "generatedAt": "2026-07-11T03:01:00Z", "algorithm": "SHA-256",
+  "artifacts": [{"path": ".ai-runs/run-1/logs/verify.unit/attempt-1.stdout.log", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "size": -1, "kind": "STDOUT_LOG"}]
+}

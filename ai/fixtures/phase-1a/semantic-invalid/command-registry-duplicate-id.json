@@ -1,0 +1,40 @@
+{
+  "$schema": "ai/schemas/command-registry.schema.json",
+  "$id": "ai/fixtures/phase-1a/semantic-invalid/command-registry-duplicate-id.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-10T08:26:30Z",
+  "commands": [
+    {
+      "id": "verify.unit",
+      "purpose": "First record with an intentionally duplicate command ID",
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "test"],
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        { "kind": "STATIC_FILE", "path": "build.gradle", "claim": "The test task uses JUnit Platform." }
+      ],
+      "inputPaths": ["build.gradle"],
+      "lastVerifiedAt": null,
+      "notes": []
+    },
+    {
+      "id": "verify.unit",
+      "purpose": "Second record with an intentionally duplicate command ID",
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "test", "--info"],
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        { "kind": "STATIC_FILE", "path": "build.gradle", "claim": "The test task uses JUnit Platform." }
+      ],
+      "inputPaths": ["build.gradle"],
+      "lastVerifiedAt": null,
+      "notes": []
+    }
+  ]
+}

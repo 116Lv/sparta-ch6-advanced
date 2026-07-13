@@ -1,0 +1,208 @@
+{
+  "$schema": "./schemas/command-registry.schema.json",
+  "$id": "ai/command-registry.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-10T12:11:47Z",
+  "commands": [
+    {
+      "id": "dependencies.install",
+      "purpose": "Install or resolve project dependencies",
+      "configurationStatus": "UNKNOWN",
+      "classification": "UNAVAILABLE",
+      "argv": null,
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [],
+      "inputPaths": ["build.gradle", "settings.gradle", "gradle/**"],
+      "lastVerifiedAt": null,
+      "notes": ["Gradle resolves dependencies as part of tasks; no standalone install command is selected in Phase 1A."]
+    },
+    {
+      "id": "server.dev",
+      "purpose": "Start the development server",
+      "configurationStatus": "UNKNOWN",
+      "classification": "UNAVAILABLE",
+      "argv": null,
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [],
+      "inputPaths": ["build.gradle", "src/main/resources/application.yml"],
+      "lastVerifiedAt": null,
+      "notes": ["No runtime command is selected or executed in Phase 1A."]
+    },
+    {
+      "id": "verify.build",
+      "purpose": "Compile or build the project",
+      "configurationStatus": "UNKNOWN",
+      "classification": "UNAVAILABLE",
+      "argv": null,
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [],
+      "inputPaths": ["build.gradle", "settings.gradle", "gradle/**", "src/main/**", "src/test/**"],
+      "lastVerifiedAt": null,
+      "notes": ["No exact build argv is selected or executed in Phase 1A."]
+    },
+    {
+      "id": "verify.unit",
+      "purpose": "Run the configured Gradle test task",
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "test"],
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "build.gradle",
+          "claim": "The test task is configured to use JUnit Platform."
+        },
+        {
+          "kind": "STATIC_FILE",
+          "path": "gradlew",
+          "claim": "The POSIX Gradle wrapper entry point exists."
+        }
+      ],
+      "inputPaths": ["build.gradle", "settings.gradle", "gradle/**", "src/main/**", "src/test/**"],
+      "lastVerifiedAt": null,
+      "notes": [
+        "Static configuration evidence exists; the command has not been executed.",
+        "Native gradlew.bat execution is future scope and NOT_CONFIGURED."
+      ]
+    },
+    {
+      "id": "verify.lint",
+      "purpose": "Run lint checks",
+      "configurationStatus": "NOT_CONFIGURED",
+      "classification": "UNAVAILABLE",
+      "argv": null,
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "build.gradle",
+          "claim": "No lint task or plugin is declared."
+        }
+      ],
+      "inputPaths": ["build.gradle"],
+      "lastVerifiedAt": null,
+      "notes": []
+    },
+    {
+      "id": "verify.integration",
+      "purpose": "Run a dedicated integration-test command",
+      "configurationStatus": "NOT_CONFIGURED",
+      "classification": "UNAVAILABLE",
+      "argv": null,
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "build.gradle",
+          "claim": "No dedicated integration-test task is declared."
+        }
+      ],
+      "inputPaths": ["build.gradle", "src/test/**"],
+      "lastVerifiedAt": null,
+      "notes": []
+    },
+    {
+      "id": "verify.e2e",
+      "purpose": "Run end-to-end tests",
+      "configurationStatus": "NOT_CONFIGURED",
+      "classification": "UNAVAILABLE",
+      "argv": null,
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "build.gradle",
+          "claim": "No E2E task or framework is declared."
+        }
+      ],
+      "inputPaths": ["build.gradle"],
+      "lastVerifiedAt": null,
+      "notes": []
+    },
+    {
+      "id": "verify.api-smoke",
+      "purpose": "Run real HTTP API smoke verification",
+      "configurationStatus": "NOT_CONFIGURED",
+      "classification": "UNAVAILABLE",
+      "argv": null,
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": ["server.dev"],
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "src/main/java/com/ch6/cafe/CafeApplication.java",
+          "claim": "This file defines the Spring Boot application entry point and does not register an API smoke runner."
+        },
+        {
+          "kind": "STATIC_FILE",
+          "path": "docs/superpowers/specs/2026-07-10-ai-workflow-phase-1a-spec.md",
+          "claim": "The approved Phase 1A intake classifies verify.api-smoke as NOT_CONFIGURED."
+        }
+      ],
+      "inputPaths": ["src/main/**", "src/test/**", "docs/07-data-and-api-contracts.md"],
+      "lastVerifiedAt": null,
+      "notes": []
+    },
+    {
+      "id": "db.migration",
+      "purpose": "Apply database migrations",
+      "configurationStatus": "NOT_CONFIGURED",
+      "classification": "UNAVAILABLE",
+      "argv": null,
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "build.gradle",
+          "claim": "No migration tool or task is declared."
+        }
+      ],
+      "inputPaths": ["build.gradle", "src/main/resources/**"],
+      "lastVerifiedAt": null,
+      "notes": []
+    },
+    {
+      "id": "db.seed",
+      "purpose": "Seed development or test data",
+      "configurationStatus": "NOT_CONFIGURED",
+      "classification": "UNAVAILABLE",
+      "argv": null,
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "src/main/resources/application.yml",
+          "claim": "This file declares application configuration and does not define seed-specific configuration."
+        },
+        {
+          "kind": "STATIC_FILE",
+          "path": "docs/superpowers/specs/2026-07-10-ai-workflow-phase-1a-spec.md",
+          "claim": "The approved Phase 1A intake classifies db.seed as NOT_CONFIGURED."
+        }
+      ],
+      "inputPaths": ["src/main/resources/**", "src/test/resources/**"],
+      "lastVerifiedAt": null,
+      "notes": []
+    }
+  ]
+}

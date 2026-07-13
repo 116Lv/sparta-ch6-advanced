@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:process-attempt:v1",
+  "schemaVersion": 1,
+  "title": "AI Workflow Process Attempt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "runId", "commandId", "attemptId", "reservedAt", "startedAt", "endedAt", "argvHash", "inputFingerprint", "environmentFingerprint", "workingDirectory", "launchStatus", "processExitCode", "termination", "redactionStatus", "reason"],
+  "properties": {
+    "$schema": { "const": "ai/schemas/process-attempt.schema.json" },
+    "$id": { "$ref": "#/$defs/repositoryPath" },
+    "schemaVersion": { "const": 1 },
+    "runId": { "$ref": "#/$defs/identifier" },
+    "commandId": { "$ref": "#/$defs/commandId" },
+    "attemptId": { "$ref": "#/$defs/identifier" },
+    "reservedAt": { "$ref": "#/$defs/timestamp" },
+    "startedAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+    "endedAt": { "$ref": "#/$defs/timestamp" },
+    "argvHash": { "$ref": "#/$defs/digest" },
+    "inputFingerprint": { "$ref": "#/$defs/digest" },
+    "environmentFingerprint": { "$ref": "#/$defs/digest" },
+    "workingDirectory": { "$ref": "#/$defs/repositoryPath" },
+    "launchStatus": { "enum": ["LAUNCHED", "SPAWN_FAILED"] },
+    "processExitCode": { "type": ["integer", "null"] },
+    "termination": { "enum": ["EXITED", "TIMED_OUT", "RESOURCE_LIMIT", "SPAWN_FAILED"] },
+    "redactionStatus": { "enum": ["SCRUBBED", "UNSCRUBBED", "NOT_APPLIED"] },
+    "reason": { "type": ["string", "null"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "launchStatus": { "const": "SPAWN_FAILED" } }, "required": ["launchStatus"] },
+      "then": {
+        "properties": {
+          "startedAt": { "type": "null" },
+          "processExitCode": { "type": "null" },
+          "termination": { "const": "SPAWN_FAILED" },
+          "redactionStatus": { "const": "NOT_APPLIED" },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "launchStatus": { "const": "LAUNCHED" } }, "required": ["launchStatus"] },
+      "then": {
+        "properties": {
+          "startedAt": { "$ref": "#/$defs/timestamp" },
+          "termination": { "enum": ["EXITED", "TIMED_OUT", "RESOURCE_LIMIT"] }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "termination": { "const": "EXITED" } }, "required": ["termination"] },
+      "then": { "properties": { "processExitCode": { "type": "integer" }, "redactionStatus": { "enum": ["SCRUBBED", "UNSCRUBBED"] } } }
+    },
+    {
+      "if": { "properties": { "termination": { "enum": ["TIMED_OUT", "RESOURCE_LIMIT"] } }, "required": ["termination"] },
+      "then": {
+        "properties": {
+          "redactionStatus": { "enum": ["SCRUBBED", "NOT_APPLIED"] },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "redactionStatus": { "const": "SCRUBBED" } }, "required": ["redactionStatus"] },
+      "then": {
+        "properties": {
+          "launchStatus": { "const": "LAUNCHED" },
+          "termination": { "enum": ["EXITED", "TIMED_OUT", "RESOURCE_LIMIT"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "termination": { "const": "EXITED" },
+          "redactionStatus": { "const": "SCRUBBED" }
+        },
+        "required": ["termination", "redactionStatus"]
+      },
+      "then": { "properties": { "reason": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "redactionStatus": { "const": "UNSCRUBBED" } }, "required": ["redactionStatus"] },
+      "then": {
+        "properties": {
+          "launchStatus": { "const": "LAUNCHED" },
+          "termination": { "const": "EXITED" },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "redactionStatus": { "const": "NOT_APPLIED" } }, "required": ["redactionStatus"] },
+      "then": {
+        "properties": {
+          "termination": { "enum": ["TIMED_OUT", "RESOURCE_LIMIT", "SPAWN_FAILED"] },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "timestamp": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$" },
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "commandId": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$" },
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "repositoryPath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|$)).+$" }
+  }
+}

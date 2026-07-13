@@ -1,0 +1,17 @@
+{
+  "$schema": "ai/schemas/policy-violation.schema.json",
+  "$id": "ai/fixtures/phase-1a/valid/policy-violation.json",
+  "schemaVersion": 1,
+  "violationId": "violation-001",
+  "runId": "fixture-run-001",
+  "type": "RAW_COMMAND_ATTEMPT",
+  "description": "An agent attempted to bypass the registered command gateway.",
+  "detectedAt": "2026-07-10T08:00:00Z",
+  "blocking": true,
+  "context": {
+    "commandId": null,
+    "toolName": "shell",
+    "path": null,
+    "operation": "direct-command"
+  }
+}

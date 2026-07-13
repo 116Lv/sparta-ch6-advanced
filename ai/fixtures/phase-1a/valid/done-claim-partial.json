@@ -1,0 +1,32 @@
+{
+  "$schema": "ai/schemas/done-claim.schema.json",
+  "$id": "ai/fixtures/phase-1a/valid/done-claim-partial.json",
+  "schemaVersion": 1,
+  "runId": "fixture-run-partial",
+  "taskKey": "phase-1a-partial-fixture",
+  "generatedAt": "2026-07-10T10:05:00Z",
+  "implementationStatus": "PARTIAL",
+  "overallResult": "BLOCKED",
+  "checks": [
+    {
+      "id": "verify.unit",
+      "result": "PASS",
+      "evidenceRefs": [".ai-runs/fixture-run-partial/commands/verify.unit.json"],
+      "reason": null
+    },
+    {
+      "id": "verify.api-smoke",
+      "result": "BLOCKED",
+      "evidenceRefs": [],
+      "reason": "Phase 1A intake keeps verify.api-smoke blocked until the Phase 1B gateway exists."
+    }
+  ],
+  "notRunItems": [
+    { "id": "db.seed", "reason": "Phase 1A does not execute seed commands." }
+  ],
+  "evidenceRefs": [".ai-runs/fixture-run-partial/run.json"],
+  "unexpected500Status": "NOT_APPLICABLE",
+  "unhandledExceptionStatus": "NOT_APPLICABLE",
+  "blockers": ["API smoke verification remains blocked until the Phase 1B gateway exists."],
+  "remainingRisks": ["Runtime coverage is incomplete because blocked commands were not executed."]
+}

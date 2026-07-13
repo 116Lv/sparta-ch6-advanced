@@ -1,0 +1,4 @@
+{
+  "$schema": "ai/schemas/process-attempt.schema.json", "$id": ".ai-runs/run-1/process-attempts/verify.unit/attempt-1.json", "schemaVersion": 1,
+  "runId": "run-1", "commandId": "verify.unit", "attemptId": "attempt-1", "reservedAt": "2026-07-11T03:00:01Z", "startedAt": "2026-07-11T03:00:02Z", "endedAt": "2026-07-11T03:00:03Z", "argvHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "inputFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "environmentFingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "workingDirectory": ".", "launchStatus": "LAUNCHED", "processExitCode": 0, "termination": "EXITED", "redactionStatus": "SCRUBBED", "reason": null
+}
