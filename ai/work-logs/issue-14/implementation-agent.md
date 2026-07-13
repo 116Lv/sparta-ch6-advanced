@@ -968,3 +968,89 @@ directory close, relative cleanup unlink, and cleanup directory fsync.
 - No summary, index, reviewer log, Task 9, product/infrastructure, public CLI,
   canonical host state, or GitHub state was changed. Prohibited commands and
   claims remain NOT RUN/not made. Independent rereview remains with the parent.
+
+## Task 9 Update - Phase 3A Task 3 (2026-07-14)
+
+### Routing And Handoff
+
+- `tracking_status: issue_backed`; GitHub Issue #14.
+- `owning_feature: none`; this is repo-wide Phase 3A bypass-resolution trust
+  hardening routed through `AGENTS.md`, `ai/document-routing.md`, the approved
+  trust-boundary design and Phase 3A plan, and the exact Task 9 brief.
+- Implementation `skill_ids`: `verification-runner`, `failure-triage`, and
+  `docs-sync`; `handoff_state_ref`: `ai/agent-handoff.json`; reusable context:
+  `ai/workflow-cache.json`, `ai/verification-policy.json`, and
+  `ai/native-runtime-adapters.json`; GitHub reconciliation remains
+  `issue_backed`.
+
+### Changed Files And Decisions
+
+- `ai/schemas/native-bypass-attempt.schema.json`: requires null detection
+  binding fields on `DETECTED` and non-null identifier/digest fields on
+  `RESOLVED`.
+- `scripts/ai/workflow_helper.py`: adds `native_detection_digest()` and exact
+  prior-detection event/task/original-gate/deduplication/digest/time matching.
+  Unmatched detections remain unresolved; mismatched resolutions are invalid
+  before signed current-resolution ID comparison.
+- `scripts/ai/tests/test_workflow_helper.py`: adds schema closure and direct plus
+  gate-level unrelated event/task/original-gate/digest regressions, updates
+  valid resolution fixtures with exact original-detection bindings, and
+  preserves event-set mismatch ordering.
+- `ai/native-runtime-adapters.md`, `ai/verification-gates.md`, and the Phase 3A
+  design now state external immutable `HostNativeTrust`, the public unsupported
+  boundary, safe external durable replay consumption, and original detection
+  binding without claiming current enforcement.
+- Current-gate detections still win as unresolved. A valid resolution cannot
+  clear any other detection that merely shares its deduplication key.
+- External host trust, pinned durable ledger behavior, signature/callback/event
+  set trust, exact signed `resolutionEventIds`, reusable handoff/context refs,
+  canonical unsupported state, and Phase 3B boundaries remain unchanged.
+
+### Exact TDD And Verification Evidence
+
+- RED command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_resolution_must_bind_the_exact_original_detection scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_unrelated_resolution_event_cannot_clear_detection_at_gate -v`
+- RED result: expected exit `1`; the four wrong event/task/original-gate/digest
+  subcases each returned `RESOLVED_TRANSITION`, and the gate case returned
+  `FAIL / NATIVE_BYPASS_CONTRACT_INVALID / 1` instead of the precise blocked
+  resolution-invalid result.
+- Initial focused GREEN: the same pre-rename two-test command exited `0`; 2
+  tests passed in `0.275s`.
+- First surrounding Phase 3A run exposed three fixture migrations. Failure
+  triage preserved validation ordering: a schema-only resolution received
+  non-null bindings, the later-unresolved resolution received its true digest,
+  and the event-set tamper recomputed its resolution digest so it could continue
+  testing the later signed event-set mismatch. The targeted three-test rerun
+  passed in `0.869s`.
+- Final focused command (schema plus direct and gate-level all-four mismatch
+  cases): exit `0`; 3 tests passed in `1.209s`.
+- Final Phase 3A command: exit `0`; 107 tests passed in `30.844s`, with 2
+  explicit Windows capability skips.
+- Final Phase 2C + Phase 3A command: exit `0`; 130 tests passed in `52.600s`,
+  with the same 2 skips.
+- The brief's `scripts/ai/tests/native-adapter-gate.sh` path is absent. Syntax
+  verification of the tracked `scripts/ai/native-adapter-gate.sh` exited `0`.
+- The public gate returned captured exit `6` with
+  `UNSUPPORTED / HOST_UNSUPPORTED`, null/`UNPROBED` host version, four
+  unsupported surfaces, and repository-only qualification.
+- `git diff --check` and staged diff check exited `0` with only line-ending
+  warnings. Repository `.ai-runs` and recursive `__pycache__` remained absent.
+
+### Commit, Concerns, And Recovery State
+
+- Implementation/schema/tests/docs commit: `920fe21`
+  (`fix(ai): bind native bypass resolutions`). This Task 9 evidence append is
+  committed separately; the detailed ignored report is
+  `.superpowers/sdd/task-9-phase3a-report.md`.
+- The shell-path mismatch in the brief was not repaired by creating a duplicate;
+  the tracked wrapper remains unchanged and syntax-valid.
+- Two pre-existing platform skips remain: real handle-relative cross-process
+  ledger execution and directory-symlink creation are unavailable here. No real
+  supported host, authoritative external trust, or production ledger was used.
+- No Phase 3B, product/infrastructure, GitHub, handoff, reusable-context,
+  canonical policy, or shell-wrapper file changed. Gradle, build/product tests,
+  server, Docker, HTTP/API, database, migration, seed, deploy, infrastructure,
+  real `.ai-runs`, push, PR, merge, and GitHub Issue mutation were NOT RUN. No
+  registry `VERIFIED`, phase-state, Issue closure, native/CI enforcement, or
+  unqualified completion claim is made. Independent review remains with the
+  parent.
