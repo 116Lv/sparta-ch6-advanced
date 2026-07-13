@@ -1054,3 +1054,43 @@ directory close, relative cleanup unlink, and cleanup directory fsync.
   registry `VERIFIED`, phase-state, Issue closure, native/CI enforcement, or
   unqualified completion claim is made. Independent review remains with the
   parent.
+
+### Task 9 Review Fix - Deterministic Resolution Precedence (2026-07-14)
+
+- Independent review found insertion-order dependence across deduplication
+  groups: an invalid resolution in the first group returned
+  `NATIVE_BYPASS_RESOLUTION_INVALID` before a later current-gate detection could
+  establish the required `NATIVE_BYPASS_UNRESOLVED` precedence. Reordering the
+  same event set changed the result.
+- `native_bypass_lifecycle_state(...)` now pre-scans the complete validated,
+  event-ID-deduplicated attempt collection for any current-gate `DETECTED`
+  event. That fact returns `UNRESOLVED` before per-group resolution validation,
+  independent of group or delivery order.
+- When no current-gate detection exists, an unrelated resolution still returns
+  `NATIVE_BYPASS_RESOLUTION_INVALID`. Exact event/task/original-gate/dedupe/
+  digest/time binding, unmatched later-detection blocking, signed current
+  `resolutionEventIds` comparison, and event delivery conflict/idempotency
+  checks remain unchanged.
+
+Exact review-fix RED command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_current_gate_detection_precedes_cross_group_invalid_resolution_in_all_orders -v`
+exited `1`; the `invalid-first` permutation returned resolution-invalid while
+the same events in `current-first` order returned unresolved. The invalid-only
+control remained resolution-invalid.
+
+The same focused command exited `0`; 1 test passed in `0.538s`. The final
+precedence/binding focus exited `0`; 4 tests passed in `1.649s`.
+
+- Phase 3A: exit `0`; 108 tests passed in `31.400s`, with 2 existing Windows
+  capability skips.
+- Phase 2C + Phase 3A: exit `0`; 131 tests passed in `53.341s`, with the same
+  skips.
+- Tracked shell syntax, unstaged/staged diff checks: exit `0`; only line-ending
+  warnings. Repository `.ai-runs` and recursive `__pycache__` remained absent.
+- Review-fix implementation/tests commit: `de7b89f`
+  (`fix(ai): stabilize bypass resolution precedence`). This evidence append is
+  committed separately and the ignored Task 9 report carries the same evidence.
+- No summary, index, reviewer, Phase 3B, product/infrastructure, GitHub, public
+  wrapper, canonical policy, handoff, or reusable-context file changed. No
+  prohibited command, enforcement claim, Issue closure, or unqualified
+  completion claim was made. Independent rereview remains with the parent.
