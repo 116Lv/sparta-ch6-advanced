@@ -7,8 +7,8 @@ status: done
 owning_feature: none
 current_owner: implementation-agent
 started_at: 2026-07-13T11:03:43+09:00
-ended_at: 2026-07-13T21:37:18+09:00
-last_updated: 2026-07-13T21:37:18+09:00
+ended_at: 2026-07-13T22:40:00+09:00
+last_updated: 2026-07-13T22:40:00+09:00
 branch: codex/phase-3a-native-runtime-adapters
 related_files:
   - ai/schemas/native-runtime-adapters.schema.json
@@ -133,6 +133,8 @@ migration_history: []
 ## Final Approval Review Remediation
 
 Implemented the final review fixes with test-first evidence. The snapshot signature now binds task identity and the complete canonical deduplicated bypass event set by count and SHA-256, replay identity includes the task, supported-host PASS compares those signed facts after trust, and resolution IDs remain an additional exact binding. Surface/operation/command-intent combinations are closed, backend Ed25519 unavailability returns structured `BLOCKED`, and handoff cache bytes are checkout-stable through an exact-file `-text` attribute. Focused GREEN passed four tests; the Phase 3A suite passed 88 tests.
+
+The final rereview identified one remaining `COMMAND`/`COMMAND` branch that allowed omitted `commandIntent`. The schema now requires the matching intent and the negative regression is part of the passing 95-test Phase 2C plus Phase 3A set.
 
 Completed the historical Task 1 closed schema contracts and three-name helper allowlist update; the final review wave adds the separately reviewed closed runtime-snapshot schema.
 

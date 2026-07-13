@@ -7,8 +7,8 @@ status: done
 owning_feature: none
 current_owner: reviewer
 started_at: 2026-07-13T11:11:49+09:00
-ended_at: 2026-07-13T21:37:18+09:00
-last_updated: 2026-07-13T21:37:18+09:00
+ended_at: 2026-07-13T22:40:00+09:00
+last_updated: 2026-07-13T22:40:00+09:00
 branch: codex/phase-3a-native-runtime-adapters
 related_files:
   - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
@@ -134,6 +134,8 @@ migration_history: []
 # Final Approval Review Remediation
 
 The approval review was initially NOT READY with one Critical and three Important findings: unsigned lifecycle content, missing task binding, unconstrained capability semantics, and an unhandled Ed25519 backend-unavailable exception. Another independent review identified a checkout-specific raw handoff cache digest. The implementation added failing tests first, then signed task plus complete event-set facts, task-aware replay identity, semantic schema branches, structured crypto-unavailable handling, explicit Phase 3A Issue metadata, and deterministic handoff bytes. A fresh independent rereview is required before Draft PR creation.
+
+The first rereview confirmed those trust and cache findings closed but found one remaining Important gap: shell `COMMAND` events could omit `commandIntent`. The final branch requires matching intent for that branch and adds an omitted-intent negative regression. Final approval still depends on a clean rereview of this last correction.
 
 # Summary
 

@@ -64,7 +64,7 @@
             "operationType": { "const": "COMMAND" },
             "commandIntent": { "const": "COMMAND" }
           },
-          "required": ["surface", "operationType"]
+          "required": ["surface", "operationType", "commandIntent"]
         },
         {
           "properties": {

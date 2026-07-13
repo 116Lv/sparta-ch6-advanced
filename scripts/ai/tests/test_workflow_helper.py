@@ -6952,11 +6952,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             self.assert_valid("native-bypass-attempt", attempt)
 
         invalid_cases = (
+            self.valid_attempt(surface="COMMAND", operationType="COMMAND", commandIntent=None),
             self.valid_attempt(surface="FILE_READ", operationType="COMMAND", commandIntent="FILE_READ"),
             self.valid_attempt(surface="COMMAND", operationType="SEARCH", commandIntent="FILE_READ"),
             self.valid_attempt(surface="SEARCH", operationType="SEARCH", commandIntent="SEARCH"),
         )
         for attempt in invalid_cases:
+            if attempt.get("commandIntent") is None:
+                attempt.pop("commandIntent", None)
             self.assert_invalid("native-bypass-attempt", attempt)
 
     def test_ed25519_backend_unavailable_is_structured_and_fail_closed(self):

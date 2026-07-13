@@ -6,8 +6,8 @@ status: done
 owning_feature: none
 current_owner: reviewer
 started_at: 2026-07-13T11:03:43+09:00
-ended_at: 2026-07-13T21:37:18+09:00
-last_updated: 2026-07-13T21:37:18+09:00
+ended_at: 2026-07-13T22:40:00+09:00
+last_updated: 2026-07-13T22:40:00+09:00
 branch: codex/phase-3a-native-runtime-adapters
 related_files:
   - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
@@ -128,7 +128,7 @@ The final independent approval review found one Critical and three Important tru
 
 The remediation adds signed `taskKey`, bounded `bypassEventCount`, and `bypassEventSetSha256`, recomputes the canonical deduplicated event-set digest before PASS, includes task identity in replay state, closes surface/operation/command-intent combinations, and maps `UnsupportedAlgorithm` to completion-blocking `NATIVE_ADAPTER_CRYPTO_UNAVAILABLE`. The Phase 2C Issue #7 reconciliation record remains intact while `phase3AIssue` identifies Issue #10. `.gitattributes` fixes `ai/agent-handoff.json` as `-text`, and the `FRESH` raw-byte SHA-256 was recomputed from deterministic LF bytes.
 
-Focused RED produced four expected failures before implementation. Focused GREEN passed four tests, and the complete Phase 3A suite passed 88 tests. The independently observed full helper result remains NOT PASS: 336 tests, one unchanged CRLF fixture failure, and 17 skips. No product command or durable evidence command was run.
+Focused RED produced four expected failures before implementation. Focused GREEN passed four tests, and the complete Phase 3A suite passed 88 tests. A subsequent rereview found the remaining omitted `commandIntent` branch; its negative regression now closes the matrix and the Phase 2C plus Phase 3A suite passes 95 tests. The independently observed full helper result remains NOT PASS: 336 tests, one unchanged CRLF fixture failure, and 17 skips. No product command or durable evidence command was run.
 
 ## Recovery Summary
 
@@ -231,6 +231,6 @@ Fresh evidence: Phase3A passed 78 tests; Phase2C plus Phase3A passed 85 tests; t
 
 This fix wave adds required bounded unique `resolutionEventIds` to the closed runtime snapshot and therefore to the canonical signed bytes. A valid later-gate `RESOLVED` transition proceeds through supported/probed host selection, freshness, Ed25519 signature, one-use challenge, signed callback proof, and all-`ENFORCED` trust before its current resolution event IDs are compared exactly with the signed array. Exact binding permits the otherwise valid temporary signed adapter vector to return `PASS`; missing, mismatched, or extra binding has a distinct `BLOCKED` reason, while duplicate or oversized binding is snapshot-contract invalid. Stale and bad-signature vectors remain blocked on the snapshot trust path, and ordinary unresolved detections block before trust evaluation.
 
-The four Issue #10 `changed_files` lists now match the 29 tracked files changed across the contiguous Phase3A commit range. Ignored SDD references were replaced by the tracked design, implementation plan, and Issue work-log links; this summary and the work-log index share the same update timestamp.
+The four Issue #10 `changed_files` lists now match the 31 tracked files changed across the contiguous Phase3A commit range. Ignored SDD references were replaced by the tracked design, implementation plan, and Issue work-log links; this summary and the work-log index share the same update timestamp.
 
 Observed helper/static evidence before this record update: Phase3A passed 85 tests, Phase2C plus Phase3A passed 92 tests, and the targeted snapshot-schema, Issue10 metadata, workflow-cache, and agent-handoff set passed 4 tests. `git diff --check`, artifact absence, and command-registry diff checks exited 0. This evidence does not establish product verification, a registry `VERIFIED` transition, Issue closure, reconciliation completion, or an unqualified overall `DONE` claim. Canonical host state remains `null`/`UNPROBED` and `UNSUPPORTED`; no product command or durable evidence generation ran.
