@@ -197,3 +197,20 @@ Task 1 is complete. Issue #10 remains in progress for later Phase 3A tasks.
 ### Boundary Notes
 
 - No product commands, runtime evidence, `.ai-runs` artifacts, network calls, database operations, or infrastructure commands were run or created.
+
+## Task 4 Native Result Preservation Report (2026-07-13)
+
+### Scope
+
+- Preserved the mapped native adapter result in the early correlation and entry-point applicability returns.
+- Reused one explicit-input native leaf in the regular verification check loop, so runtime snapshot and bypass references are evaluated once per gate invocation.
+- Updated the malformed-bypass expectation from top-level `BLOCKED` to its correct `FAIL`/exit `1` contract; retained `BLOCKED`/exit `2` for native `BLOCKED` and `NOT_CONFIGURED`, and retained unsupported-host N/A behavior.
+
+### TDD Evidence
+
+- RED: the focused five-test command exited `1` with the expected three failures: both early malformed-bypass paths returned `BLOCKED` instead of `FAIL`, and explicit snapshot/bypass inputs invoked the evaluator twice.
+- GREEN: the same focused command exited `0`; all 5 tests passed.
+
+### Boundary Notes
+
+- No product commands, evidence, `.ai-runs` artifacts, network calls, databases, or infrastructure commands were run or created.

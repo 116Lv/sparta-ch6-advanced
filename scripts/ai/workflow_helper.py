@@ -6190,6 +6190,7 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
             for value in (task_key, gate_invocation_id)
         ):
             raw = early_native_leaf or native_adapter_phase2c_leaf(root, task_key, gate_invocation_id)
+            mapped_result = map_verification_leaf(raw["result"], True)
             data = {
                 "changeType": change_type,
                 "entryPoint": entry_point,
@@ -6199,15 +6200,16 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                     "checkId": NATIVE_ADAPTER_CHECK_ID,
                     "required": True,
                     "rawResult": raw["result"],
-                    "mappedResult": map_verification_leaf(raw["result"], True),
+                    "mappedResult": mapped_result,
                     "reason": raw["reason"],
                     "evidenceRef": raw["evidenceRef"],
                 }],
                 "createdAiRuns": False,
             }
+            overall = aggregate_verification_gate(data["checks"])
             return publish_verification_gate_result(root, verification_gate_result(
-                "BLOCKED", "VERIFICATION_GATE_BLOCKED", data,
-            ), 2)
+                overall, None if overall == "PASS" else "VERIFICATION_GATE_" + overall, data,
+            ), verification_gate_exit(overall))
         if entry_point not in change["entryPoints"]:
             if early_native_leaf is not None and early_native_leaf["result"] != "NOT_APPLICABLE":
                 mapped_result = map_verification_leaf(early_native_leaf["result"], True)
@@ -6226,9 +6228,10 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                     }],
                     "createdAiRuns": False,
                 }
+                overall = aggregate_verification_gate(data["checks"])
                 return publish_verification_gate_result(root, verification_gate_result(
-                    "BLOCKED", "VERIFICATION_GATE_BLOCKED", data,
-                ), 2)
+                    overall, None if overall == "PASS" else "VERIFICATION_GATE_" + overall, data,
+                ), verification_gate_exit(overall))
             data = {
                 "changeType": change_type,
                 "entryPoint": entry_point,
@@ -6257,12 +6260,8 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                     message="verification policy references an unknown check",
                 )])
             if check_id == NATIVE_ADAPTER_CHECK_ID:
-                raw = native_adapter_phase2c_leaf(
-                    root,
-                    task_key,
-                    gate_invocation_id,
-                    runtime_snapshot_ref,
-                    bypass_attempts_ref,
+                raw = early_native_leaf or native_adapter_phase2c_leaf(
+                    root, task_key, gate_invocation_id, runtime_snapshot_ref, bypass_attempts_ref,
                 )
             else:
                 raw = leaf_results.get(check_id, default_leaf_result_for_check(check_id, policy_check))
