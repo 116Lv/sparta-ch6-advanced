@@ -5855,10 +5855,11 @@ def verification_cache_invalidation(root, entry, policy, policy_sha256, commit_s
             path.relative_to(repository_root)
             if not path.is_file():
                 raise OSError("cache evidence is not a regular file")
+            evidence_sha256 = digest(path)
         except (KeyError, OSError, TypeError, ValueError):
             uncertain_reasons.append("Cache evidence path is missing, unmapped, or unavailable.")
             continue
-        if digest(path) != item.get("sha256"):
+        if evidence_sha256 != item.get("sha256"):
             stale_reasons.append("Cache evidence digest changed.")
 
     try:
@@ -5870,7 +5871,7 @@ def verification_cache_invalidation(root, entry, policy, policy_sha256, commit_s
             stale_reasons.append("Cache decision expired.")
 
     if stale_reasons:
-        return "STALE", " ".join(stale_reasons)
+        return "STALE", " ".join(stale_reasons + uncertain_reasons)
     if uncertain_reasons:
         return "UNCERTAIN", " ".join(uncertain_reasons)
     return "FRESH", "All verification cache identity inputs match."

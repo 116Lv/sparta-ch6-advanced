@@ -6433,6 +6433,60 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
         self.assertEqual(policy_open_count, 1)
         self.assertEqual(actual["status"], "STALE")
 
+    def test_verification_cache_evidence_read_faults_continue_to_safe_stale_checks(self):
+        entry = self.verification_cache_entry()
+        first_path = self.root / entry["key"]["evidence"][0]["path"]
+        second_path = self.root / "ai" / "cache-evidence-2.json"
+        second_path.write_text('{"second":true}\n', encoding="utf-8")
+        entry["key"]["evidence"].append({
+            "path": "ai/cache-evidence-2.json",
+            "sha256": hashlib.sha256(second_path.read_bytes()).hexdigest(),
+        })
+        commit_sha = entry["key"]["commitSha"]
+        original_open = Path.open
+
+        class ReadFailure(io.BytesIO):
+            def read(self, *_args, **_kwargs):
+                raise OSError("injected evidence read failure")
+
+        cases = (
+            ("disappears", "open", False, False, "UNCERTAIN"),
+            ("read failure", "read", False, False, "UNCERTAIN"),
+            ("disappears then expired", "open", True, False, "STALE"),
+            ("read failure then digest mismatch", "read", False, True, "STALE"),
+        )
+        for name, fault, expired, second_mismatch, expected_status in cases:
+            candidate = json.loads(json.dumps(entry))
+            if expired:
+                candidate["key"]["expiresAt"] = "2000-01-01T00:00:00Z"
+            if second_mismatch:
+                candidate["key"]["evidence"][1]["sha256"] = "e" * 64
+            remaining_evidence_opens = 0
+
+            def fault_open(path, *args, **kwargs):
+                nonlocal remaining_evidence_opens
+                if Path(path) == first_path:
+                    if fault == "open":
+                        raise FileNotFoundError("injected disappearance after is_file")
+                    return ReadFailure()
+                if Path(path) == second_path:
+                    remaining_evidence_opens += 1
+                return original_open(path, *args, **kwargs)
+
+            with self.subTest(name=name):
+                with mock.patch.object(self.helper.Path, "open", autospec=True, side_effect=fault_open):
+                    with mock.patch.object(self.helper, "repository_commit_sha", return_value=commit_sha):
+                        actual = self.helper.cache_invalidation_report(
+                            self.root, {"entries": [candidate]},
+                        )[0]
+                self.assertEqual(actual["status"], expected_status)
+                self.assertIn("unavailable", actual["reason"].lower())
+                self.assertEqual(remaining_evidence_opens, 1)
+                if expired:
+                    self.assertIn("expired", actual["reason"].lower())
+                if second_mismatch:
+                    self.assertIn("digest changed", actual["reason"].lower())
+
     def test_repo_intake_rejects_duplicate_skill_catalog_ids(self):
         catalog_path = self.root / "ai" / "skill-catalog.json"
         catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
