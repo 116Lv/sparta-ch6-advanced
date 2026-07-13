@@ -109,3 +109,37 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: The implementation matches the prescribed validation graph, ordering, and artifact reuse without weakening visible integrity assertions. The only concern is optional direct coverage for one newly introduced validation branch.
+
+## Task 2 Review (2026-07-14)
+
+### Spec Compliance
+
+- Verdict: Spec compliant.
+- The required projection checks, schema-loaded inputs, and integrity-only output fields are implemented at `scripts/ai/workflow_helper.py:5016-5044`, `scripts/ai/workflow_helper.py:5157-5167`, and `scripts/ai/workflow_helper.py:5175-5176`.
+- Cannot verify from diff that the reported RED/GREEN and 12-test commands actually ran; those execution claims appear only in `.superpowers/sdd/task-2-phase1b3-report.md:23`, `.superpowers/sdd/task-2-phase1b3-report.md:34`, `.superpowers/sdd/task-2-phase1b3-report.md:44`, and `.superpowers/sdd/task-2-phase1b3-report.md:48`.
+
+### Strengths
+
+- Projection validation covers run and claim identity, the gate-derived result, exact final evidence ordering, all three manifest-kind reference sets, and manifest binding (`scripts/ai/workflow_helper.py:5030-5038`).
+- Finalized-run verification checks directory closure before schema-loading the claim and gate and invoking projection validation (`scripts/ai/workflow_helper.py:5155-5167`).
+- Both required regressions assert exit 5 and `FINAL_RUN_PROJECTION_MISMATCH` for tampered task identity and stale result (`scripts/ai/tests/test_workflow_helper.py:5723-5753`).
+- `completenessEvaluated: false` and `scope: INTEGRITY_ONLY` remain preserved (`scripts/ai/workflow_helper.py:5175-5176`).
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+- None.
+
+#### Minor (Nice to Have)
+
+- None.
+
+### Assessment
+
+- Task quality: Approved.
+- Reasoning: The implementation matches the specified deterministic projection contract and preserves the integrity-only verification boundary. No correctness or scope violation is visible in the packaged diff (`scripts/ai/workflow_helper.py:5016-5044`, `scripts/ai/workflow_helper.py:5155-5176`).
