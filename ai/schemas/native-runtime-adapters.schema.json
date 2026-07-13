@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:native-runtime-adapters:v1",
+  "schemaVersion": 1,
+  "title": "Native Runtime Adapter Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "updatedAt", "supportedHosts", "currentHost", "completionPolicy"],
+  "properties": {
+    "$schema": { "const": "ai/schemas/native-runtime-adapters.schema.json" },
+    "$id": { "const": "ai/native-runtime-adapters.json" },
+    "schemaVersion": { "const": 1 },
+    "updatedAt": { "$ref": "#/$defs/timestamp" },
+    "supportedHosts": { "type": "array", "items": { "$ref": "#/$defs/supportedHost" } },
+    "currentHost": { "$ref": "#/$defs/currentHost" },
+    "completionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase2cCheckId", "unsupportedLeafResult", "supportedHostFailureResult"],
+      "properties": {
+        "phase2cCheckId": { "const": "native-runtime-adapter" },
+        "unsupportedLeafResult": { "const": "NOT_APPLICABLE" },
+        "supportedHostFailureResult": { "const": "BLOCKED" }
+      }
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
+    },
+    "identifier": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+    "probeRef": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
+    "surfaceName": { "enum": ["COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL"] },
+    "supportedSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surface", "status", "reasonCode"],
+      "properties": {
+        "surface": { "$ref": "#/$defs/surfaceName" },
+        "status": { "enum": ["NOT_CONFIGURED", "AUDIT_ONLY", "ENFORCED"] },
+        "reasonCode": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "unsupportedSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surface", "status", "reasonCode"],
+      "properties": {
+        "surface": { "$ref": "#/$defs/surfaceName" },
+        "status": { "const": "UNSUPPORTED" },
+        "reasonCode": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "fourSupportedSurfaces": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/supportedSurface" },
+      "allOf": [
+        { "contains": { "properties": { "surface": { "const": "COMMAND" } }, "required": ["surface"] } },
+        { "contains": { "properties": { "surface": { "const": "FILE_READ" } }, "required": ["surface"] } },
+        { "contains": { "properties": { "surface": { "const": "SEARCH" } }, "required": ["surface"] } },
+        { "contains": { "properties": { "surface": { "const": "TOOL_CALL" } }, "required": ["surface"] } }
+      ]
+    },
+    "fourUnsupportedSurfaces": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/unsupportedSurface" },
+      "allOf": [
+        { "contains": { "properties": { "surface": { "const": "COMMAND" } }, "required": ["surface"] } },
+        { "contains": { "properties": { "surface": { "const": "FILE_READ" } }, "required": ["surface"] } },
+        { "contains": { "properties": { "surface": { "const": "SEARCH" } }, "required": ["surface"] } },
+        { "contains": { "properties": { "surface": { "const": "TOOL_CALL" } }, "required": ["surface"] } }
+      ]
+    },
+    "supportedHost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostId", "minimumHostVersion", "adapterVersionRange", "producerId", "ed25519KeyFingerprint", "surfaces"],
+      "properties": {
+        "hostId": { "$ref": "#/$defs/identifier" },
+        "minimumHostVersion": { "$ref": "#/$defs/version" },
+        "adapterVersionRange": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "producerId": { "$ref": "#/$defs/identifier" },
+        "ed25519KeyFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "surfaces": { "$ref": "#/$defs/fourSupportedSurfaces" }
+      }
+    },
+    "currentHost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostId", "hostVersion", "probeRefs", "surfaces"],
+      "properties": {
+        "hostId": { "$ref": "#/$defs/identifier" },
+        "hostVersion": { "$ref": "#/$defs/version" },
+        "probeRefs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/probeRef" } },
+        "surfaces": { "$ref": "#/$defs/fourUnsupportedSurfaces" }
+      }
+    }
+  }
+}

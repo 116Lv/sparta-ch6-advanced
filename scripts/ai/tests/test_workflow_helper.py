@@ -331,7 +331,7 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
         self.assertTrue(phase_2b.issubset(self.helper.SCHEMA_NAMES))
         phase_2c = {"verification-policy", "verification-gate-result"}
         self.assertTrue(phase_2c.issubset(self.helper.SCHEMA_NAMES))
-        self.assertEqual(len(self.helper.SCHEMA_NAMES), 19)
+        self.assertEqual(len(self.helper.SCHEMA_NAMES), 22)
         self.assertEqual(
             {name for name in self.helper.SCHEMA_NAMES if name in additions},
             additions,
@@ -6418,6 +6418,179 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.assertFalse(any(command["configurationStatus"] == "VERIFIED" for command in registry["commands"]))
         summary = self.read_repository_text("ai/work-logs/issue-7/README.md")
         self.assertIn("authorization failure: GitHub API 403 Resource not accessible by integration", summary)
+
+
+class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
+    SCHEMA_PATHS = {
+        "native-runtime-adapters": "ai/schemas/native-runtime-adapters.schema.json",
+        "native-bypass-attempt": "ai/schemas/native-bypass-attempt.schema.json",
+        "native-adapter-result": "ai/schemas/native-adapter-result.schema.json",
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls.helper = load_helper()
+
+    def validator(self, schema_name):
+        with (REPOSITORY_ROOT / self.SCHEMA_PATHS[schema_name]).open(encoding="utf-8") as handle:
+            schema = json.load(handle)
+        Draft202012Validator.check_schema(schema)
+        return Draft202012Validator(schema, format_checker=FormatChecker())
+
+    def assert_valid(self, schema_name, instance):
+        self.assertEqual(list(self.validator(schema_name).iter_errors(instance)), [])
+
+    def assert_invalid(self, schema_name, instance):
+        self.assertNotEqual(list(self.validator(schema_name).iter_errors(instance)), [])
+
+    def supported_host_policy(self):
+        return {
+            "$schema": "ai/schemas/native-runtime-adapters.schema.json",
+            "$id": "ai/native-runtime-adapters.json",
+            "schemaVersion": 1,
+            "updatedAt": "2026-07-13T01:00:00Z",
+            "supportedHosts": [{
+                "hostId": "supported-host",
+                "minimumHostVersion": "1.2.3",
+                "adapterVersionRange": ">=1.0.0 <2.0.0",
+                "producerId": "example.native.adapter",
+                "ed25519KeyFingerprint": "a" * 64,
+                "surfaces": self.supported_surfaces(),
+            }],
+            "currentHost": {
+                "hostId": "codex-desktop",
+                "hostVersion": "1.0.0",
+                "probeRefs": ["ai/native-runtime-adapters.md"],
+                "surfaces": self.unsupported_surfaces(),
+            },
+            "completionPolicy": {
+                "phase2cCheckId": "native-runtime-adapter",
+                "unsupportedLeafResult": "NOT_APPLICABLE",
+                "supportedHostFailureResult": "BLOCKED",
+            },
+        }
+
+    @staticmethod
+    def supported_surfaces():
+        return [
+            {"surface": surface, "status": "NOT_CONFIGURED", "reasonCode": "ADAPTER_CONFIGURATION_REQUIRED"}
+            for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+        ]
+
+    @staticmethod
+    def unsupported_surfaces():
+        return [
+            {"surface": surface, "status": "UNSUPPORTED", "reasonCode": "HOST_NOT_SUPPORTED"}
+            for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+        ]
+
+    @staticmethod
+    def bypass_attempt():
+        return {
+            "$schema": "ai/schemas/native-bypass-attempt.schema.json",
+            "$id": "ai/native-bypass-attempt.json",
+            "schemaVersion": 1,
+            "attemptId": "attempt-1",
+            "eventId": "event-1",
+            "observedAt": "2026-07-13T01:00:00Z",
+            "hostId": "supported-host",
+            "hostVersion": "1.2.3",
+            "adapterVersion": "1.0.0",
+            "surface": "COMMAND",
+            "operationType": "FILE_READ",
+            "statusAtObservation": "ENFORCED",
+            "decision": "BLOCKED",
+            "reasonCode": "DIRECT_TOOL_BYPASS",
+            "repositoryGatewayExpected": True,
+            "taskKey": "issue-10",
+            "gateInvocationId": "gate-1",
+            "runId": None,
+            "deduplicationKey": "dedupe-1",
+            "lifecycle": "DETECTED",
+            "resolvedAt": None,
+            "resolutionReason": None,
+            "summary": {
+                "target": "repository-relative-path",
+                "argumentSummary": "redacted structural arguments",
+                "querySummary": "query digest only",
+                "toolPayloadSummary": "payload classification only",
+            },
+        }
+
+    @staticmethod
+    def adapter_result():
+        return {
+            "$schema": "ai/schemas/native-adapter-result.schema.json",
+            "$id": "ai/native-adapter-result.json",
+            "schemaVersion": 1,
+            "operation": "NATIVE_ADAPTER_GATE",
+            "result": "UNSUPPORTED",
+            "phase2cLeafResult": "NOT_APPLICABLE",
+            "reason": "The current host has no supported native adapter.",
+            "data": {
+                "hostId": "codex-desktop",
+                "hostVersion": "1.0.0",
+                "surfaces": Phase3ANativeRuntimeAdapterTests.unsupported_surfaces(),
+                "bypassAttemptRefs": [],
+                "repositoryOnlyQualification": True,
+            },
+        }
+
+    def test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed(self):
+        self.assertIn("native-runtime-adapters", self.helper.SCHEMA_NAMES)
+        self.assertIn("native-bypass-attempt", self.helper.SCHEMA_NAMES)
+        self.assertIn("native-adapter-result", self.helper.SCHEMA_NAMES)
+        summary = (REPOSITORY_ROOT / "ai/work-logs/issue-10/README.md").read_text(encoding="utf-8")
+        self.assertIn("https://github.com/116Lv/sparta-ch6-advanced/issues/10", summary)
+
+    def test_closed_native_adapter_schemas_accept_complete_supported_host_vectors(self):
+        self.assert_valid("native-runtime-adapters", self.supported_host_policy())
+        self.assert_valid("native-bypass-attempt", self.bypass_attempt())
+        self.assert_valid("native-adapter-result", self.adapter_result())
+
+    def test_closed_native_adapter_schemas_reject_unknown_values_and_secret_bearing_fields(self):
+        policy = self.supported_host_policy()
+        policy["unexpected"] = True
+        self.assert_invalid("native-runtime-adapters", policy)
+
+        policy = self.supported_host_policy()
+        policy["currentHost"]["surfaces"][0]["status"] = "PARTIALLY_ENFORCED"
+        self.assert_invalid("native-runtime-adapters", policy)
+
+        attempt = self.bypass_attempt()
+        attempt["summary"]["target"] = "x" * 513
+        self.assert_invalid("native-bypass-attempt", attempt)
+        for raw_field in ("environment", "payload", "query", "argv"):
+            with self.subTest(raw_field=raw_field):
+                attempt = self.bypass_attempt()
+                attempt[raw_field] = "secret"
+                self.assert_invalid("native-bypass-attempt", attempt)
+
+        result = self.adapter_result()
+        result["result"] = "AUDIT_ONLY"
+        self.assert_invalid("native-adapter-result", result)
+        result = self.adapter_result()
+        result["phase2cLeafResult"] = "UNSUPPORTED"
+        self.assert_invalid("native-adapter-result", result)
+
+    def test_bypass_lifecycle_requires_consistent_resolution_and_correlation(self):
+        attempt = self.bypass_attempt()
+        attempt.update({
+            "lifecycle": "RESOLVED",
+            "resolvedAt": None,
+            "resolutionReason": "FALSE_POSITIVE",
+        })
+        self.assert_invalid("native-bypass-attempt", attempt)
+
+        attempt = self.bypass_attempt()
+        attempt["resolvedAt"] = "2026-07-13T01:01:00Z"
+        self.assert_invalid("native-bypass-attempt", attempt)
+
+        for correlation_field in ("taskKey", "gateInvocationId", "deduplicationKey"):
+            with self.subTest(correlation_field=correlation_field):
+                attempt = self.bypass_attempt()
+                del attempt[correlation_field]
+                self.assert_invalid("native-bypass-attempt", attempt)
 
 
 if __name__ == "__main__":

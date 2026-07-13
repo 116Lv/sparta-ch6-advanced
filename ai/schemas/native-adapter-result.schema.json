@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:native-adapter-result:v1",
+  "schemaVersion": 1,
+  "title": "Native Adapter Gate Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "operation", "result", "phase2cLeafResult", "reason", "data"],
+  "properties": {
+    "$schema": { "const": "ai/schemas/native-adapter-result.schema.json" },
+    "$id": { "const": "ai/native-adapter-result.json" },
+    "schemaVersion": { "const": 1 },
+    "operation": { "const": "NATIVE_ADAPTER_GATE" },
+    "result": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "UNSUPPORTED"] },
+    "phase2cLeafResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE"] },
+    "reason": { "type": ["string", "null"], "maxLength": 512 },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostId", "hostVersion", "surfaces", "bypassAttemptRefs", "repositoryOnlyQualification"],
+      "properties": {
+        "hostId": { "$ref": "#/$defs/identifier" },
+        "hostVersion": { "$ref": "#/$defs/version" },
+        "surfaces": { "$ref": "#/$defs/fourSurfaces" },
+        "bypassAttemptRefs": { "type": "array", "items": { "$ref": "#/$defs/repositoryPath" } },
+        "repositoryOnlyQualification": { "type": "boolean" }
+      }
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "result": { "const": "PASS" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "PASS" } } } },
+    { "if": { "properties": { "result": { "const": "FAIL" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "FAIL" } } } },
+    { "if": { "properties": { "result": { "const": "BLOCKED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "BLOCKED" } } } },
+    { "if": { "properties": { "result": { "const": "NOT_CONFIGURED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "NOT_CONFIGURED" } } } },
+    { "if": { "properties": { "result": { "const": "UNSUPPORTED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "NOT_APPLICABLE" } } } }
+  ],
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+    "repositoryPath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
+    "surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surface", "status", "reasonCode"],
+      "properties": {
+        "surface": { "enum": ["COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL"] },
+        "status": { "enum": ["ENFORCED", "AUDIT_ONLY", "NOT_CONFIGURED", "UNSUPPORTED"] },
+        "reasonCode": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "fourSurfaces": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/surface" },
+      "allOf": [
+        { "contains": { "properties": { "surface": { "const": "COMMAND" } }, "required": ["surface"] } },
+        { "contains": { "properties": { "surface": { "const": "FILE_READ" } }, "required": ["surface"] } },
+        { "contains": { "properties": { "surface": { "const": "SEARCH" } }, "required": ["surface"] } },
+        { "contains": { "properties": { "surface": { "const": "TOOL_CALL" } }, "required": ["surface"] } }
+      ]
+    }
+  }
+}
