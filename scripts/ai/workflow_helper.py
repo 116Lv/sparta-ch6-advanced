@@ -5666,6 +5666,16 @@ def aggregate_verification_gate(mapped_checks):
 
 NATIVE_ADAPTER_SURFACES = ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
 NATIVE_SUMMARY_MAX_BYTES = 512
+NATIVE_SECRET_BEARING_SUMMARY = re.compile(
+    r"(?:\bauthorization\s*:|\bbearer\s+\S+|\bcookie\s*:|"
+    r"\b(?:password|passwd|secret|token|api[-_]?key|credential)\s*=|"
+    r"\b(?:request\s+body|raw\s+(?:credentials?|payload|query|argv|env(?:ironment)?)))",
+    re.IGNORECASE,
+)
+
+
+class NativeBypassContractError(ValueError):
+    pass
 
 
 def native_adapter_gate_result(result, reason, data):
@@ -5743,50 +5753,99 @@ def native_adapter_fixture_path(root, reference, *, canonical=False):
 
 def native_adapter_supported_host(policy):
     current_host = policy["currentHost"]
-    current_version = tuple(int(part) for part in current_host["hostVersion"].split("-", 1)[0].split("+", 1)[0].split("."))
+    current_version = native_semver_key(current_host["hostVersion"])
     for supported_host in policy["supportedHosts"]:
-        minimum_version = tuple(int(part) for part in supported_host["minimumHostVersion"].split("-", 1)[0].split("+", 1)[0].split("."))
+        minimum_version = native_semver_key(supported_host["minimumHostVersion"])
         if supported_host["hostId"] == current_host["hostId"] and current_version >= minimum_version:
             return supported_host
     return None
 
 
+def native_semver_key(version):
+    core_and_prerelease, _, _build = version.partition("+")
+    core, separator, prerelease = core_and_prerelease.partition("-")
+    release = tuple(int(part) for part in core.split("."))
+    if not separator:
+        return release, 1, ()
+    prerelease_key = tuple(
+        (0, int(part)) if part.isdigit() else (1, part)
+        for part in prerelease.split(".")
+    )
+    return release, 0, prerelease_key
+
+
 def load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invocation_id):
     if bypass_attempts_ref is None:
         return [], []
-    path = native_adapter_fixture_path(root, bypass_attempts_ref)
-    payload = read_json(path)
-    if not isinstance(payload, dict) or set(payload) != {"attempts"} or not isinstance(payload["attempts"], list):
-        raise ValueError("native bypass attempts must be a closed attempts object")
+    try:
+        path = native_adapter_fixture_path(root, bypass_attempts_ref)
+        payload = read_json(path)
+        if not isinstance(payload, dict) or set(payload) != {"attempts"} or not isinstance(payload["attempts"], list):
+            raise ValueError("native bypass attempts must be a closed attempts object")
 
-    delivered_events = {}
-    deduplication_groups = {}
-    for attempt in payload["attempts"]:
-        if not isinstance(attempt, dict):
-            raise ValueError("native bypass attempt must be an object")
-        validate(root, attempt, "ai/schemas/native-bypass-attempt.schema.json")
-        if attempt["taskKey"] != task_key or attempt["gateInvocationId"] != gate_invocation_id:
-            raise ValueError("native bypass attempt correlation does not match this gate")
-        for value in attempt["summary"].values():
-            if len(value) > NATIVE_SUMMARY_MAX_BYTES or len(value.encode("utf-8")) > NATIVE_SUMMARY_MAX_BYTES:
-                raise ValueError("native bypass summary exceeds redacted bounds")
-        event_id = attempt["eventId"]
-        serialized = compact(attempt)
-        existing = delivered_events.get(event_id)
-        if existing is not None:
-            if existing != serialized:
-                raise ValueError("native bypass event delivery conflicts with existing event")
+        delivered_events = {}
+        deduplication_groups = {}
+        for attempt in payload["attempts"]:
+            if not isinstance(attempt, dict):
+                raise ValueError("native bypass attempt must be an object")
+            validate(root, attempt, "ai/schemas/native-bypass-attempt.schema.json")
+            if attempt["taskKey"] != task_key:
+                raise ValueError("native bypass attempt task does not match this gate")
+            if attempt["gateInvocationId"] != gate_invocation_id and attempt["lifecycle"] != "DETECTED":
+                raise ValueError("native bypass attempt resolution does not match this gate")
+            for value in attempt["summary"].values():
+                if (len(value) > NATIVE_SUMMARY_MAX_BYTES
+                        or len(value.encode("utf-8")) > NATIVE_SUMMARY_MAX_BYTES
+                        or NATIVE_SECRET_BEARING_SUMMARY.search(value)):
+                    raise ValueError("native bypass summary is not safely redacted")
+            event_id = attempt["eventId"]
+            serialized = compact(attempt)
+            existing = delivered_events.get(event_id)
+            if existing is not None:
+                if existing != serialized:
+                    raise ValueError("native bypass event delivery conflicts with existing event")
+                continue
+            delivered_events[event_id] = serialized
+            deduplication_groups.setdefault(attempt["deduplicationKey"], []).append(attempt)
+
+        attempts = [json.loads(serialized) for serialized in delivered_events.values()]
+        references = [
+            f"{Path(bypass_attempts_ref).as_posix()}#{attempt['eventId']}"
+            for attempts in deduplication_groups.values()
+            for attempt in attempts
+        ]
+        return attempts, references
+    except (InvalidStateError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as error:
+        raise NativeBypassContractError("native bypass attempt contract is invalid") from error
+
+
+def native_bypass_lifecycle_state(attempts, gate_invocation_id):
+    groups = {}
+    for attempt in attempts:
+        groups.setdefault(attempt["deduplicationKey"], []).append(attempt)
+
+    resolved_transition = False
+    for attempts_in_group in groups.values():
+        current_resolutions = [
+            attempt for attempt in attempts_in_group
+            if attempt["lifecycle"] == "RESOLVED" and attempt["gateInvocationId"] == gate_invocation_id
+        ]
+        prior_detections = [
+            attempt for attempt in attempts_in_group
+            if attempt["lifecycle"] == "DETECTED" and attempt["gateInvocationId"] != gate_invocation_id
+        ]
+        if current_resolutions:
+            if not any(
+                detection["observedAt"] < resolution["observedAt"]
+                for detection in prior_detections
+                for resolution in current_resolutions
+            ):
+                return "INVALID_RESOLUTION"
+            resolved_transition = True
             continue
-        delivered_events[event_id] = serialized
-        deduplication_groups.setdefault(attempt["deduplicationKey"], []).append(attempt)
-
-    attempts = [json.loads(serialized) for serialized in delivered_events.values()]
-    references = [
-        f"{Path(bypass_attempts_ref).as_posix()}#{attempt['eventId']}"
-        for attempts in deduplication_groups.values()
-        for attempt in attempts
-    ]
-    return attempts, references
+        if any(attempt["lifecycle"] == "DETECTED" for attempt in attempts_in_group):
+            return "UNRESOLVED"
+    return "RESOLVED_TRANSITION" if resolved_transition else None
 
 
 def native_snapshot_surfaces(snapshot, fallback_surfaces):
@@ -5820,13 +5879,36 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
         fallback_data = native_adapter_data(current_host, current_host["surfaces"], [])
         attempts, attempt_refs = load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invocation_id)
         data = native_adapter_data(current_host, current_host["surfaces"], attempt_refs)
-        if any(attempt["lifecycle"] == "DETECTED" for attempt in attempts):
+        if any(
+            attempt["statusAtObservation"] == "ENFORCED" and attempt["decision"] == "ALLOWED_AUDIT_ONLY"
+            for attempt in attempts
+        ):
             return publish_native_adapter_gate_result(
-                root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_UNRESOLVED", data), 2,
+                root, native_adapter_gate_result("FAIL", "NATIVE_BYPASS_ENFORCEMENT_BYPASSED", data), 1,
             )
         if any(attempt["reasonCode"] == "REDACTION_UNCERTAIN" for attempt in attempts):
             return publish_native_adapter_gate_result(
                 root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_REDACTION_UNCERTAIN", data), 2,
+            )
+
+        snapshot = None
+        if runtime_snapshot_ref is not None:
+            snapshot = read_json(native_adapter_fixture_path(root, runtime_snapshot_ref))
+            if not isinstance(snapshot, dict):
+                raise ValueError("native runtime snapshot must be an object")
+
+        lifecycle_state = native_bypass_lifecycle_state(attempts, gate_invocation_id)
+        if lifecycle_state == "UNRESOLVED":
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_UNRESOLVED", data), 2,
+            )
+        if lifecycle_state == "INVALID_RESOLUTION":
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", data), 2,
+            )
+        if lifecycle_state == "RESOLVED_TRANSITION":
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_RESOLUTION_UNTRUSTED", data), 2,
             )
 
         supported_host = native_adapter_supported_host(policy)
@@ -5840,9 +5922,6 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                 root, native_adapter_gate_result("NOT_CONFIGURED", "NATIVE_ADAPTER_NOT_CONFIGURED", supported_data), 3,
             )
 
-        snapshot = read_json(native_adapter_fixture_path(root, runtime_snapshot_ref))
-        if not isinstance(snapshot, dict):
-            raise ValueError("native runtime snapshot must be an object")
         snapshot_surfaces, valid_surfaces = native_snapshot_surfaces(snapshot, supported_host["surfaces"])
         snapshot_data = native_adapter_data(current_host, snapshot_surfaces, attempt_refs)
         if snapshot.get("fresh") is not True:
@@ -5868,7 +5947,11 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
         return publish_native_adapter_gate_result(
             root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_FIXTURE_NOT_TRUSTED", snapshot_data), 2,
         )
-    except (InvalidStateError, OSError, TypeError, ValueError, KeyError):
+    except NativeBypassContractError:
+        return publish_native_adapter_gate_result(
+            root, native_adapter_gate_result("FAIL", "NATIVE_BYPASS_CONTRACT_INVALID", fallback_data), 1,
+        )
+    except (InvalidStateError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError):
         return publish_native_adapter_gate_result(
             root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", fallback_data), 2,
         )

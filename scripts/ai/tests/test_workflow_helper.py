@@ -6696,6 +6696,19 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         result, status = self.helper.native_adapter_gate(self.root, "issue-10", "gate-2", snapshot)
         self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
 
+    def test_invalid_runtime_snapshot_reference_blocks_before_unsupported_host_fallback(self):
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", runtime_snapshot_ref="ai/runtime-snapshot.json",
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_enforced_bypass_allowed_for_audit_is_a_failure_before_unsupported_host_fallback(self):
+        attempt = self.valid_attempt(decision="ALLOWED_AUDIT_ONLY")
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
+        )
+        self.assertEqual((result["result"], status), ("FAIL", 1))
+
     def test_unresolved_bypass_and_redaction_uncertainty_block_completion(self):
         attempts = self.write_attempts([self.valid_attempt(lifecycle="DETECTED", gateInvocationId="gate-3")])
         result, status = self.helper.native_adapter_gate(
@@ -6718,7 +6731,12 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     def test_bypass_attempts_fail_closed_for_invalid_correlation_and_redaction_contracts(self):
         cases = {
             "wrong-task": self.valid_attempt(taskKey="issue-else"),
-            "wrong-gate": self.valid_attempt(gateInvocationId="different-gate"),
+            "wrong-gate": self.valid_attempt(
+                gateInvocationId="different-gate",
+                lifecycle="RESOLVED",
+                resolvedAt="2026-07-13T01:01:00Z",
+                resolutionReason="REMEDIATED",
+            ),
             "malformed": {"eventId": "missing-required-fields"},
             "raw-secret": dict(self.valid_attempt(), payload="secret"),
             "byte-bound": self.valid_attempt(summary={
@@ -6739,7 +6757,64 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 result, status = self.helper.native_adapter_gate(
                     self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
                 )
-                self.assertEqual((result["result"], status), ("BLOCKED", 2))
+                self.assertEqual((result["result"], status), ("FAIL", 1))
+
+    def test_bypass_summary_rejects_secret_bearing_strings(self):
+        secret_summaries = (
+            "Authorization: Bearer abc",
+            "Cookie: session=abc",
+            "password=abc",
+            "raw request body: {\"password\": \"abc\"}",
+            "request body: {\"password\": \"abc\"}",
+            "raw payload: token=abc",
+            "raw credentials: alice:abc",
+            "raw query: key=value",
+            "raw argv: --flag value",
+            "raw env: NAME=value",
+        )
+        for summary in secret_summaries:
+            with self.subTest(summary=summary):
+                attempt = self.valid_attempt(summary={
+                    "target": "repository-relative-path",
+                    "argumentSummary": summary,
+                    "querySummary": "query digest only",
+                    "toolPayloadSummary": "payload classification only",
+                })
+                result, status = self.helper.native_adapter_gate(
+                    self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
+                )
+                self.assertEqual((result["result"], status), ("FAIL", 1))
+
+    def test_bypass_resolution_requires_prior_detection_and_remains_untrusted_in_phase_3a(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        current_resolved = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            gateInvocationId="gate-1",
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+        )
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, current_resolved]),
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([current_resolved]),
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([prior_detected]),
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
 
     def test_repeated_events_are_idempotent_and_dedup_groups_preserve_every_event(self):
         resolved = self.valid_attempt(
@@ -6754,7 +6829,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         result, status = self.helper.native_adapter_gate(
             self.root, "issue-10", "gate-1", bypass_attempts_ref=attempts_ref,
         )
-        self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
         self.assertEqual(len(result["data"]["bypassAttemptRefs"]), 2)
         attempts = json.loads((self.root / attempts_ref).read_text(encoding="utf-8"))["attempts"]
         self.assertEqual([attempt["eventId"] for attempt in attempts], ["event-1", "event-1", "event-2"])
@@ -6773,7 +6848,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         result, status = self.helper.native_adapter_gate(
             self.root, "issue-10", "gate-1", bypass_attempts_ref=attempts_ref,
         )
-        self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
         evaluated = json.loads((self.root / attempts_ref).read_text(encoding="utf-8"))["attempts"][0]
         self.assertEqual((evaluated["surface"], evaluated["commandIntent"]), ("COMMAND", "FILE_READ"))
 
@@ -6804,6 +6879,17 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 )
                 self.assertIn((result["result"], status), (("NOT_CONFIGURED", 3), ("BLOCKED", 2)))
                 self.assertNotEqual(result["result"], "PASS")
+
+    def test_prerelease_host_version_does_not_satisfy_release_minimum(self):
+        policy = self.supported_host_policy()
+        policy["currentHost"]["hostVersion"] = "1.0.0-beta"
+        policy["supportedHosts"][0]["hostId"] = "codex-desktop"
+        policy["supportedHosts"][0]["minimumHostVersion"] = "1.0.0"
+        policy_ref = self.write_fixture("prerelease-native-runtime-adapters.json", policy)
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", policy_ref=policy_ref,
+        )
+        self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
 
     def test_native_adapter_gate_shell_wrapper_is_static_and_fixed_argument(self):
         shell = REPOSITORY_ROOT / "scripts" / "ai" / "native-adapter-gate.sh"
