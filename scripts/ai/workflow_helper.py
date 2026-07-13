@@ -5668,7 +5668,7 @@ def aggregate_verification_gate(mapped_checks):
 NATIVE_ADAPTER_SURFACES = ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
 NATIVE_SUMMARY_MAX_BYTES = 512
 NATIVE_SECRET_BEARING_SUMMARY = re.compile(
-    r"(?:\bauthorization\s*:\s*(?:bearer|basic)\s+\S+|\bbearer\s+\S+|\bcookie\s*:|"
+    r"(?:\bauthorization\s*:\s*(?:bearer|basic)\s+\S+|\bcookie\s*:|"
     r"\b(?:password|passwd|secret|token|api[-_]?key|credential)\s*(?:=|:)\s*\S+|"
     r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])|"
     r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|"
@@ -5676,6 +5676,10 @@ NATIVE_SECRET_BEARING_SUMMARY = re.compile(
     re.IGNORECASE,
 )
 NATIVE_BASIC_CREDENTIAL = re.compile(r"\bbasic\s+([A-Za-z0-9+/]+={0,2})(?=$|[\s,;])", re.IGNORECASE)
+NATIVE_BEARER_CREDENTIAL = re.compile(
+    r"\bbearer\s+(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{3,}(?=$|[\s,;])",
+    re.IGNORECASE,
+)
 
 
 class NativeBypassContractError(ValueError):
@@ -5683,11 +5687,12 @@ class NativeBypassContractError(ValueError):
 
 
 def native_summary_has_secret(value):
-    if NATIVE_SECRET_BEARING_SUMMARY.search(value):
+    if NATIVE_SECRET_BEARING_SUMMARY.search(value) or NATIVE_BEARER_CREDENTIAL.search(value):
         return True
     for match in NATIVE_BASIC_CREDENTIAL.finditer(value):
         try:
-            decoded = base64.b64decode(match.group(1), validate=True)
+            encoded = match.group(1)
+            decoded = base64.b64decode(encoded + "=" * (-len(encoded) % 4), validate=True)
         except ValueError:
             continue
         if b":" in decoded:
@@ -5922,6 +5927,14 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                 root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_REDACTION_UNCERTAIN", data), 2,
             )
 
+        supported_host = native_adapter_supported_host(policy)
+        if supported_host is None and runtime_snapshot_ref is not None:
+            return publish_native_adapter_gate_result(
+                root,
+                native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_UNTRUSTED_UNSUPPORTED_PRODUCER", data),
+                2,
+            )
+
         snapshot = None
         snapshot_surfaces = None
         if runtime_snapshot_ref is not None:
@@ -5959,7 +5972,6 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                 root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_RESOLUTION_UNTRUSTED", data), 2,
             )
 
-        supported_host = native_adapter_supported_host(policy)
         if supported_host is None:
             return publish_native_adapter_gate_result(
                 root, native_adapter_gate_result("UNSUPPORTED", "HOST_UNSUPPORTED", data), 6,

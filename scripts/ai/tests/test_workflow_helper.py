@@ -6698,7 +6698,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(result["data"]["phase2CLeafResult"], "NOT_APPLICABLE")
         self.assertFalse((self.root / ".ai-runs").exists())
 
-    def test_contract_valid_snapshot_cannot_self_promote_on_unsupported_host(self):
+    def test_snapshot_for_unsupported_host_blocks_as_untrusted_producer(self):
         snapshot = self.write_temp_snapshot({
             "fresh": True,
             "signatureValid": True,
@@ -6709,9 +6709,10 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             ],
         })
         result, status = self.helper.native_adapter_gate(self.root, "issue-10", "gate-2", snapshot)
-        self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+        self.assertEqual(result["reason"], "NATIVE_ADAPTER_UNTRUSTED_UNSUPPORTED_PRODUCER")
 
-    def test_supplied_runtime_snapshot_is_validated_before_unsupported_host_fallback(self):
+    def test_unsupported_host_snapshot_claims_block_without_trusted_producer(self):
         invalid_snapshots = (
             {},
             {
@@ -6727,6 +6728,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                     self.root, "issue-10", "gate-1", self.write_temp_snapshot(snapshot),
                 )
                 self.assertEqual((result["result"], status), ("BLOCKED", 2))
+                self.assertEqual(result["reason"], "NATIVE_ADAPTER_UNTRUSTED_UNSUPPORTED_PRODUCER")
 
     def test_invalid_runtime_snapshot_reference_blocks_before_unsupported_host_fallback(self):
         result, status = self.helper.native_adapter_gate(
@@ -6803,6 +6805,9 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "credential: abc",
             "Authorization: Basic dXNlcjpwYXNz",
             "Basic dXNlcjpwYXNz",
+            "Basic YWxpY2U6cA==",
+            "Basic YWxpY2U6cA",
+            "Bearer ya29.a0AfH6SMB-credential",
             "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature",
             "-----BEGIN PRIVATE KEY-----",
             "raw request body: {\"password\": \"abc\"}",
@@ -6835,7 +6840,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 "target": "repository-relative-path",
                 "argumentSummary": "credential handling documentation",
                 "querySummary": "token budget metadata",
-                "toolPayloadSummary": "basic classification only",
+                "toolPayloadSummary": "bearer token documentation",
             },
         )
         result, status = self.helper.native_adapter_gate(
