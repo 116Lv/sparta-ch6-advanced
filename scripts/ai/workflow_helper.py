@@ -5678,6 +5678,12 @@ def aggregate_verification_gate(mapped_checks):
 NATIVE_ADAPTER_SURFACES = ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
 NATIVE_SUMMARY_MAX_BYTES = 512
 NATIVE_ADAPTER_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+NATIVE_SEMVER = re.compile(
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\Z"
+)
 NATIVE_SECRET_BEARING_SUMMARY = re.compile(
     r"(?:\bauthorization\s*:\s*(?:bearer|basic)\s+\S+|\bcookies?\s*(?:=|:)|"
     r"\b(?:password|passwd|secret|token|api[-_]?key|credential)\s*(?:=|:)\s*\S+|"
@@ -5688,7 +5694,7 @@ NATIVE_SECRET_BEARING_SUMMARY = re.compile(
 )
 NATIVE_BASIC_CREDENTIAL = re.compile(r"\bbasic\s+\S+", re.IGNORECASE)
 NATIVE_BEARER_CREDENTIAL = re.compile(r"\bbearer\s+\S+", re.IGNORECASE)
-NATIVE_AUTHORIZATION_MARKER = re.compile(r"\bauthorization\s*(?::|=)", re.IGNORECASE)
+NATIVE_FORBIDDEN_RAW_CONTENT_LABEL = re.compile(r"\b(?:authorization|cookies?)\b", re.IGNORECASE)
 NATIVE_ALLOWED_BEARER_DOCUMENTATION = frozenset(("bearer token documentation",))
 
 
@@ -5704,7 +5710,7 @@ def native_summary_has_secret(value):
     if (
         NATIVE_SECRET_BEARING_SUMMARY.search(value)
         or NATIVE_BASIC_CREDENTIAL.search(value)
-        or NATIVE_AUTHORIZATION_MARKER.search(value)
+        or NATIVE_FORBIDDEN_RAW_CONTENT_LABEL.search(value)
     ):
         return True
     if (
@@ -5799,6 +5805,8 @@ def native_adapter_supported_host(policy):
 
 
 def native_semver_key(version):
+    if not isinstance(version, str) or NATIVE_SEMVER.fullmatch(version) is None:
+        raise ValueError("native adapter version is not SemVer 2.0.0")
     core_and_prerelease, _, _build = version.partition("+")
     core, separator, prerelease = core_and_prerelease.partition("-")
     release = tuple(int(part) for part in core.split("."))
@@ -5867,33 +5875,36 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
 
     resolved_transition = False
     for attempts_in_group in groups.values():
-        current_detections = [
+        detections = [
             attempt for attempt in attempts_in_group
-            if attempt["lifecycle"] == "DETECTED" and attempt["gateInvocationId"] == gate_invocation_id
+            if attempt["lifecycle"] == "DETECTED"
         ]
-        if current_detections:
-            return "UNRESOLVED"
         current_resolutions = [
             attempt for attempt in attempts_in_group
             if attempt["lifecycle"] == "RESOLVED" and attempt["gateInvocationId"] == gate_invocation_id
-        ]
-        prior_detections = [
-            attempt for attempt in attempts_in_group
-            if attempt["lifecycle"] == "DETECTED" and attempt["gateInvocationId"] != gate_invocation_id
         ]
         if current_resolutions:
             if any(
                 not any(
                     parse_rfc3339_timestamp(detection["observedAt"])
                     < parse_rfc3339_timestamp(resolution["observedAt"])
-                    for detection in prior_detections
+                    for detection in detections
                 )
                 for resolution in current_resolutions
             ):
                 return "INVALID_RESOLUTION"
+            if any(
+                not any(
+                    parse_rfc3339_timestamp(detection["observedAt"])
+                    < parse_rfc3339_timestamp(resolution["observedAt"])
+                    for resolution in current_resolutions
+                )
+                for detection in detections
+            ):
+                return "UNRESOLVED"
             resolved_transition = True
             continue
-        if any(attempt["lifecycle"] == "DETECTED" for attempt in attempts_in_group):
+        if detections:
             return "UNRESOLVED"
     return "RESOLVED_TRANSITION" if resolved_transition else None
 

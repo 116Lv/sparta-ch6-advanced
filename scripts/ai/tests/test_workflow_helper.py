@@ -6672,6 +6672,34 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assert_valid("native-bypass-attempt", self.bypass_attempt())
         self.assert_valid("native-adapter-result", self.adapter_result())
 
+    def test_native_adapter_version_schemas_require_strict_semver_2(self):
+        valid_version = "1.0.0-rc.1+build.5"
+        invalid_versions = ("01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-")
+        vectors = (
+            ("native-runtime-adapters", self.supported_host_policy, ("currentHost", "hostVersion")),
+            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "minimumHostVersion")),
+            ("native-bypass-attempt", self.bypass_attempt, ("hostVersion",)),
+            ("native-bypass-attempt", self.bypass_attempt, ("adapterVersion",)),
+            ("native-adapter-result", self.adapter_result, ("data", "hostVersion")),
+        )
+
+        for schema_name, factory, path in vectors:
+            with self.subTest(schema_name=schema_name, path=path, version=valid_version):
+                instance = factory()
+                target = instance
+                for segment in path[:-1]:
+                    target = target[segment]
+                target[path[-1]] = valid_version
+                self.assert_valid(schema_name, instance)
+            for invalid_version in invalid_versions:
+                with self.subTest(schema_name=schema_name, path=path, version=invalid_version):
+                    instance = factory()
+                    target = instance
+                    for segment in path[:-1]:
+                        target = target[segment]
+                    target[path[-1]] = invalid_version
+                    self.assert_invalid(schema_name, instance)
+
     def test_closed_native_adapter_schemas_reject_unknown_values_and_secret_bearing_fields(self):
         policy = self.supported_host_policy()
         policy["unexpected"] = True
@@ -6917,6 +6945,21 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 )
                 self.assertEqual((result["result"], status), ("FAIL", 1))
 
+    def test_bypass_summary_rejects_review_raw_content_label_examples(self):
+        review_examples = (
+            '{"authorization":"Bearer opaque"}',
+            '"authorization" : "Bearer opaque"',
+            '"cookie" = "session=opaque"',
+            '"cookies"\t"session=opaque"',
+            "authorization\topaque",
+            "cookie opaque",
+            "cookies\nopaque",
+        )
+
+        for summary in review_examples:
+            with self.subTest(summary=summary):
+                self.assertTrue(self.helper.native_summary_has_secret(summary))
+
     def test_bypass_summary_rejects_any_authorization_header_marker_or_assignment(self):
         for summary in (
             "Authorization: Digest abc123",
@@ -7038,6 +7081,37 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", 2,
         ))
 
+    def test_later_unresolved_detection_wins_over_prior_resolution(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        resolved = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T01:01:00Z",
+            resolvedAt="2026-07-13T01:01:01Z",
+            resolutionReason="REMEDIATED",
+        )
+        later_detected = self.valid_attempt(
+            attemptId="attempt-3",
+            eventId="event-3",
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T01:02:00Z",
+        )
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, resolved, later_detected]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_BYPASS_UNRESOLVED", 2,
+        ))
+
     def test_current_detection_wins_over_resolution_in_the_same_deduplication_group(self):
         prior_detected = self.valid_attempt(
             gateInvocationId="gate-prior",
@@ -7148,6 +7222,37 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             self.root, "issue-10", "gate-1", policy_ref=policy_ref,
         )
         self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
+
+    def test_native_semver_comparator_rejects_malformed_inputs_and_accepts_prerelease_build(self):
+        self.assertEqual(
+            self.helper.native_semver_key("1.0.0-rc.1+build.5"),
+            ((1, 0, 0), 0, ((1, "rc"), (0, 1))),
+        )
+        for version in ("01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-"):
+            with self.subTest(version=version):
+                with self.assertRaises(ValueError):
+                    self.helper.native_semver_key(version)
+
+    def test_malformed_policy_versions_block_before_not_configured_evaluation(self):
+        invalid_versions = ("01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-")
+        for path in (("currentHost", "hostVersion"), ("supportedHosts", 0, "minimumHostVersion")):
+            for version in invalid_versions:
+                with self.subTest(path=path, version=version):
+                    policy = self.supported_host_policy()
+                    policy["supportedHosts"][0]["hostId"] = policy["currentHost"]["hostId"]
+                    target = policy
+                    for segment in path[:-1]:
+                        target = target[segment]
+                    target[path[-1]] = version
+                    result, status = self.helper.native_adapter_gate(
+                        self.root,
+                        "issue-10",
+                        "gate-1",
+                        policy_ref=self.write_fixture("malformed-native-runtime-adapters.json", policy),
+                    )
+                    self.assertEqual((result["result"], result["reason"], status), (
+                        "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
+                    ))
 
     def test_native_adapter_gate_shell_wrapper_is_static_and_fixed_argument(self):
         shell = REPOSITORY_ROOT / "scripts" / "ai" / "native-adapter-gate.sh"
