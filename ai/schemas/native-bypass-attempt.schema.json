@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:native-bypass-attempt:v1",
+  "schemaVersion": 1,
+  "title": "Native Adapter Bypass Attempt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "attemptId", "eventId", "observedAt", "hostId", "hostVersion", "adapterVersion", "surface", "operationType", "statusAtObservation", "decision", "reasonCode", "repositoryGatewayExpected", "taskKey", "gateInvocationId", "runId", "deduplicationKey", "lifecycle", "resolvedAt", "resolutionReason", "summary"],
+  "properties": {
+    "$schema": { "const": "ai/schemas/native-bypass-attempt.schema.json" },
+    "$id": { "const": "ai/native-bypass-attempt.json" },
+    "schemaVersion": { "const": 1 },
+    "attemptId": { "$ref": "#/$defs/identifier" },
+    "eventId": { "$ref": "#/$defs/identifier" },
+    "observedAt": { "$ref": "#/$defs/timestamp" },
+    "hostId": { "$ref": "#/$defs/identifier" },
+    "hostVersion": { "$ref": "#/$defs/version" },
+    "adapterVersion": { "$ref": "#/$defs/version" },
+    "surface": { "enum": ["COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL"] },
+    "operationType": { "enum": ["COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL"] },
+    "commandIntent": { "enum": ["COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL"] },
+    "statusAtObservation": { "enum": ["ENFORCED", "AUDIT_ONLY"] },
+    "decision": { "enum": ["BLOCKED", "ALLOWED_AUDIT_ONLY"] },
+    "reasonCode": { "$ref": "#/$defs/identifier" },
+    "repositoryGatewayExpected": { "type": "boolean" },
+    "taskKey": { "$ref": "#/$defs/identifier", "maxLength": 128 },
+    "gateInvocationId": { "$ref": "#/$defs/identifier" },
+    "runId": { "anyOf": [{ "$ref": "#/$defs/identifier", "maxLength": 128 }, { "type": "null" }] },
+    "deduplicationKey": { "$ref": "#/$defs/identifier", "maxLength": 256 },
+    "lifecycle": { "enum": ["DETECTED", "RESOLVED"] },
+    "resolvedAt": { "type": ["string", "null"], "format": "date-time", "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z(?![\\s\\S])" },
+    "resolutionReason": { "type": ["string", "null"], "enum": [null, "FALSE_POSITIVE", "REMEDIATED", "DUPLICATE_EVENT"] },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "argumentSummary", "querySummary", "toolPayloadSummary"],
+      "properties": {
+        "target": { "$ref": "#/$defs/targetSummary" },
+        "argumentSummary": { "$ref": "#/$defs/argumentSummary" },
+        "querySummary": { "$ref": "#/$defs/querySummary" },
+        "toolPayloadSummary": { "$ref": "#/$defs/toolPayloadSummary" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "lifecycle": { "const": "DETECTED" } }, "required": ["lifecycle"] },
+      "then": { "properties": { "resolvedAt": { "const": null }, "resolutionReason": { "const": null } } }
+    },
+    {
+      "if": { "properties": { "lifecycle": { "const": "RESOLVED" } }, "required": ["lifecycle"] },
+      "then": {
+        "properties": {
+          "resolvedAt": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z(?![\\s\\S])" },
+          "resolutionReason": { "enum": ["FALSE_POSITIVE", "REMEDIATED", "DUPLICATE_EVENT"] }
+        }
+      }
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "surface": { "const": "COMMAND" },
+            "operationType": { "const": "COMMAND" },
+            "commandIntent": { "const": "COMMAND" }
+          },
+          "required": ["surface", "operationType", "commandIntent"]
+        },
+        {
+          "properties": {
+            "surface": { "const": "COMMAND" },
+            "operationType": { "const": "FILE_READ" },
+            "commandIntent": { "const": "FILE_READ" }
+          },
+          "required": ["surface", "operationType", "commandIntent"]
+        },
+        {
+          "properties": {
+            "surface": { "const": "COMMAND" },
+            "operationType": { "const": "SEARCH" },
+            "commandIntent": { "const": "SEARCH" }
+          },
+          "required": ["surface", "operationType", "commandIntent"]
+        },
+        {
+          "properties": {
+            "surface": { "const": "COMMAND" },
+            "operationType": { "const": "TOOL_CALL" },
+            "commandIntent": { "const": "TOOL_CALL" }
+          },
+          "required": ["surface", "operationType", "commandIntent"]
+        },
+        {
+          "properties": { "surface": { "const": "FILE_READ" }, "operationType": { "const": "FILE_READ" } },
+          "required": ["surface", "operationType"],
+          "not": { "required": ["commandIntent"] }
+        },
+        {
+          "properties": { "surface": { "const": "SEARCH" }, "operationType": { "const": "SEARCH" } },
+          "required": ["surface", "operationType"],
+          "not": { "required": ["commandIntent"] }
+        },
+        {
+          "properties": { "surface": { "const": "TOOL_CALL" }, "operationType": { "const": "TOOL_CALL" } },
+          "required": ["surface", "operationType"],
+          "not": { "required": ["commandIntent"] }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])" },
+    "version": { "type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?![\\s\\S])" },
+    "timestamp": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z(?![\\s\\S])" },
+    "digest": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[a-f0-9]{64}(?![\\s\\S])" },
+    "repositoryPath": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|(?![\\s\\S]))).+(?![\\s\\S])" },
+    "targetSummary": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["classification"],
+          "properties": { "classification": { "const": "NONE" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["classification", "repositoryPath"],
+          "properties": {
+            "classification": { "const": "REPOSITORY_PATH" },
+            "repositoryPath": { "$ref": "#/$defs/repositoryPath" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["classification", "redactedCategory", "sha256"],
+          "properties": {
+            "classification": { "const": "EXTERNAL_TARGET" },
+            "redactedCategory": { "enum": ["OUTSIDE_REPOSITORY_PATH", "NETWORK_RESOURCE", "DEVICE_RESOURCE", "OTHER_EXTERNAL_TARGET"] },
+            "sha256": { "$ref": "#/$defs/digest" }
+          }
+        }
+      ]
+    },
+    "argumentSummary": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["classification", "count", "sha256"],
+          "properties": {
+            "classification": { "const": "NONE" },
+            "count": { "const": 0 },
+            "sha256": { "$ref": "#/$defs/digest" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["classification", "count", "sha256"],
+          "properties": {
+            "classification": { "enum": ["ALLOWLISTED_LITERALS", "STRUCTURAL_PLACEHOLDERS"] },
+            "count": { "type": "integer", "minimum": 1, "maximum": 64 },
+            "sha256": { "$ref": "#/$defs/digest" }
+          }
+        }
+      ]
+    },
+    "querySummary": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["classification"],
+          "properties": { "classification": { "const": "NONE" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["classification", "sha256"],
+          "properties": {
+            "classification": { "enum": ["TEXT_QUERY", "STRUCTURED_QUERY"] },
+            "sha256": { "$ref": "#/$defs/digest" }
+          }
+        }
+      ]
+    },
+    "toolPayloadSummary": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["classification"],
+          "properties": { "classification": { "const": "NONE" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["classification", "sha256"],
+          "properties": {
+            "classification": { "enum": ["STRUCTURED_PAYLOAD", "OPAQUE_PAYLOAD"] },
+            "sha256": { "$ref": "#/$defs/digest" }
+          }
+        }
+      ]
+    }
+  }
+}

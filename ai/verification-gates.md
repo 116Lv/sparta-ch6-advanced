@@ -30,6 +30,18 @@ Verification completeness means every required check for the selected change typ
 
 `NOT_APPLICABLE` may be displayed as `N/A` in Markdown summaries, but executable JSON stores `NOT_APPLICABLE`.
 
+## Native Runtime Adapter Leaf
+
+`native-runtime-adapter` is an internal-only required check for every change type. `scripts/ai/verification-gate.sh` requires `--task-key` and `--gate-invocation-id` and may forward `--runtime-snapshot` and `--bypass-attempts` directly to the in-process evaluator. It never accepts a precomputed native adapter result. Ordinary `--leaf-results-file` input containing this check ID is forged state and returns `INVALID_STATE` with `NATIVE_ADAPTER_LEAF_FORGED` before leaf lookup.
+
+The verification loop invokes `native_adapter_phase2c_leaf()` with the current correlation. That helper calls `native_adapter_gate()` against canonical `ai/native-runtime-adapters.json`; the check never reaches the static `registryCommandId: null` PASS fallback. Invalid task or gate correlation fails closed.
+
+The current host version is `null`/`UNPROBED` and the host is `UNSUPPORTED`. Adapter result `UNSUPPORTED` maps to raw and mapped `NOT_APPLICABLE` with reason `HOST_UNSUPPORTED`; an overall PASS is qualified as `REPOSITORY_ONLY_HOST_UNSUPPORTED` and proves only the repository gate. Supported-host matching requires an authoritative `PROBED` version. For a supported host, missing authenticated enforcement is `NOT_CONFIGURED` or `BLOCKED`; producer/key/signature/freshness/challenge/replay/callback/crypto, redaction, correlation, or bypass faults remain `BLOCKED` or `FAIL`.
+
+The result keeps `claimedSurfaces` separate from `trustedSurfaces`. Policy surfaces are baseline-only and cannot declare runtime `ENFORCED`. Missing or rejected snapshots retain trusted `NOT_CONFIGURED` surfaces. Only a closed, fresh, one-use challenge-bound Ed25519 snapshot with signed callback proof can emit trusted `ENFORCED`; all four trusted surfaces plus no unresolved bypass are required for native adapter `PASS`. A valid later-gate `RESOLVED` transition may clear only when every current resolution event ID exactly matches the bounded unique `resolutionEventIds` array inside those signed canonical bytes. Missing, mismatched, duplicate, oversized, or extra bindings block, as do resolution claims on the canonical unsupported host or without a trusted snapshot. Canonical `supportedHosts` remains empty, so this supported path is exercised only with temporary test policies and keys and creates no durable evidence.
+
+`scripts/ai/command-runner.sh` remains the only supported product-command path. Native adapters do not execute product commands. Phase 3B owns CI adapter installation, remote-runner guarantees, durable CI evidence, and cross-host parity.
+
 ## Evidence Boundary
 
-Phase 2C static/helper gates do not create repository `.ai-runs`, artifact manifests, finalized `run.json`, registry `VERIFIED` transitions, issue-backed closure claims, reconciliation-complete claims, or unqualified overall DONE claims. Real project verification remains NOT RUN unless a later supported command-runner evidence path is explicitly used.
+Phase 2C and Phase 3A static/helper gates do not create repository `.ai-runs`, artifact manifests, finalized `run.json`, registry `VERIFIED` transitions, issue-backed closure claims, reconciliation-complete claims, or unqualified overall DONE claims. Phase 1B-3 remains `completenessEvaluated: false` with scope `INTEGRITY_ONLY`. Real project verification remains NOT RUN unless the supported command-runner evidence path is explicitly used.

@@ -1,6 +1,8 @@
 import ast
+import base64
 import contextlib
 from concurrent.futures import ThreadPoolExecutor
+import datetime as dt
 import hashlib
 import importlib.util
 import io
@@ -23,6 +25,16 @@ from unittest import mock
 import uuid as uuid_module
 
 from jsonschema import Draft202012Validator, FormatChecker
+
+try:
+    from cryptography.exceptions import UnsupportedAlgorithm
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+except ImportError:
+    UnsupportedAlgorithm = None
+    Ed25519PrivateKey = None
+    Encoding = None
+    PublicFormat = None
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -331,7 +343,14 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
         self.assertTrue(phase_2b.issubset(self.helper.SCHEMA_NAMES))
         phase_2c = {"verification-policy", "verification-gate-result"}
         self.assertTrue(phase_2c.issubset(self.helper.SCHEMA_NAMES))
-        self.assertEqual(len(self.helper.SCHEMA_NAMES), 19)
+        phase_3a = {
+            "native-adapter-result",
+            "native-bypass-attempt",
+            "native-runtime-adapters",
+            "native-runtime-snapshot",
+        }
+        self.assertTrue(phase_3a.issubset(self.helper.SCHEMA_NAMES))
+        self.assertEqual(len(self.helper.SCHEMA_NAMES), 23)
         self.assertEqual(
             {name for name in self.helper.SCHEMA_NAMES if name in additions},
             additions,
@@ -6076,6 +6095,11 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
             handoff["githubIssue"]["previousReconciliationError"],
             "authorization failure: GitHub API 403 Resource not accessible by integration",
         )
+        self.assertEqual(handoff["phase3AIssue"], {
+            "issueNumber": 10,
+            "issueUrl": "https://github.com/116Lv/sparta-ch6-advanced/issues/10",
+            "trackingStatus": "issue_backed",
+        })
         self.assertEqual(set(handoff["skillIds"]), set(self.REQUIRED_SKILLS))
         self.assertIn("ai/work-logs/issue-5/README.md", handoff["reusableContextRefs"])
         self.assertIn("ai/work-logs/issue-6/README.md", handoff["workLogRefs"])
@@ -6209,6 +6233,12 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         path.write_text(json.dumps({"results": results}), encoding="utf-8")
         return "ai/fixtures/phase-2c-leaf-results.json"
 
+    def write_json_fixture(self, name, payload):
+        path = self.root / "ai" / "fixtures" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path.relative_to(self.root).as_posix()
+
     def test_verification_policy_and_result_schemas_are_allowlisted(self):
         self.assertIn("verification-policy", self.helper.SCHEMA_NAMES)
         self.assertIn("verification-gate-result", self.helper.SCHEMA_NAMES)
@@ -6232,6 +6262,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         ])
         doc_result, doc_status = self.helper.verification_gate(
             self.root, "documentation-only", "verification-level", not_configured,
+            task_key="issue-10", gate_invocation_id="gate-doc",
         )
         self.assertEqual((doc_result["result"], doc_status), ("PASS", 0))
         doc_checks = {item["checkId"]: item for item in doc_result["data"]["checks"]}
@@ -6240,12 +6271,14 @@ class Phase2CVerificationGateTests(unittest.TestCase):
 
         not_applicable_result, not_applicable_status = self.helper.verification_gate(
             self.root, "documentation-only", "api-smoke", not_configured,
+            task_key="issue-10", gate_invocation_id="gate-na",
         )
         self.assertEqual((not_applicable_result["result"], not_applicable_status), ("NOT_APPLICABLE", 6))
         self.assertEqual(not_applicable_result["data"]["entryPoint"], "api-smoke")
 
         api_result, api_status = self.helper.verification_gate(
             self.root, "db-api", "api-smoke", not_configured,
+            task_key="issue-10", gate_invocation_id="gate-api",
         )
         self.assertEqual((api_result["result"], api_status), ("BLOCKED", 2))
         api_checks = {item["checkId"]: item for item in api_result["data"]["checks"]}
@@ -6256,6 +6289,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         ])
         logic_result, logic_status = self.helper.verification_gate(
             self.root, "domain-logic", "verification-level", failed,
+            task_key="issue-10", gate_invocation_id="gate-logic",
         )
         self.assertEqual((logic_result["result"], logic_status), ("FAIL", 1))
         logic_checks = {item["checkId"]: item for item in logic_result["data"]["checks"]}
@@ -6264,6 +6298,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
     def test_review_and_done_claim_gates_require_explicit_leaf_evidence(self):
         review_result, review_status = self.helper.verification_gate(
             self.root, "documentation-only", "review",
+            task_key="issue-10", gate_invocation_id="gate-review",
         )
         self.assertEqual((review_result["result"], review_status), ("BLOCKED", 2))
         review_checks = {item["checkId"]: item for item in review_result["data"]["checks"]}
@@ -6272,6 +6307,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
 
         done_result, done_status = self.helper.verification_gate(
             self.root, "documentation-only", "done-claim",
+            task_key="issue-10", gate_invocation_id="gate-done",
         )
         self.assertEqual((done_result["result"], done_status), ("BLOCKED", 2))
         done_checks = {item["checkId"]: item for item in done_result["data"]["checks"]}
@@ -6284,6 +6320,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         ])
         passed_result, passed_status = self.helper.verification_gate(
             self.root, "documentation-only", "review", explicit,
+            task_key="issue-10", gate_invocation_id="gate-review-pass",
         )
         self.assertEqual((passed_result["result"], passed_status), ("PASS", 0))
 
@@ -6300,11 +6337,19 @@ class Phase2CVerificationGateTests(unittest.TestCase):
             "documentation-only",
             "--entry-point",
             "verification-level",
+            "--task-key",
+            "issue-10",
+            "--gate-invocation-id",
+            "gate-shell",
             "--leaf-results-file",
             str(self.write_leaf_results([
                 {"checkId": "review-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/reviewer.md", "reason": "Independent static review evidence is present."},
                 {"checkId": "done-claim-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/README.md", "reason": "Completion claim checklist evidence is present."},
             ])),
+            "--runtime-snapshot",
+            self.write_json_fixture("runtime-snapshot.json", {"producerId": "fixture", "surfaces": []}),
+            "--bypass-attempts",
+            self.write_json_fixture("bypass-attempts.json", {"attempts": []}),
             "--output",
             "-",
         ]
@@ -6331,6 +6376,10 @@ class Phase2CVerificationGateTests(unittest.TestCase):
                 "documentation-only",
                 "--entry-point",
                 "api-smoke",
+                "--task-key",
+                "issue-10",
+                "--gate-invocation-id",
+                "gate-shell-na",
                 "--output",
                 "-",
             ],
@@ -6402,6 +6451,27 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.assertIn("scripts/ai/verification-gate.sh", gate_entry_points["failure-triage"])
         self.assertIn("scripts/ai/verification-gate.sh", gate_entry_points["review-gate"])
 
+    def test_catalog_verification_gate_commands_include_required_wrapper_correlation_arguments(self):
+        catalog = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/skill-catalog.json")
+        entry_points = {entry["id"]: entry["allowedEntryPoint"] for entry in catalog["skills"]}
+        expected_entry_points = {
+            "verification-runner": "verification-level",
+            "api-smoke-verifier": "api-smoke",
+            "failure-triage": "failure-triage",
+            "review-gate": "review",
+        }
+
+        for skill_id, entry_point in expected_entry_points.items():
+            with self.subTest(skill_id=skill_id):
+                self.assertEqual(entry_points[skill_id].split(), [
+                    "scripts/ai/verification-gate.sh",
+                    "--change-type", "<type>",
+                    "--entry-point", entry_point,
+                    "--task-key", "<task-key>",
+                    "--gate-invocation-id", "<gate-invocation-id>",
+                    "--output", "-",
+                ])
+
     def test_phase_2c_repository_artifacts_and_registry_verified_remain_absent(self):
         self.assertFalse((REPOSITORY_ROOT / ".ai-runs").exists())
         bad = []
@@ -6418,6 +6488,2405 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.assertFalse(any(command["configurationStatus"] == "VERIFIED" for command in registry["commands"]))
         summary = self.read_repository_text("ai/work-logs/issue-7/README.md")
         self.assertIn("authorization failure: GitHub API 403 Resource not accessible by integration", summary)
+
+
+class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
+    SCHEMA_PATHS = {
+        "native-runtime-adapters": "ai/schemas/native-runtime-adapters.schema.json",
+        "native-bypass-attempt": "ai/schemas/native-bypass-attempt.schema.json",
+        "native-runtime-snapshot": "ai/schemas/native-runtime-snapshot.schema.json",
+        "native-adapter-result": "ai/schemas/native-adapter-result.schema.json",
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls.helper = load_helper()
+
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary_directory.name)
+        shutil.copytree(REPOSITORY_ROOT / "ai" / "schemas", self.root / "ai" / "schemas")
+        shutil.copyfile(
+            REPOSITORY_ROOT / "ai" / "native-runtime-adapters.json",
+            self.root / "ai" / "native-runtime-adapters.json",
+        )
+        shutil.copyfile(
+            REPOSITORY_ROOT / "ai" / "verification-policy.json",
+            self.root / "ai" / "verification-policy.json",
+        )
+        (self.root / "ai" / "fixtures").mkdir()
+        if hasattr(self.helper, "NATIVE_CONSUMED_CHALLENGES"):
+            self.helper.NATIVE_CONSUMED_CHALLENGES.clear()
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def write_fixture(self, name, value):
+        path = self.root / "ai" / "fixtures" / name
+        path.write_text(json.dumps(value), encoding="utf-8")
+        return path.relative_to(self.root).as_posix()
+
+    def write_verification_leaf_results(self, results, name="phase-3a-leaf-results.json"):
+        return self.write_fixture(name, {"results": results})
+
+    def copy_repository_fixture(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name) / "repository"
+        shutil.copytree(self.root, root)
+        return root
+
+    @staticmethod
+    def native_check(result):
+        return next(
+            check for check in result["data"]["checks"]
+            if check["checkId"] == "native-runtime-adapter"
+        )
+
+    def write_temp_snapshot(self, snapshot):
+        return self.write_fixture("runtime-snapshot.json", snapshot)
+
+    def write_attempts(self, attempts):
+        return self.write_fixture("bypass-attempts.json", {"attempts": attempts})
+
+    def write_supported_policy(self, public_key_fingerprint="a" * 64):
+        policy = self.supported_host_policy()
+        policy["supportedHosts"][0].update({
+            "hostId": "codex-desktop",
+            "minimumHostVersion": "1.0.0",
+            "ed25519PublicKeyFingerprint": public_key_fingerprint,
+        })
+        return self.write_fixture("supported-native-runtime-adapters.json", policy)
+
+    def valid_attempt(self, **overrides):
+        attempt = self.bypass_attempt()
+        attempt.update(overrides)
+        return attempt
+
+    def validator(self, schema_name):
+        with (REPOSITORY_ROOT / self.SCHEMA_PATHS[schema_name]).open(encoding="utf-8") as handle:
+            schema = json.load(handle)
+        Draft202012Validator.check_schema(schema)
+        return Draft202012Validator(schema, format_checker=FormatChecker())
+
+    def assert_valid(self, schema_name, instance):
+        self.assertEqual(list(self.validator(schema_name).iter_errors(instance)), [])
+
+    def assert_invalid(self, schema_name, instance):
+        self.assertNotEqual(list(self.validator(schema_name).iter_errors(instance)), [])
+
+    def test_invalid_native_adapter_cli_result_is_schema_valid_and_fail_closed(self):
+        result, status = self.helper.invalid_cli_result("native-adapter-gate")
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS", 2,
+        ))
+        self.assert_valid("native-adapter-result", result)
+
+    def run_native_adapter_cli_subprocess(self, *arguments):
+        return subprocess.run(
+            [
+                sys.executable,
+                str(REPOSITORY_ROOT / "scripts" / "ai" / "workflow_helper.py"),
+                "native-adapter-gate",
+                *arguments,
+            ],
+            cwd=str(REPOSITORY_ROOT),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    def run_verification_gate_cli_subprocess(self, *arguments):
+        return subprocess.run(
+            [
+                sys.executable,
+                str(REPOSITORY_ROOT / "scripts" / "ai" / "workflow_helper.py"),
+                "verification-gate",
+                *arguments,
+            ],
+            cwd=str(REPOSITORY_ROOT),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    def test_native_adapter_cli_missing_required_argument_returns_structured_result(self):
+        completed = self.run_native_adapter_cli_subprocess(
+            "--task-key", "issue-10",
+            "--gate-invocation-id", "gate-1",
+            "--output", "-",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertNotIn("Traceback", completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual((result["result"], result["reason"]), (
+            "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+        ))
+        self.assert_valid("native-adapter-result", result)
+
+    def test_native_adapter_cli_unknown_option_returns_structured_result(self):
+        completed = self.run_native_adapter_cli_subprocess(
+            "--repository-root", str(REPOSITORY_ROOT),
+            "--task-key", "issue-10",
+            "--gate-invocation-id", "gate-1",
+            "--output", "-",
+            "--unknown-option",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertNotIn("Traceback", completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual((result["result"], result["reason"]), (
+            "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+        ))
+        self.assert_valid("native-adapter-result", result)
+
+    def supported_host_policy(self):
+        return {
+            "$schema": "ai/schemas/native-runtime-adapters.schema.json",
+            "$id": "ai/native-runtime-adapters.json",
+            "schemaVersion": 1,
+            "updatedAt": "2026-07-13T01:00:00Z",
+            "supportedHosts": [{
+                "hostId": "supported-host",
+                "minimumHostVersion": "1.2.3",
+                "adapterVersionRange": ">=1.0.0 <2.0.0",
+                "producerId": "example.native.adapter",
+                "ed25519PublicKeyFingerprint": "a" * 64,
+                "surfaces": self.supported_surfaces(),
+            }],
+            "currentHost": {
+                "hostId": "codex-desktop",
+                "hostVersion": "1.0.0",
+                "versionProvenance": "PROBED",
+                "probeRefs": ["ai/native-runtime-adapters.md"],
+                "surfaces": self.unsupported_surfaces(),
+            },
+            "completionPolicy": {
+                "phase2cCheckId": "native-runtime-adapter",
+                "unsupportedLeafResult": "NOT_APPLICABLE",
+                "supportedHostFailureResult": "BLOCKED",
+            },
+        }
+
+    @staticmethod
+    def supported_surfaces():
+        return [
+            {"surface": surface, "status": "NOT_CONFIGURED", "reasonCode": "ADAPTER_CONFIGURATION_REQUIRED"}
+            for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+        ]
+
+    @staticmethod
+    def unsupported_surfaces():
+        return [
+            {"surface": surface, "status": "UNSUPPORTED", "reasonCode": "HOST_NOT_SUPPORTED"}
+            for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+        ]
+
+    @staticmethod
+    def bypass_attempt():
+        return {
+            "$schema": "ai/schemas/native-bypass-attempt.schema.json",
+            "$id": "ai/native-bypass-attempt.json",
+            "schemaVersion": 1,
+            "attemptId": "attempt-1",
+            "eventId": "event-1",
+            "observedAt": "2026-07-13T01:00:00Z",
+            "hostId": "supported-host",
+            "hostVersion": "1.2.3",
+            "adapterVersion": "1.0.0",
+            "surface": "COMMAND",
+            "operationType": "FILE_READ",
+            "commandIntent": "FILE_READ",
+            "statusAtObservation": "ENFORCED",
+            "decision": "BLOCKED",
+            "reasonCode": "DIRECT_TOOL_BYPASS",
+            "repositoryGatewayExpected": True,
+            "taskKey": "issue-10",
+            "gateInvocationId": "gate-1",
+            "runId": None,
+            "deduplicationKey": "dedupe-1",
+            "lifecycle": "DETECTED",
+            "resolvedAt": None,
+            "resolutionReason": None,
+            "summary": {
+                "target": {
+                    "classification": "REPOSITORY_PATH",
+                    "repositoryPath": "docs/00-index.md",
+                },
+                "argumentSummary": {
+                    "classification": "STRUCTURAL_PLACEHOLDERS",
+                    "count": 1,
+                    "sha256": "a" * 64,
+                },
+                "querySummary": {"classification": "NONE"},
+                "toolPayloadSummary": {"classification": "NONE"},
+            },
+        }
+
+    @staticmethod
+    def adapter_result():
+        return {
+            "$schema": "ai/schemas/native-adapter-result.schema.json",
+            "$id": "ai/native-adapter-result.json",
+            "schemaVersion": 1,
+            "operation": "NATIVE_ADAPTER_GATE",
+            "result": "UNSUPPORTED",
+            "phase2cLeafResult": "NOT_APPLICABLE",
+            "reason": "The current host has no supported native adapter.",
+            "data": {
+                "hostId": "codex-desktop",
+                "hostVersion": None,
+                "versionProvenance": "UNPROBED",
+                "claimedSurfaces": Phase3ANativeRuntimeAdapterTests.unsupported_surfaces(),
+                "trustedSurfaces": Phase3ANativeRuntimeAdapterTests.unsupported_surfaces(),
+                "bypassAttemptRefs": [],
+                "repositoryOnlyQualification": True,
+                "phase2CLeafResult": "NOT_APPLICABLE",
+            },
+        }
+
+    @staticmethod
+    def canonical_snapshot_bytes(snapshot):
+        payload = {key: value for key, value in snapshot.items() if key != "signature"}
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    def signed_snapshot(self, gate_invocation_id="gate-signed", observed_at=None,
+                        producer_id="example.native.adapter", host_id="codex-desktop",
+                        host_version="1.0.0", callback_result="BLOCKED",
+                        resolution_event_ids=None, task_key="issue-10",
+                        bypass_attempts=None):
+        if Ed25519PrivateKey is None:
+            self.skipTest("cryptography is unavailable for the valid Ed25519 vector")
+        private_key = Ed25519PrivateKey.generate()
+        public_key_bytes = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        fingerprint = hashlib.sha256(public_key_bytes).hexdigest()
+        if observed_at is None:
+            observed_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        bypass_attempts = [] if bypass_attempts is None else bypass_attempts
+        event_set_bytes = json.dumps(
+            sorted(bypass_attempts, key=lambda attempt: attempt["eventId"]),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        snapshot = {
+            "$schema": "ai/schemas/native-runtime-snapshot.schema.json",
+            "$id": "ai/native-runtime-snapshot.json",
+            "schemaVersion": 1,
+            "producerId": producer_id,
+            "hostId": host_id,
+            "hostVersion": host_version,
+            "adapterVersion": "1.0.0",
+            "observedAt": observed_at,
+            "taskKey": task_key,
+            "gateInvocationId": gate_invocation_id,
+            "bypassEventCount": len(bypass_attempts),
+            "bypassEventSetSha256": hashlib.sha256(event_set_bytes).hexdigest(),
+            "resolutionEventIds": [] if resolution_event_ids is None else resolution_event_ids,
+            "surfaces": [
+                {
+                    "surface": surface,
+                    "status": "ENFORCED",
+                    "reasonCode": "SIGNED_CALLBACK_PROOF",
+                    "callbackProof": {
+                        "gateInvocationId": gate_invocation_id,
+                        "observedBeforeOperation": True,
+                        "challengeResult": callback_result,
+                    },
+                }
+                for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+            ],
+            "publicKey": {
+                "algorithm": "Ed25519",
+                "encoding": "RAW_BASE64",
+                "fingerprintSha256": fingerprint,
+                "value": base64.b64encode(public_key_bytes).decode("ascii"),
+            },
+            "signature": {
+                "algorithm": "Ed25519",
+                "encoding": "BASE64",
+                "value": "",
+            },
+        }
+        snapshot["signature"]["value"] = base64.b64encode(
+            private_key.sign(self.canonical_snapshot_bytes(snapshot))
+        ).decode("ascii")
+        return snapshot, fingerprint, private_key
+
+    def resolved_transition_attempts(self, gate_invocation_id="gate-resolution"):
+        prior_detection = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        current_resolution = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-resolution-2",
+            gateInvocationId=gate_invocation_id,
+            observedAt="2026-07-13T01:00:00Z",
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+        )
+        return [prior_detection, current_resolution]
+
+    def resign_snapshot(self, snapshot, private_key):
+        snapshot["signature"]["value"] = base64.b64encode(
+            private_key.sign(self.canonical_snapshot_bytes(snapshot))
+        ).decode("ascii")
+        return snapshot
+
+    def assert_trusted_not_enforced(self, result):
+        self.assertEqual(
+            {surface["status"] for surface in result["data"]["trustedSurfaces"]},
+            {"NOT_CONFIGURED"},
+        )
+
+    def supported_policy_with_fingerprint(self, fingerprint):
+        policy = self.supported_host_policy()
+        policy["supportedHosts"][0].update({
+            "hostId": "codex-desktop",
+            "minimumHostVersion": "1.0.0",
+            "ed25519PublicKeyFingerprint": fingerprint,
+        })
+        return policy
+
+    def test_runtime_snapshot_schema_and_canonicalizer_are_available(self):
+        self.assertIn("native-runtime-snapshot", self.helper.SCHEMA_NAMES)
+        self.assertTrue((REPOSITORY_ROOT / self.SCHEMA_PATHS["native-runtime-snapshot"]).is_file())
+        snapshot, _, _ = self.signed_snapshot()
+        self.assert_valid("native-runtime-snapshot", snapshot)
+
+    def test_resolution_event_ids_are_required_unique_and_bounded_in_signed_snapshot(self):
+        snapshot, _, private_key = self.signed_snapshot(
+            resolution_event_ids=["event-resolution-2"],
+        )
+        self.assert_valid("native-runtime-snapshot", snapshot)
+        self.assertIn(b'"resolutionEventIds":["event-resolution-2"]',
+                      self.helper.native_snapshot_canonical_bytes(snapshot))
+
+        invalid_cases = {}
+        missing = dict(snapshot)
+        missing.pop("resolutionEventIds")
+        invalid_cases["missing"] = missing
+        duplicate = dict(snapshot)
+        duplicate["resolutionEventIds"] = ["event-resolution-2", "event-resolution-2"]
+        invalid_cases["duplicate"] = self.resign_snapshot(duplicate, private_key)
+        too_many = dict(snapshot)
+        too_many["resolutionEventIds"] = [f"event-{index}" for index in range(65)]
+        invalid_cases["too-many"] = self.resign_snapshot(too_many, private_key)
+        too_long = dict(snapshot)
+        too_long["resolutionEventIds"] = ["e" * 129]
+        invalid_cases["too-long"] = self.resign_snapshot(too_long, private_key)
+
+        for name, invalid in invalid_cases.items():
+            with self.subTest(name=name):
+                self.assert_invalid("native-runtime-snapshot", invalid)
+
+    def test_signed_snapshot_binds_task_and_complete_bypass_event_set(self):
+        attempts = self.resolved_transition_attempts("gate-event-set")
+        snapshot, fingerprint, private_key = self.signed_snapshot(
+            gate_invocation_id="gate-event-set",
+            resolution_event_ids=["event-resolution-2"],
+            bypass_attempts=attempts,
+        )
+        self.assert_valid("native-runtime-snapshot", snapshot)
+        canonical = self.helper.native_snapshot_canonical_bytes(snapshot)
+        self.assertIn(b'"taskKey":"issue-10"', canonical)
+        self.assertIn(b'"bypassEventCount":2', canonical)
+        self.assertIn(b'"bypassEventSetSha256":', canonical)
+
+        altered = json.loads(json.dumps(attempts))
+        for attempt in altered:
+            attempt["deduplicationKey"] = "grafted-group"
+        altered_result, altered_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-event-set",
+            runtime_snapshot_ref=self.write_fixture("snapshot-event-set.json", snapshot),
+            bypass_attempts_ref=self.write_fixture("attempts-event-set.json", {"attempts": altered}),
+            policy_ref=self.write_fixture(
+                "policy-event-set.json", self.supported_policy_with_fingerprint(fingerprint),
+            ),
+        )
+        self.assertEqual((altered_result["result"], altered_result["reason"], altered_status), (
+            "BLOCKED", "NATIVE_BYPASS_EVENT_SET_MISMATCH", 2,
+        ))
+
+        wrong_task = dict(snapshot)
+        wrong_task["taskKey"] = "other-task"
+        self.resign_snapshot(wrong_task, private_key)
+        task_result, task_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-event-set",
+            runtime_snapshot_ref=self.write_fixture("snapshot-wrong-task.json", wrong_task),
+            bypass_attempts_ref=self.write_fixture("attempts-wrong-task.json", {"attempts": attempts}),
+            policy_ref=self.write_fixture(
+                "policy-wrong-task.json", self.supported_policy_with_fingerprint(fingerprint),
+            ),
+        )
+        self.assertEqual((task_result["result"], task_result["reason"], task_status), (
+            "BLOCKED", "NATIVE_ADAPTER_TASK_MISMATCH", 2,
+        ))
+
+    def test_bypass_surface_operation_semantics_are_closed(self):
+        valid_cases = (
+            self.valid_attempt(surface="COMMAND", operationType="COMMAND", commandIntent="COMMAND"),
+            self.valid_attempt(surface="COMMAND", operationType="FILE_READ", commandIntent="FILE_READ"),
+            self.valid_attempt(surface="FILE_READ", operationType="FILE_READ", commandIntent=None),
+            self.valid_attempt(surface="SEARCH", operationType="SEARCH", commandIntent=None),
+            self.valid_attempt(surface="TOOL_CALL", operationType="TOOL_CALL", commandIntent=None),
+        )
+        for attempt in valid_cases:
+            if attempt.get("commandIntent") is None:
+                attempt.pop("commandIntent", None)
+            self.assert_valid("native-bypass-attempt", attempt)
+
+        invalid_cases = (
+            self.valid_attempt(surface="COMMAND", operationType="COMMAND", commandIntent=None),
+            self.valid_attempt(surface="FILE_READ", operationType="COMMAND", commandIntent="FILE_READ"),
+            self.valid_attempt(surface="COMMAND", operationType="SEARCH", commandIntent="FILE_READ"),
+            self.valid_attempt(surface="SEARCH", operationType="SEARCH", commandIntent="SEARCH"),
+        )
+        for attempt in invalid_cases:
+            if attempt.get("commandIntent") is None:
+                attempt.pop("commandIntent", None)
+            self.assert_invalid("native-bypass-attempt", attempt)
+
+    def test_ed25519_backend_unavailable_is_structured_and_fail_closed(self):
+        if UnsupportedAlgorithm is None:
+            self.skipTest("cryptography exception type is unavailable")
+        snapshot, fingerprint, _ = self.signed_snapshot()
+
+        class UnsupportedEd25519:
+            @staticmethod
+            def from_public_bytes(_value):
+                raise UnsupportedAlgorithm("Ed25519 is unavailable")
+
+        with mock.patch.object(self.helper, "Ed25519PublicKey", UnsupportedEd25519):
+            result, status = self.helper.native_adapter_gate(
+                self.root,
+                "issue-10",
+                "gate-signed",
+                runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
+                policy_ref=self.write_supported_policy(fingerprint),
+            )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE", 2,
+        ))
+
+    def test_native_snapshot_canonical_bytes_match_restricted_rfc8785_vector(self):
+        canonicalizer = getattr(self.helper, "native_snapshot_canonical_bytes", None)
+        self.assertIsNotNone(canonicalizer)
+        vector = {
+            "z": ["ASCII", True, None, 7],
+            "signature": {"algorithm": "Ed25519", "encoding": "BASE64", "value": "excluded"},
+            "a": {"k": "v"},
+        }
+        self.assertEqual(canonicalizer(vector), b'{"a":{"k":"v"},"z":["ASCII",true,null,7]}')
+        for invalid in (
+            {"value": 1.5, "signature": {}},
+            {"value": "non-ascii-\u00e9", "signature": {}},
+            {"non-ascii-\u00e9": "value", "signature": {}},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    canonicalizer(invalid)
+
+    def test_temporary_supported_policy_accepts_real_signed_enforced_snapshot(self):
+        snapshot, fingerprint, _ = self.signed_snapshot()
+        policy_ref = self.write_supported_policy(fingerprint)
+        missing, missing_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-missing",
+            policy_ref=policy_ref,
+        )
+        self.assertEqual((missing["result"], missing_status), ("NOT_CONFIGURED", 3))
+        self.assert_trusted_not_enforced(missing)
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-signed",
+            runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
+            policy_ref=policy_ref,
+        )
+        self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
+        self.assertEqual({surface["status"] for surface in result["data"]["claimedSurfaces"]}, {"ENFORCED"})
+        self.assertEqual({surface["status"] for surface in result["data"]["trustedSurfaces"]}, {"ENFORCED"})
+        self.assertFalse(result["data"]["repositoryOnlyQualification"])
+        self.assertFalse((self.root / ".ai-runs").exists())
+
+    def test_valid_signed_bound_resolution_clears_lifecycle_and_passes(self):
+        attempts = self.resolved_transition_attempts()
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id="gate-resolution",
+            resolution_event_ids=["event-resolution-2"],
+            bypass_attempts=attempts,
+        )
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-resolution",
+            runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
+            bypass_attempts_ref=self.write_attempts(attempts),
+            policy_ref=self.write_supported_policy(fingerprint),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
+        self.assertEqual(
+            {surface["status"] for surface in result["data"]["trustedSurfaces"]},
+            {"ENFORCED"},
+        )
+
+    def test_signed_resolution_binding_missing_mismatched_or_extra_blocks_precisely(self):
+        cases = (
+            ("missing", [], "NATIVE_BYPASS_RESOLUTION_BINDING_MISSING"),
+            ("mismatched", ["event-wrong"], "NATIVE_BYPASS_RESOLUTION_BINDING_MISMATCH"),
+            (
+                "extra",
+                ["event-resolution-2", "event-extra"],
+                "NATIVE_BYPASS_RESOLUTION_BINDING_EXTRA",
+            ),
+        )
+        for name, resolution_event_ids, expected_reason in cases:
+            with self.subTest(name=name):
+                gate_invocation_id = f"gate-binding-{name}"
+                attempts = self.resolved_transition_attempts(gate_invocation_id)
+                snapshot, fingerprint, _ = self.signed_snapshot(
+                    gate_invocation_id=gate_invocation_id,
+                    resolution_event_ids=resolution_event_ids,
+                    bypass_attempts=attempts,
+                )
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    gate_invocation_id,
+                    runtime_snapshot_ref=self.write_fixture(f"snapshot-{name}.json", snapshot),
+                    bypass_attempts_ref=self.write_fixture(
+                        f"attempts-{name}.json",
+                        {"attempts": attempts},
+                    ),
+                    policy_ref=self.write_fixture(
+                        f"policy-binding-{name}.json",
+                        self.supported_policy_with_fingerprint(fingerprint),
+                    ),
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", expected_reason, 2,
+                ))
+
+    def test_stale_or_bad_signature_cannot_authorize_bound_resolution(self):
+        stale_time = (
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=301)
+        ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        cases = []
+
+        stale, stale_fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id="gate-resolution-stale",
+            observed_at=stale_time,
+            resolution_event_ids=["event-resolution-2"],
+        )
+        cases.append((
+            "stale", stale, stale_fingerprint, "gate-resolution-stale",
+            "NATIVE_ADAPTER_SNAPSHOT_STALE",
+        ))
+
+        bad_signature, signature_fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id="gate-resolution-signature",
+            resolution_event_ids=["event-resolution-2"],
+        )
+        signature = bytearray(base64.b64decode(bad_signature["signature"]["value"]))
+        signature[-1] ^= 1
+        bad_signature["signature"]["value"] = base64.b64encode(bytes(signature)).decode("ascii")
+        cases.append((
+            "signature", bad_signature, signature_fingerprint, "gate-resolution-signature",
+            "NATIVE_ADAPTER_SIGNATURE_UNTRUSTED",
+        ))
+
+        for name, snapshot, fingerprint, gate_invocation_id, expected_reason in cases:
+            with self.subTest(name=name):
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    gate_invocation_id,
+                    runtime_snapshot_ref=self.write_fixture(f"resolution-{name}.json", snapshot),
+                    bypass_attempts_ref=self.write_fixture(
+                        f"resolution-attempts-{name}.json",
+                        {"attempts": self.resolved_transition_attempts(gate_invocation_id)},
+                    ),
+                    policy_ref=self.write_fixture(
+                        f"resolution-policy-{name}.json",
+                        self.supported_policy_with_fingerprint(fingerprint),
+                    ),
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", expected_reason, 2,
+                ))
+
+    def test_resolution_claims_block_without_supported_host_or_snapshot(self):
+        attempts_ref = self.write_attempts(self.resolved_transition_attempts())
+        unsupported, unsupported_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-resolution",
+            bypass_attempts_ref=attempts_ref,
+        )
+        self.assertEqual((unsupported["result"], unsupported["reason"], unsupported_status), (
+            "BLOCKED", "NATIVE_BYPASS_RESOLUTION_HOST_UNSUPPORTED", 2,
+        ))
+
+        no_snapshot, no_snapshot_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-resolution",
+            bypass_attempts_ref=attempts_ref,
+            policy_ref=self.write_supported_policy(),
+        )
+        self.assertEqual((no_snapshot["result"], no_snapshot["reason"], no_snapshot_status), (
+            "BLOCKED", "NATIVE_BYPASS_RESOLUTION_SNAPSHOT_REQUIRED", 2,
+        ))
+
+        unprobed_policy = self.supported_policy_with_fingerprint("a" * 64)
+        unprobed_policy["currentHost"].update({
+            "hostVersion": None,
+            "versionProvenance": "UNPROBED",
+        })
+        unprobed, unprobed_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-resolution",
+            bypass_attempts_ref=attempts_ref,
+            policy_ref=self.write_fixture("resolution-unprobed-policy.json", unprobed_policy),
+        )
+        self.assertEqual((unprobed["result"], unprobed["reason"], unprobed_status), (
+            "BLOCKED", "NATIVE_BYPASS_RESOLUTION_HOST_UNSUPPORTED", 2,
+        ))
+
+    def test_ordinary_unresolved_detection_blocks_before_snapshot_trust(self):
+        snapshot, fingerprint, _ = self.signed_snapshot(gate_invocation_id="gate-unresolved")
+        unresolved = self.valid_attempt(gateInvocationId="gate-unresolved")
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-unresolved",
+            runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
+            bypass_attempts_ref=self.write_attempts([unresolved]),
+            policy_ref=self.write_supported_policy(fingerprint),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_BYPASS_UNRESOLVED", 2,
+        ))
+        self.assertEqual(self.helper.NATIVE_CONSUMED_CHALLENGES, set())
+
+    def test_untrusted_snapshot_claims_never_promote_trusted_surfaces(self):
+        stale_time = (
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=301)
+        ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        cases = {}
+
+        snapshot, fingerprint, private_key = self.signed_snapshot(gate_invocation_id="gate-bad-producer")
+        snapshot["producerId"] = "untrusted.producer"
+        cases["producer"] = (
+            self.resign_snapshot(snapshot, private_key), fingerprint, "gate-bad-producer",
+            "NATIVE_ADAPTER_PRODUCER_UNTRUSTED",
+        )
+
+        snapshot, fingerprint, _ = self.signed_snapshot(gate_invocation_id="gate-bad-key")
+        cases["key"] = (snapshot, "f" * 64, "gate-bad-key", "NATIVE_ADAPTER_KEY_UNTRUSTED")
+
+        snapshot, fingerprint, _ = self.signed_snapshot(gate_invocation_id="gate-bad-signature")
+        signature = bytearray(base64.b64decode(snapshot["signature"]["value"]))
+        signature[0] ^= 1
+        snapshot["signature"]["value"] = base64.b64encode(bytes(signature)).decode("ascii")
+        cases["signature"] = (
+            snapshot, fingerprint, "gate-bad-signature", "NATIVE_ADAPTER_SIGNATURE_UNTRUSTED",
+        )
+
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id="gate-stale", observed_at=stale_time,
+        )
+        cases["stale"] = (snapshot, fingerprint, "gate-stale", "NATIVE_ADAPTER_SNAPSHOT_STALE")
+
+        snapshot, fingerprint, _ = self.signed_snapshot(gate_invocation_id="signed-other-gate")
+        cases["challenge"] = (
+            snapshot, fingerprint, "gate-challenge", "NATIVE_ADAPTER_CHALLENGE_MISMATCH",
+        )
+
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id="gate-callback", callback_result="FAILED",
+        )
+        cases["callback"] = (
+            snapshot, fingerprint, "gate-callback", "NATIVE_ADAPTER_CALLBACK_FAILED",
+        )
+
+        snapshot, fingerprint, private_key = self.signed_snapshot(gate_invocation_id="gate-host")
+        snapshot["hostVersion"] = "1.0.1"
+        cases["host-version"] = (
+            self.resign_snapshot(snapshot, private_key), fingerprint, "gate-host",
+            "NATIVE_ADAPTER_HOST_MISMATCH",
+        )
+
+        for name, (snapshot, policy_fingerprint, gate_invocation_id, expected_reason) in cases.items():
+            with self.subTest(name=name):
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    gate_invocation_id,
+                    runtime_snapshot_ref=self.write_fixture(f"runtime-{name}.json", snapshot),
+                    policy_ref=self.write_fixture(
+                        f"policy-{name}.json",
+                        self.supported_policy_with_fingerprint(policy_fingerprint),
+                    ),
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", expected_reason, 2,
+                ))
+                self.assertEqual(
+                    {surface["status"] for surface in result["data"]["claimedSurfaces"]},
+                    {"ENFORCED"},
+                )
+                self.assert_trusted_not_enforced(result)
+
+    def test_replayed_challenge_and_missing_crypto_block_without_trusted_enforcement(self):
+        snapshot, fingerprint, _ = self.signed_snapshot(gate_invocation_id="gate-one-use")
+        snapshot_ref = self.write_temp_snapshot(snapshot)
+        policy_ref = self.write_supported_policy(fingerprint)
+        first, first_status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-one-use", snapshot_ref, policy_ref=policy_ref,
+        )
+        self.assertEqual((first["result"], first_status), ("PASS", 0))
+
+        replay, replay_status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-one-use", snapshot_ref, policy_ref=policy_ref,
+        )
+        self.assertEqual((replay["result"], replay["reason"], replay_status), (
+            "BLOCKED", "NATIVE_ADAPTER_CHALLENGE_REPLAYED", 2,
+        ))
+        self.assert_trusted_not_enforced(replay)
+
+        crypto_snapshot, crypto_fingerprint, _ = self.signed_snapshot(gate_invocation_id="gate-no-crypto")
+        with mock.patch.object(self.helper, "Ed25519PublicKey", None, create=True):
+            unavailable, unavailable_status = self.helper.native_adapter_gate(
+                self.root,
+                "issue-10",
+                "gate-no-crypto",
+                runtime_snapshot_ref=self.write_fixture("runtime-no-crypto.json", crypto_snapshot),
+                policy_ref=self.write_fixture(
+                    "policy-no-crypto.json", self.supported_policy_with_fingerprint(crypto_fingerprint),
+                ),
+            )
+        self.assertEqual((unavailable["result"], unavailable["reason"], unavailable_status), (
+            "BLOCKED", "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE", 2,
+        ))
+        self.assert_trusted_not_enforced(unavailable)
+
+    def test_version_provenance_conditionals_and_supported_matching_require_probe(self):
+        canonical = json.loads(
+            (REPOSITORY_ROOT / "ai/native-runtime-adapters.json").read_text(encoding="utf-8")
+        )
+        self.assertIsNone(canonical["currentHost"]["hostVersion"])
+        self.assertEqual(canonical["currentHost"]["versionProvenance"], "UNPROBED")
+        self.assert_valid("native-runtime-adapters", canonical)
+
+        for provenance, version in (("UNPROBED", "1.0.0"), ("PROBED", None)):
+            with self.subTest(provenance=provenance, version=version):
+                policy = self.supported_host_policy()
+                policy["currentHost"].update({"versionProvenance": provenance, "hostVersion": version})
+                self.assert_invalid("native-runtime-adapters", policy)
+
+        result = self.adapter_result()
+        result["data"].update({"versionProvenance": "PROBED", "hostVersion": None})
+        self.assert_invalid("native-adapter-result", result)
+
+        unprobed = self.supported_policy_with_fingerprint("a" * 64)
+        unprobed["currentHost"].update({"versionProvenance": "UNPROBED", "hostVersion": None})
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-unprobed",
+            policy_ref=self.write_fixture("policy-unprobed.json", unprobed),
+        )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "UNSUPPORTED", "HOST_UNSUPPORTED", 6,
+        ))
+
+    def test_repository_supported_host_policy_cannot_declare_runtime_enforcement(self):
+        policy = self.supported_host_policy()
+        self.assert_valid("native-runtime-adapters", policy)
+        policy["supportedHosts"][0]["surfaces"][0]["status"] = "ENFORCED"
+        self.assert_invalid("native-runtime-adapters", policy)
+
+    def test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed(self):
+        self.assertIn("native-runtime-adapters", self.helper.SCHEMA_NAMES)
+        self.assertIn("native-bypass-attempt", self.helper.SCHEMA_NAMES)
+        self.assertIn("native-adapter-result", self.helper.SCHEMA_NAMES)
+        summary = (REPOSITORY_ROOT / "ai/work-logs/issue-10/README.md").read_text(encoding="utf-8")
+        self.assertIn("https://github.com/116Lv/sparta-ch6-advanced/issues/10", summary)
+
+    def test_issue_10_logs_cover_actual_phase_3a_files_and_use_tracked_references(self):
+        expected_changed_files = {
+            ".gitattributes",
+            "AGENTS.md",
+            "ai/agent-handoff.json",
+            "ai/agent-handoff.md",
+            "ai/cache-policy.md",
+            "ai/document-routing.md",
+            "ai/native-runtime-adapters.json",
+            "ai/native-runtime-adapters.md",
+            "ai/schemas/native-adapter-result.schema.json",
+            "ai/schemas/agent-handoff.schema.json",
+            "ai/schemas/native-bypass-attempt.schema.json",
+            "ai/schemas/native-runtime-adapters.schema.json",
+            "ai/schemas/native-runtime-snapshot.schema.json",
+            "ai/schemas/verification-policy.schema.json",
+            "ai/skill-catalog.json",
+            "ai/tool-call-policy.md",
+            "ai/verification-gates.md",
+            "ai/verification-policy.json",
+            "ai/work-logs/index.md",
+            "ai/work-logs/issue-10/README.md",
+            "ai/work-logs/issue-10/implementation-agent.md",
+            "ai/work-logs/issue-10/plan-reviewer.md",
+            "ai/work-logs/issue-10/reviewer.md",
+            "ai/workflow-cache.json",
+            "ai/workflow-cache.md",
+            "docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md",
+            "docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md",
+            "scripts/ai/native-adapter-gate.sh",
+            "scripts/ai/tests/test_workflow_helper.py",
+            "scripts/ai/verification-gate.sh",
+            "scripts/ai/workflow_helper.py",
+        }
+        log_paths = (
+            "ai/work-logs/issue-10/README.md",
+            "ai/work-logs/issue-10/implementation-agent.md",
+            "ai/work-logs/issue-10/plan-reviewer.md",
+            "ai/work-logs/issue-10/reviewer.md",
+        )
+        for path in log_paths:
+            with self.subTest(path=path):
+                text = (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
+                frontmatter = text.split("---", 2)[1]
+                match = re.search(r"(?m)^changed_files:\n((?:  - [^\n]+\n)+)", frontmatter)
+                self.assertIsNotNone(match)
+                changed_files = {
+                    line.removeprefix("  - ")
+                    for line in match.group(1).splitlines()
+                }
+                self.assertEqual(changed_files, expected_changed_files)
+                self.assertNotIn(".superpowers/sdd", text)
+
+        summary = (REPOSITORY_ROOT / log_paths[0]).read_text(encoding="utf-8")
+        last_updated = re.search(r"(?m)^last_updated: (\S+)$", summary).group(1)
+        index = (REPOSITORY_ROOT / "ai/work-logs/index.md").read_text(encoding="utf-8")
+        issue_10_row = next(line for line in index.splitlines() if line.startswith("| #10 |"))
+        self.assertIn(last_updated, issue_10_row)
+
+    def test_current_host_is_explicitly_unsupported_on_all_native_surfaces(self):
+        policy_path = REPOSITORY_ROOT / "ai/native-runtime-adapters.json"
+        self.assertTrue(policy_path.is_file())
+        policy = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/native-runtime-adapters.json")
+
+        self.assertEqual(policy["supportedHosts"], [])
+        self.assertEqual(policy["currentHost"]["hostId"], "codex-desktop")
+        self.assertEqual(
+            {surface["surface"] for surface in policy["currentHost"]["surfaces"]},
+            {"COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL"},
+        )
+        self.assertEqual({surface["status"] for surface in policy["currentHost"]["surfaces"]}, {"UNSUPPORTED"})
+
+    def test_current_host_support_document_matches_canonical_policy(self):
+        document_path = REPOSITORY_ROOT / "ai/native-runtime-adapters.md"
+        self.assertTrue(document_path.is_file())
+
+        policy = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/native-runtime-adapters.json")
+        document = document_path.read_text(encoding="utf-8")
+
+        self.assertIn("ai/native-runtime-adapters.json", document)
+        self.assertIn("supportedHosts: []", document)
+        self.assertIn(policy["currentHost"]["hostId"], document)
+        for surface in policy["currentHost"]["surfaces"]:
+            with self.subTest(surface=surface["surface"]):
+                self.assertIn(surface["surface"], document)
+                self.assertIn(surface["status"], document)
+                self.assertIn(surface["reasonCode"], document)
+
+    def test_closed_native_adapter_schemas_accept_complete_supported_host_vectors(self):
+        self.assert_valid("native-runtime-adapters", self.supported_host_policy())
+        self.assert_valid("native-bypass-attempt", self.bypass_attempt())
+        self.assert_valid("native-adapter-result", self.adapter_result())
+
+    def test_native_bypass_summary_accepts_only_closed_classifications_and_digests(self):
+        attempt = self.bypass_attempt()
+        attempt["summary"].update({
+            "target": {
+                "classification": "EXTERNAL_TARGET",
+                "redactedCategory": "OUTSIDE_REPOSITORY_PATH",
+                "sha256": "d" * 64,
+            },
+            "argumentSummary": {
+                "classification": "ALLOWLISTED_LITERALS",
+                "count": 2,
+                "sha256": "a" * 64,
+            },
+            "querySummary": {
+                "classification": "TEXT_QUERY",
+                "sha256": "b" * 64,
+            },
+            "toolPayloadSummary": {
+                "classification": "STRUCTURED_PAYLOAD",
+                "sha256": "c" * 64,
+            },
+        })
+        self.assert_valid("native-bypass-attempt", attempt)
+
+        invalid_summaries = {
+            "raw-query-string": {"querySummary": "alice@example.com"},
+            "raw-query-content": {"querySummary": {
+                "classification": "TEXT_QUERY",
+                "sha256": "b" * 64,
+                "content": "alice@example.com",
+            }},
+            "raw-tool-json": {"toolPayloadSummary": {
+                "classification": "STRUCTURED_PAYLOAD",
+                "sha256": "c" * 64,
+                "content": '{"email":"alice@example.com"}',
+            }},
+            "none-query-digest": {"querySummary": {
+                "classification": "NONE",
+                "sha256": "b" * 64,
+            }},
+            "none-tool-content": {"toolPayloadSummary": {
+                "classification": "NONE",
+                "content": "{}",
+            }},
+            "raw-arguments": {"argumentSummary": {
+                "classification": "ALLOWLISTED_LITERALS",
+                "count": 1,
+                "sha256": "a" * 64,
+                "argv": ["--token", "opaque"],
+            }},
+            "unbounded-argument-count": {"argumentSummary": {
+                "classification": "STRUCTURAL_PLACEHOLDERS",
+                "count": 65,
+                "sha256": "a" * 64,
+            }},
+            "absolute-repository-path": {"target": {
+                "classification": "REPOSITORY_PATH",
+                "repositoryPath": "C:/Users/alice/secret.json",
+            }},
+            "raw-external-target": {"target": {
+                "classification": "EXTERNAL_TARGET",
+                "redactedCategory": "OUTSIDE_REPOSITORY_PATH",
+                "sha256": "d" * 64,
+                "absolutePath": "C:/Users/alice/secret.json",
+            }},
+        }
+        for name, summary_update in invalid_summaries.items():
+            with self.subTest(name=name):
+                invalid_attempt = self.bypass_attempt()
+                invalid_attempt["summary"].update(summary_update)
+                self.assert_invalid("native-bypass-attempt", invalid_attempt)
+
+    def test_native_adapter_version_schemas_require_strict_semver_2(self):
+        valid_version = "1.0.0-rc.1+build.5"
+        invalid_versions = (
+            "01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-", "1.0.0\n",
+        )
+        vectors = (
+            ("native-runtime-adapters", self.supported_host_policy, ("currentHost", "hostVersion")),
+            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "minimumHostVersion")),
+            ("native-bypass-attempt", self.bypass_attempt, ("hostVersion",)),
+            ("native-bypass-attempt", self.bypass_attempt, ("adapterVersion",)),
+            ("native-adapter-result", self.adapter_result, ("data", "hostVersion")),
+        )
+
+        for schema_name, factory, path in vectors:
+            with self.subTest(schema_name=schema_name, path=path, version=valid_version):
+                instance = factory()
+                if schema_name == "native-adapter-result" and path == ("data", "hostVersion"):
+                    instance["data"]["versionProvenance"] = "PROBED"
+                target = instance
+                for segment in path[:-1]:
+                    target = target[segment]
+                target[path[-1]] = valid_version
+                self.assert_valid(schema_name, instance)
+            for invalid_version in invalid_versions:
+                with self.subTest(schema_name=schema_name, path=path, version=invalid_version):
+                    instance = factory()
+                    if schema_name == "native-adapter-result" and path == ("data", "hostVersion"):
+                        instance["data"]["versionProvenance"] = "PROBED"
+                    target = instance
+                    for segment in path[:-1]:
+                        target = target[segment]
+                    target[path[-1]] = invalid_version
+                    self.assert_invalid(schema_name, instance)
+
+    def test_native_adapter_schema_patterns_use_portable_exact_end_and_reject_terminal_newlines(self):
+        vectors = (
+            ("native-runtime-adapters", self.supported_host_policy, ("updatedAt",), "2026-07-13T01:00:00Z"),
+            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "producerId"), "example.native.adapter"),
+            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "ed25519PublicKeyFingerprint"), "a" * 64),
+            ("native-runtime-adapters", self.supported_host_policy, ("currentHost", "probeRefs", 0), "ai/native-runtime-adapters.md"),
+            ("native-bypass-attempt", self.bypass_attempt, ("eventId",), "event-1"),
+            ("native-bypass-attempt", self.bypass_attempt, ("observedAt",), "2026-07-13T01:00:00Z"),
+            ("native-bypass-attempt", self.bypass_attempt, ("summary", "argumentSummary", "sha256"), "a" * 64),
+            ("native-bypass-attempt", self.bypass_attempt, ("summary", "target", "repositoryPath"), "docs/00-index.md"),
+            ("native-adapter-result", self.adapter_result, ("data", "hostVersion"), "1.0.0"),
+        )
+        for schema_name, factory, path, value in vectors:
+            with self.subTest(schema_name=schema_name, path=path, value="valid"):
+                instance = factory()
+                if schema_name == "native-adapter-result" and path == ("data", "hostVersion"):
+                    instance["data"]["versionProvenance"] = "PROBED"
+                target = instance
+                for segment in path[:-1]:
+                    target = target[segment]
+                target[path[-1]] = value
+                self.assert_valid(schema_name, instance)
+            with self.subTest(schema_name=schema_name, path=path, value="terminal-newline"):
+                instance = factory()
+                if schema_name == "native-adapter-result" and path == ("data", "hostVersion"):
+                    instance["data"]["versionProvenance"] = "PROBED"
+                target = instance
+                for segment in path[:-1]:
+                    target = target[segment]
+                target[path[-1]] = value + "\n"
+                self.assert_invalid(schema_name, instance)
+
+        result = self.adapter_result()
+        result["data"]["bypassAttemptRefs"] = ["ai/native-bypass-attempts.json"]
+        self.assert_valid("native-adapter-result", result)
+        result["data"]["bypassAttemptRefs"] = ["ai/native-bypass-attempts.json\n"]
+        self.assert_invalid("native-adapter-result", result)
+
+        for schema_name in (
+            "native-runtime-adapters",
+            "native-bypass-attempt",
+            "native-adapter-result",
+        ):
+            schema = json.loads((REPOSITORY_ROOT / "ai" / "schemas" / f"{schema_name}.schema.json").read_text(encoding="utf-8"))
+            patterns = []
+            pending = [schema]
+            while pending:
+                value = pending.pop()
+                if isinstance(value, dict):
+                    if "pattern" in value:
+                        patterns.append(value["pattern"])
+                    pending.extend(value.values())
+                elif isinstance(value, list):
+                    pending.extend(value)
+            self.assertTrue(patterns)
+            for pattern in patterns:
+                self.assertNotIn("$", pattern)
+                self.assertNotIn(r"\Z", pattern)
+                self.assertIn(r"(?![\s\S])", pattern)
+
+    def test_closed_native_adapter_schemas_reject_unknown_values_and_secret_bearing_fields(self):
+        policy = self.supported_host_policy()
+        policy["unexpected"] = True
+        self.assert_invalid("native-runtime-adapters", policy)
+
+        policy = self.supported_host_policy()
+        policy["currentHost"]["surfaces"][0]["status"] = "PARTIALLY_ENFORCED"
+        self.assert_invalid("native-runtime-adapters", policy)
+
+        attempt = self.bypass_attempt()
+        attempt["summary"]["target"] = "x" * 513
+        self.assert_invalid("native-bypass-attempt", attempt)
+        for raw_field in ("environment", "payload", "query", "argv"):
+            with self.subTest(raw_field=raw_field):
+                attempt = self.bypass_attempt()
+                attempt[raw_field] = "secret"
+                self.assert_invalid("native-bypass-attempt", attempt)
+
+        result = self.adapter_result()
+        result["result"] = "AUDIT_ONLY"
+        self.assert_invalid("native-adapter-result", result)
+        result = self.adapter_result()
+        result["phase2cLeafResult"] = "UNSUPPORTED"
+        self.assert_invalid("native-adapter-result", result)
+        result = self.adapter_result()
+        del result["data"]["phase2CLeafResult"]
+        self.assert_invalid("native-adapter-result", result)
+        result = self.adapter_result()
+        result["data"]["phase2CLeafResult"] = "PASS"
+        self.assert_invalid("native-adapter-result", result)
+
+    def test_native_bypass_identifier_fields_preserve_their_length_limits(self):
+        for field, maximum_length in (("taskKey", 128), ("runId", 128), ("deduplicationKey", 256)):
+            with self.subTest(field=field):
+                attempt = self.bypass_attempt()
+                attempt[field] = "a" * (maximum_length + 1)
+                self.assert_invalid("native-bypass-attempt", attempt)
+
+    def test_bypass_lifecycle_requires_consistent_resolution_and_correlation(self):
+        attempt = self.bypass_attempt()
+        attempt.update({
+            "lifecycle": "RESOLVED",
+            "resolvedAt": None,
+            "resolutionReason": "FALSE_POSITIVE",
+        })
+        self.assert_invalid("native-bypass-attempt", attempt)
+
+        attempt = self.bypass_attempt()
+        attempt["resolvedAt"] = "2026-07-13T01:01:00Z"
+        self.assert_invalid("native-bypass-attempt", attempt)
+
+        attempt = self.bypass_attempt()
+        attempt.update({
+            "lifecycle": "RESOLVED",
+            "resolvedAt": "2026-07-13T01:01:00Z",
+            "resolutionReason": "UNREVIEWED_REASON",
+        })
+        self.assert_invalid("native-bypass-attempt", attempt)
+
+        for correlation_field in ("taskKey", "gateInvocationId", "deduplicationKey"):
+            with self.subTest(correlation_field=correlation_field):
+                attempt = self.bypass_attempt()
+                del attempt[correlation_field]
+                self.assert_invalid("native-bypass-attempt", attempt)
+
+    def test_repository_helper_rejects_native_bypass_resolution_before_observation(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            schema_path = root / "ai/schemas/native-bypass-attempt.schema.json"
+            attempt_path = root / "ai/native-bypass-attempt.json"
+            schema_path.parent.mkdir(parents=True)
+            shutil.copyfile(REPOSITORY_ROOT / self.SCHEMA_PATHS["native-bypass-attempt"], schema_path)
+
+            valid_attempt = self.bypass_attempt()
+            valid_attempt.update({
+                "lifecycle": "RESOLVED",
+                "resolvedAt": "2026-07-13T01:00:01Z",
+                "resolutionReason": "REMEDIATED",
+            })
+            attempt_path.write_text(json.dumps(valid_attempt), encoding="utf-8")
+            self.helper.validate_repository_instance(root, "ai/native-bypass-attempt.json")
+
+            invalid_attempt = self.bypass_attempt()
+            invalid_attempt.update({
+                "lifecycle": "RESOLVED",
+                "resolvedAt": "2026-07-13T00:59:59Z",
+                "resolutionReason": "REMEDIATED",
+            })
+            attempt_path.write_text(json.dumps(invalid_attempt), encoding="utf-8")
+            with self.assertRaises(self.helper.InvalidStateError):
+                self.helper.validate_repository_instance(root, "ai/native-bypass-attempt.json")
+
+    def test_native_adapter_leaf_is_required_for_every_change_type(self):
+        policy = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/verification-policy.json")
+        for change in policy["changeTypes"]:
+            with self.subTest(change_type=change["id"]):
+                self.assertIn("native-runtime-adapter", change["requiredChecks"])
+
+    def test_every_change_type_aggregates_explicit_native_adapter_state(self):
+        supported_root = self.copy_repository_fixture()
+        supported_policy = self.supported_host_policy()
+        supported_policy["supportedHosts"][0].update({
+            "hostId": "codex-desktop",
+            "minimumHostVersion": "1.0.0",
+        })
+        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(supported_policy), encoding="utf-8",
+        )
+        policy = self.helper.validate_repository_instance(self.root, "ai/verification-policy.json")
+        for change in policy["changeTypes"]:
+            change_type = change["id"]
+            with self.subTest(change_type=change_type, host="unsupported"):
+                result, _ = self.helper.verification_gate(
+                    self.root,
+                    change_type,
+                    "verification-level",
+                    task_key="issue-10",
+                    gate_invocation_id=f"gate-u-{change_type}",
+                )
+                native = self.native_check(result)
+                self.assertEqual((native["rawResult"], native["mappedResult"], native["reason"]), (
+                    "NOT_APPLICABLE", "NOT_APPLICABLE", "HOST_UNSUPPORTED",
+                ))
+            with self.subTest(change_type=change_type, host="supported"):
+                blocked_result, blocked_status = self.helper.verification_gate(
+                    supported_root,
+                    change_type,
+                    "verification-level",
+                    task_key="issue-10",
+                    gate_invocation_id=f"gate-b-{change_type}",
+                )
+                self.assertEqual((blocked_result["result"], blocked_status), ("BLOCKED", 2))
+                self.assertEqual(self.native_check(blocked_result)["rawResult"], "NOT_CONFIGURED")
+
+    def test_unsupported_host_pass_is_explicitly_repository_qualified(self):
+        explicit = self.write_verification_leaf_results([
+            {"checkId": "review-gate", "result": "PASS"},
+            {"checkId": "done-claim-gate", "result": "PASS"},
+        ])
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "verification-level",
+            explicit,
+            task_key="issue-10",
+            gate_invocation_id="gate-qualified",
+        )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "PASS", "REPOSITORY_ONLY_HOST_UNSUPPORTED", 0,
+        ))
+
+    def test_external_native_adapter_leaf_is_rejected_before_leaf_lookup(self):
+        supported_root = self.copy_repository_fixture()
+        supported_policy = self.supported_host_policy()
+        supported_policy["supportedHosts"][0].update({
+            "hostId": "codex-desktop",
+            "minimumHostVersion": "1.0.0",
+        })
+        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(supported_policy), encoding="utf-8",
+        )
+        variants = {
+            "plain-pass": {"checkId": "native-runtime-adapter", "result": "PASS"},
+            "repository-result-ref": {
+                "checkId": "native-runtime-adapter",
+                "result": "PASS",
+                "adapterResultRef": "ai/fixtures/fake-native-adapter-result.json",
+            },
+            "correlation-mismatch": {
+                "checkId": "native-runtime-adapter",
+                "result": "PASS",
+                "taskKey": "other-task",
+                "gateInvocationId": "other-gate",
+            },
+            "policy-digest-mismatch": {
+                "checkId": "native-runtime-adapter",
+                "result": "PASS",
+                "policySha256": "0" * 64,
+            },
+            "fixture-pass-empty-supported-hosts": {
+                "checkId": "native-runtime-adapter",
+                "result": "PASS",
+                "reason": "fixture claimed PASS",
+            },
+        }
+        for root_name, root in (("canonical", self.root), ("supported", supported_root)):
+            for name, forged in variants.items():
+                with self.subTest(root=root_name, variant=name):
+                    ref = self.write_fixture(f"forged-{root_name}-{name}.json", {"results": [forged]})
+                    if root != self.root:
+                        destination = root / ref
+                        destination.write_bytes((self.root / ref).read_bytes())
+                    result, status = self.helper.verification_gate(
+                        root,
+                        "documentation-only",
+                        "verification-level",
+                        ref,
+                        task_key="issue-10",
+                        gate_invocation_id=f"gate-forged-{name}",
+                    )
+                    self.assertEqual((result["result"], result["reason"], status), (
+                        "INVALID_STATE", "NATIVE_ADAPTER_LEAF_FORGED", 5,
+                    ))
+
+    def test_forged_native_adapter_leaf_precedes_correlation_and_applicability_returns(self):
+        forged = self.write_verification_leaf_results([
+            {"checkId": "native-runtime-adapter", "result": "PASS"},
+        ])
+        cases = (
+            ("invalid-correlation", "verification-level", None, "gate-forged-correlation"),
+            ("inapplicable-entry-point", "api-smoke", "issue-10", "gate-forged-inapplicable"),
+        )
+
+        for case, entry_point, task_key, gate_invocation_id in cases:
+            with self.subTest(case=case):
+                result, status = self.helper.verification_gate(
+                    self.root,
+                    "documentation-only",
+                    entry_point,
+                    forged,
+                    task_key=task_key,
+                    gate_invocation_id=gate_invocation_id,
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "INVALID_STATE", "NATIVE_ADAPTER_LEAF_FORGED", 5,
+                ))
+
+    def test_forged_native_adapter_leaf_precedes_earlier_malformed_leaf_result(self):
+        forged = self.write_verification_leaf_results([
+            {"checkId": 1, "result": "PASS"},
+            {"checkId": "native-runtime-adapter", "result": "PASS"},
+        ])
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "verification-level",
+            forged,
+            task_key="issue-10",
+            gate_invocation_id="gate-forged-after-malformed",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "NATIVE_ADAPTER_LEAF_FORGED", 5,
+        ))
+
+    def test_early_native_fail_preserves_failure_for_correlation_and_applicability_returns(self):
+        malformed_bypass = self.write_fixture("malformed-bypass-attempts.json", {
+            "attempts": [{"eventId": "missing-required-fields"}],
+        })
+        cases = (
+            ("invalid-correlation", "verification-level", None, "gate-bypass-correlation"),
+            ("inapplicable-entry-point", "api-smoke", "issue-10", "gate-bypass-inapplicable"),
+        )
+
+        for case, entry_point, task_key, gate_invocation_id in cases:
+            with self.subTest(case=case):
+                result, status = self.helper.verification_gate(
+                    self.root,
+                    "documentation-only",
+                    entry_point,
+                    task_key=task_key,
+                    gate_invocation_id=gate_invocation_id,
+                    bypass_attempts_ref=malformed_bypass,
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "FAIL", "VERIFICATION_GATE_FAIL", 1,
+                ))
+                native = self.native_check(result)
+                self.assertEqual((native["rawResult"], native["mappedResult"], native["reason"]), (
+                    "FAIL", "FAIL", "NATIVE_BYPASS_CONTRACT_INVALID",
+                ))
+
+    def test_early_native_blocked_preserves_blocking_for_correlation_and_applicability_returns(self):
+        malformed_snapshot = self.write_temp_snapshot([])
+        cases = (
+            ("invalid-correlation", "verification-level", None, "gate-snapshot-correlation"),
+            ("inapplicable-entry-point", "api-smoke", "issue-10", "gate-snapshot-inapplicable"),
+        )
+
+        for case, entry_point, task_key, gate_invocation_id in cases:
+            with self.subTest(case=case):
+                result, status = self.helper.verification_gate(
+                    self.root,
+                    "documentation-only",
+                    entry_point,
+                    task_key=task_key,
+                    gate_invocation_id=gate_invocation_id,
+                    runtime_snapshot_ref=malformed_snapshot,
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "VERIFICATION_GATE_BLOCKED", 2,
+                ))
+                self.assertEqual(self.native_check(result)["reason"], "NATIVE_ADAPTER_EVALUATION_INVALID")
+
+    def test_early_native_not_configured_preserves_blocking_for_inapplicable_entry_point(self):
+        supported_root = self.copy_repository_fixture()
+        supported_policy = self.supported_host_policy()
+        supported_policy["supportedHosts"][0].update({
+            "hostId": "codex-desktop",
+            "minimumHostVersion": "1.0.0",
+        })
+        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(supported_policy), encoding="utf-8",
+        )
+        bypass_ref = "ai/fixtures/empty-bypass-attempts.json"
+        (supported_root / bypass_ref).write_text(json.dumps({"attempts": []}), encoding="utf-8")
+
+        result, status = self.helper.verification_gate(
+            supported_root,
+            "documentation-only",
+            "api-smoke",
+            task_key="issue-10",
+            gate_invocation_id="gate-not-configured",
+            bypass_attempts_ref=bypass_ref,
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "VERIFICATION_GATE_BLOCKED", 2,
+        ))
+        native = self.native_check(result)
+        self.assertEqual((native["rawResult"], native["mappedResult"]), (
+            "NOT_CONFIGURED", "BLOCKED",
+        ))
+
+    def test_early_native_not_applicable_preserves_inapplicable_entry_point_result(self):
+        snapshot_ref = self.write_temp_snapshot({
+            "producerId": "codex-native-adapter",
+            "surfaces": [],
+        })
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "api-smoke",
+            task_key="issue-10",
+            gate_invocation_id="gate-unsupported",
+            runtime_snapshot_ref=snapshot_ref,
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "NOT_APPLICABLE", "ENTRY_POINT_NOT_APPLICABLE", 6,
+        ))
+
+    def test_verification_gate_evaluates_explicit_native_inputs_once_before_check_loop(self):
+        snapshot_ref = self.write_temp_snapshot({
+            "producerId": "codex-native-adapter",
+            "surfaces": [],
+        })
+        bypass_ref = self.write_attempts([])
+        original_leaf = self.helper.native_adapter_phase2c_leaf
+        calls = []
+
+        def counted_leaf(*args, **kwargs):
+            calls.append((args[3:], kwargs))
+            return original_leaf(*args, **kwargs)
+
+        self.helper.native_adapter_phase2c_leaf = counted_leaf
+        self.addCleanup(setattr, self.helper, "native_adapter_phase2c_leaf", original_leaf)
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "verification-level",
+            task_key="issue-10",
+            gate_invocation_id="gate-read-once",
+            runtime_snapshot_ref=snapshot_ref,
+            bypass_attempts_ref=bypass_ref,
+        )
+
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+        self.assertEqual(calls, [((snapshot_ref, bypass_ref), {})])
+
+    def test_verification_gate_evaluates_native_leaf_once_without_optional_inputs_before_inapplicability(self):
+        supported_root = self.copy_repository_fixture()
+        supported_policy = self.supported_host_policy()
+        supported_policy["supportedHosts"][0].update({
+            "hostId": "codex-desktop",
+            "minimumHostVersion": "1.0.0",
+        })
+        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(supported_policy), encoding="utf-8",
+        )
+        original_leaf = self.helper.native_adapter_phase2c_leaf
+        calls = []
+
+        def counted_leaf(*args, **kwargs):
+            calls.append((args[0], args[3:], kwargs))
+            return original_leaf(*args, **kwargs)
+
+        self.helper.native_adapter_phase2c_leaf = counted_leaf
+        self.addCleanup(setattr, self.helper, "native_adapter_phase2c_leaf", original_leaf)
+
+        ordinary_result, ordinary_status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "verification-level",
+            task_key="issue-10",
+            gate_invocation_id="gate-unconditional-normal",
+        )
+        self.assertEqual((ordinary_result["result"], ordinary_status), ("BLOCKED", 2))
+
+        unsupported_result, unsupported_status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "api-smoke",
+            task_key="issue-10",
+            gate_invocation_id="gate-unconditional-unsupported",
+        )
+        self.assertEqual((unsupported_result["result"], unsupported_result["reason"], unsupported_status), (
+            "NOT_APPLICABLE", "ENTRY_POINT_NOT_APPLICABLE", 6,
+        ))
+        self.assertEqual(self.native_check(unsupported_result)["reason"], "HOST_UNSUPPORTED")
+
+        blocked_result, blocked_status = self.helper.verification_gate(
+            supported_root,
+            "documentation-only",
+            "api-smoke",
+            task_key="issue-10",
+            gate_invocation_id="gate-unconditional-supported",
+        )
+        self.assertEqual((blocked_result["result"], blocked_result["reason"], blocked_status), (
+            "BLOCKED", "VERIFICATION_GATE_BLOCKED", 2,
+        ))
+        self.assertEqual(self.native_check(blocked_result)["reason"], "NATIVE_ADAPTER_NOT_CONFIGURED")
+        self.assertEqual(calls, [
+            (self.root, (None, None), {}),
+            (self.root, (None, None), {}),
+            (supported_root, (None, None), {}),
+        ])
+
+    def test_native_adapter_phase2c_leaf_validates_correlation_fail_closed(self):
+        invalid_vectors = ((None, "gate-1"), ("issue-10", None), ("", "gate-1"), ("issue-10", ""))
+        for task_key, gate_invocation_id in invalid_vectors:
+            with self.subTest(task_key=task_key, gate_invocation_id=gate_invocation_id):
+                leaf = self.helper.native_adapter_phase2c_leaf(
+                    self.root, task_key, gate_invocation_id,
+                )
+                self.assertEqual((leaf["checkId"], leaf["result"], leaf["reason"]), (
+                    "native-runtime-adapter", "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+                ))
+
+                gate_result, gate_status = self.helper.verification_gate(
+                    self.root,
+                    "documentation-only",
+                    "api-smoke",
+                    task_key=task_key,
+                    gate_invocation_id=gate_invocation_id,
+                )
+                self.assertEqual((gate_result["result"], gate_result["reason"], gate_status), (
+                    "BLOCKED", "VERIFICATION_GATE_BLOCKED", 2,
+                ))
+                self.assertEqual(self.native_check(gate_result)["reason"], "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS")
+
+    def test_verification_cli_accepts_only_live_native_adapter_inputs(self):
+        completed = self.run_verification_gate_cli_subprocess(
+            "--repository-root", str(REPOSITORY_ROOT),
+            "--change-type", "documentation-only",
+            "--entry-point", "verification-level",
+            "--task-key", "issue-10",
+            "--gate-invocation-id", "gate-cli",
+            "--native-adapter-result", "ai/fixtures/fake-native-adapter-result.json",
+            "--output", "-",
+        )
+        self.assertEqual(completed.returncode, 4, completed.stderr + completed.stdout)
+        self.assertNotIn("Traceback", completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual((result["result"], result["reason"]), (
+            "POLICY_VIOLATION", "INVALID_VERIFICATION_GATE_ARGUMENTS",
+        ))
+
+    def test_repository_and_native_boundaries_are_documented(self):
+        policy_docs = (
+            "AGENTS.md",
+            "ai/document-routing.md",
+            "ai/verification-gates.md",
+            "ai/cache-policy.md",
+            "ai/tool-call-policy.md",
+            "ai/agent-handoff.md",
+        )
+        text = "\n".join(
+            (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
+            for path in policy_docs
+        )
+        for phrase in (
+            "only supported product-command path",
+            "UNSUPPORTED",
+            "Phase 3B",
+            "INTEGRITY_ONLY",
+            "unqualified overall DONE",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_native_policy_docs_define_signed_trust_and_bypass_lifecycle(self):
+        document = (REPOSITORY_ROOT / "ai/native-runtime-adapters.md").read_text(encoding="utf-8")
+        for phrase in (
+            "hostVersion: null",
+            "versionProvenance: UNPROBED",
+            "Claimed And Trusted Status",
+            "ai/schemas/native-runtime-snapshot.schema.json",
+            "RFC 8785-compatible restricted subset",
+            '{"a":{"k":"v"},"z":["ASCII",true,null,7]}',
+            "cryptography.hazmat",
+            "300 seconds",
+            "gateInvocationId",
+            "resolutionEventIds",
+            "DETECTED",
+            "RESOLVED",
+            "scripts/ai/command-runner.sh",
+            "ai/verification-gates.md",
+            "Phase 3B",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, document)
+
+    def test_unsupported_host_maps_to_explicit_not_applicable_leaf(self):
+        result, status = self.helper.native_adapter_gate(self.root, "issue-10", "gate-1")
+        self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
+        self.assertEqual(result["data"]["phase2CLeafResult"], "NOT_APPLICABLE")
+        self.assertFalse((self.root / ".ai-runs").exists())
+
+    def test_canonical_empty_supported_hosts_ignores_snapshot_promotion(self):
+        snapshot = self.write_temp_snapshot({
+            "producerId": "fixture",
+            "surfaces": [],
+        })
+        result, status = self.helper.native_adapter_gate(self.root, "issue-10", "gate-2", snapshot)
+        self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
+        self.assertEqual((result["reason"], result["phase2cLeafResult"]), (
+            "HOST_UNSUPPORTED", "NOT_APPLICABLE",
+        ))
+
+    def test_canonical_empty_supported_hosts_accepts_unsigned_minimum_snapshot_without_promotion(self):
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            self.write_temp_snapshot({"producerId": "fixture", "surfaces": []}),
+        )
+        self.assertEqual((result["result"], result["reason"], status), ("UNSUPPORTED", "HOST_UNSUPPORTED", 6))
+        self.assertEqual(result["phase2cLeafResult"], "NOT_APPLICABLE")
+
+    def test_canonical_empty_supported_hosts_block_malformed_unsigned_snapshot(self):
+        invalid_snapshots = (
+            {},
+            {"producerId": "", "surfaces": []},
+            {"producerId": "fixture"},
+            {"producerId": [], "surfaces": []},
+            {"producerId": "fixture", "surfaces": {}},
+            {"producerId": "fixture", "surfaces": [None]},
+            {"producerId": "fixture", "surfaces": ["COMMAND"]},
+            {"producerId": "fixture", "surfaces": [], "fresh": False},
+        )
+        for snapshot in invalid_snapshots:
+            with self.subTest(snapshot=snapshot):
+                result, status = self.helper.native_adapter_gate(
+                    self.root, "issue-10", "gate-1", self.write_temp_snapshot(snapshot),
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "NATIVE_ADAPTER_SNAPSHOT_INVALID", 2,
+                ))
+
+    def test_invalid_runtime_snapshot_reference_blocks_before_unsupported_host_fallback(self):
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", runtime_snapshot_ref="ai/runtime-snapshot.json",
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+        malformed = self.write_fixture("runtime-snapshot.json", [])
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", runtime_snapshot_ref=malformed,
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_native_adapter_gate_rejects_empty_contract_identifiers(self):
+        for task_key, gate_invocation_id in (("", "gate-1"), ("issue-10", "")):
+            with self.subTest(task_key=task_key, gate_invocation_id=gate_invocation_id):
+                result, status = self.helper.native_adapter_gate(self.root, task_key, gate_invocation_id)
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS", 2,
+                ))
+
+    def test_enforced_bypass_allowed_for_audit_is_a_failure_before_unsupported_host_fallback(self):
+        attempt = self.valid_attempt(decision="ALLOWED_AUDIT_ONLY")
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
+        )
+        self.assertEqual((result["result"], status), ("FAIL", 1))
+
+    def test_unresolved_bypass_and_redaction_uncertainty_block_completion(self):
+        attempts = self.write_attempts([self.valid_attempt(lifecycle="DETECTED", gateInvocationId="gate-3")])
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-3", bypass_attempts_ref=attempts,
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+        uncertain = self.valid_attempt(
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            reasonCode="REDACTION_UNCERTAIN",
+            gateInvocationId="gate-3",
+        )
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-3", bypass_attempts_ref=self.write_attempts([uncertain]),
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_bypass_attempts_fail_closed_for_invalid_correlation_and_redaction_contracts(self):
+        cases = {
+            "wrong-task": self.valid_attempt(taskKey="issue-else"),
+            "wrong-gate": self.valid_attempt(
+                gateInvocationId="different-gate",
+                lifecycle="RESOLVED",
+                resolvedAt="2026-07-13T01:01:00Z",
+                resolutionReason="REMEDIATED",
+            ),
+            "malformed": {"eventId": "missing-required-fields"},
+            "raw-secret": dict(self.valid_attempt(), payload="secret"),
+            "byte-bound": self.valid_attempt(summary={
+                "target": {
+                    "classification": "REPOSITORY_PATH",
+                    "repositoryPath": "\uac00" * 200,
+                },
+                "argumentSummary": {
+                    "classification": "NONE",
+                    "count": 0,
+                    "sha256": "a" * 64,
+                },
+                "querySummary": {"classification": "NONE"},
+                "toolPayloadSummary": {"classification": "NONE"},
+            }),
+            "scalar-bound": self.valid_attempt(summary={
+                "target": {
+                    "classification": "REPOSITORY_PATH",
+                    "repositoryPath": "a" * 513,
+                },
+                "argumentSummary": {
+                    "classification": "NONE",
+                    "count": 0,
+                    "sha256": "a" * 64,
+                },
+                "querySummary": {"classification": "NONE"},
+                "toolPayloadSummary": {"classification": "NONE"},
+            }),
+        }
+        for name, attempt in cases.items():
+            with self.subTest(name=name):
+                result, status = self.helper.native_adapter_gate(
+                    self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
+                )
+                self.assertEqual((result["result"], status), ("FAIL", 1))
+
+    def test_bypass_attempts_reject_secret_markers_in_all_user_controlled_string_fields(self):
+        cases = (
+            ("attemptId", "Authorization", "issue-10", "gate-1"),
+            ("eventId", "Cookie", "issue-10", "gate-1"),
+            ("hostId", "Authorization", "issue-10", "gate-1"),
+            ("reasonCode", "Cookie", "issue-10", "gate-1"),
+            ("taskKey", "Authorization", "Authorization", "gate-1"),
+            ("gateInvocationId", "Cookie", "issue-10", "Cookie"),
+            ("runId", "Authorization: Bearer opaque", "issue-10", "gate-1"),
+            ("deduplicationKey", "Cookie: session=opaque", "issue-10", "gate-1"),
+        )
+        for field, value, task_key, gate_invocation_id in cases:
+            with self.subTest(field=field):
+                attempt = self.valid_attempt(**{field: value})
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    task_key,
+                    gate_invocation_id,
+                    bypass_attempts_ref=self.write_attempts([attempt]),
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "FAIL", "NATIVE_BYPASS_CONTRACT_INVALID", 1,
+                ))
+
+        attempt = self.valid_attempt(summary={
+            "target": {
+                "classification": "REPOSITORY_PATH",
+                "repositoryPath": "docs/Cookie/session.txt",
+            },
+            "argumentSummary": {
+                "classification": "STRUCTURAL_PLACEHOLDERS",
+                "count": 1,
+                "sha256": "a" * 64,
+            },
+            "querySummary": {"classification": "NONE"},
+            "toolPayloadSummary": {"classification": "NONE"},
+        })
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
+        )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "FAIL", "NATIVE_BYPASS_CONTRACT_INVALID", 1,
+        ))
+
+    def test_bypass_summary_rejects_secret_bearing_strings(self):
+        secret_summaries = (
+            "Authorization: Bearer abc",
+            "Cookie: session=abc",
+            "cookie=session=abc",
+            "cookies=session=abc",
+            "password=abc",
+            "password: abc",
+            "secret: abc",
+            "token: abc",
+            "api_key: abc",
+            "credential: abc",
+            "Authorization: Basic dXNlcjpwYXNz",
+            "Basic dXNlcjpwYXNz",
+            "Basic YWxpY2U6cA==",
+            "Basic YWxpY2U6cA",
+            "Bearer ya29.a0AfH6SMB-credential",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature",
+            "-----BEGIN PRIVATE KEY-----",
+            "raw request body: {\"password\": \"abc\"}",
+            "request body: {\"password\": \"abc\"}",
+            "raw auth: alice:abc",
+            "raw authorization value",
+            "raw cookie value",
+            "raw cookies value",
+            "raw body: {\"password\": \"abc\"}",
+            "raw bodies: [{\"password\": \"abc\"}]",
+            "raw payload: token=abc",
+            "raw credentials: alice:abc",
+            "raw query: key=value",
+            "raw argv: --flag value",
+            "raw env: NAME=value",
+        )
+        for summary in secret_summaries:
+            with self.subTest(summary=summary):
+                self.assertTrue(self.helper.native_summary_has_secret(summary))
+
+    def test_bypass_summary_rejects_review_raw_content_label_examples(self):
+        review_examples = (
+            '{"authorization":"Bearer opaque"}',
+            '"authorization" : "Bearer opaque"',
+            '"cookie" = "session=opaque"',
+            '"cookies"\t"session=opaque"',
+            "authorization\topaque",
+            "cookie opaque",
+            "cookies\nopaque",
+        )
+
+        for summary in review_examples:
+            with self.subTest(summary=summary):
+                self.assertTrue(self.helper.native_summary_has_secret(summary))
+
+    def test_bypass_summary_rejects_any_authorization_header_marker_or_assignment(self):
+        for summary in (
+            "Authorization: Digest abc123",
+            "authorization: Basic",
+            "AUTHORIZATION: Bearer",
+            "Authorization: Arbitrary opaque-value",
+            "authorization=opaque-value",
+            "Authorization = bearer token documentation",
+        ):
+            with self.subTest(summary=summary):
+                self.assertTrue(self.helper.native_summary_has_secret(summary))
+
+    def test_bypass_summary_rejects_bearer_credentials_regardless_of_trailing_non_whitespace(self):
+        for suffix in ("", ".", ")", "]", ":", "!", "?", ",", ";", '"', "'", "}", "/"):
+            with self.subTest(suffix=suffix):
+                self.assertTrue(self.helper.native_summary_has_secret(f"Bearer opaqueToken{suffix}"))
+
+    def test_bypass_summary_rejects_bearer_credentials_with_regex_whitespace(self):
+        for separator in ("\u00a0", "\n", "\r\n"):
+            with self.subTest(separator=repr(separator)):
+                self.assertTrue(self.helper.native_summary_has_secret(f"Bearer{separator}opaqueToken"))
+
+    def test_bypass_summary_allows_bearer_token_documentation(self):
+        self.assertFalse(self.helper.native_summary_has_secret("bearer token documentation"))
+        self.assertTrue(self.helper.native_summary_has_secret("bearer token documentation extra"))
+        self.assertTrue(self.helper.native_summary_has_secret("Authorization: bearer token documentation"))
+
+    def test_bypass_summary_allows_only_normalized_ascii_bearer_token_documentation(self):
+        self.assertFalse(self.helper.native_summary_has_secret("Bearer Token Documentation"))
+        for summary in ("bearer\ntoken documentation", "bearer\u00a0token documentation"):
+            with self.subTest(summary=repr(summary)):
+                self.assertTrue(self.helper.native_summary_has_secret(summary))
+
+    def test_bypass_summary_rejects_basic_credentials_regardless_of_trailing_non_whitespace(self):
+        for punctuation in (".", ")", "]", ":", "!", "?", ",", ";", '"', "'", "}", "/"):
+            for credential in ("dXNlcjpwYXNz", "YWxpY2U6cA=="):
+                with self.subTest(punctuation=punctuation, credential=credential):
+                    self.assertTrue(self.helper.native_summary_has_secret(f"Basic {credential}{punctuation}"))
+
+        for credential in ("dXNlcjpwYXNz", "YWxpY2U6cA=="):
+            with self.subTest(credential=credential):
+                self.assertTrue(self.helper.native_summary_has_secret(f"Basic {credential}"))
+                self.assertTrue(self.helper.native_summary_has_secret(f"Basic {credential} followed"))
+
+    def test_bypass_summary_rejects_basic_credentials_with_regex_whitespace(self):
+        for separator in ("\n", "\r\n"):
+            with self.subTest(separator=repr(separator)):
+                self.assertTrue(self.helper.native_summary_has_secret(f"Basic{separator}dXNlcjpwYXNz"))
+
+    def test_bypass_summary_allows_closed_non_secret_classifications(self):
+        attempt = self.valid_attempt(
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            summary={
+                "target": {
+                    "classification": "EXTERNAL_TARGET",
+                    "redactedCategory": "OTHER_EXTERNAL_TARGET",
+                    "sha256": "d" * 64,
+                },
+                "argumentSummary": {
+                    "classification": "ALLOWLISTED_LITERALS",
+                    "count": 2,
+                    "sha256": "a" * 64,
+                },
+                "querySummary": {
+                    "classification": "STRUCTURED_QUERY",
+                    "sha256": "b" * 64,
+                },
+                "toolPayloadSummary": {
+                    "classification": "OPAQUE_PAYLOAD",
+                    "sha256": "c" * 64,
+                },
+            },
+        )
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+        self.assertEqual(result["reason"], "NATIVE_BYPASS_RESOLUTION_INVALID")
+
+    def test_bypass_resolution_requires_prior_detection_and_blocks_without_signed_snapshot(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        current_resolved = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            gateInvocationId="gate-1",
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+        )
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, current_resolved]),
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_bypass_detection_from_the_same_gate_invocation_remains_unresolved(self):
+        same_invocation_detection = self.valid_attempt(
+            gateInvocationId="gate-1",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        current_resolution = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            gateInvocationId="gate-1",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T01:00:00Z",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+        )
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([same_invocation_detection, current_resolution]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_BYPASS_UNRESOLVED", 2,
+        ))
+
+    def test_mixed_resolution_times_in_one_deduplication_group_are_invalid(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        valid_resolution = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T01:01:00Z",
+            resolvedAt="2026-07-13T01:01:01Z",
+            resolutionReason="REMEDIATED",
+        )
+        invalid_resolution = self.valid_attempt(
+            attemptId="attempt-3",
+            eventId="event-3",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T00:58:00Z",
+            resolvedAt="2026-07-13T00:58:01Z",
+            resolutionReason="REMEDIATED",
+        )
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, valid_resolution, invalid_resolution]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", 2,
+        ))
+
+    def test_later_unresolved_detection_wins_over_prior_resolution(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        resolved = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T01:01:00Z",
+            resolvedAt="2026-07-13T01:01:01Z",
+            resolutionReason="REMEDIATED",
+        )
+        later_detected = self.valid_attempt(
+            attemptId="attempt-3",
+            eventId="event-3",
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T01:02:00Z",
+        )
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, resolved, later_detected]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_BYPASS_UNRESOLVED", 2,
+        ))
+
+    def test_current_detection_wins_over_resolution_in_the_same_deduplication_group(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        current_resolved = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+        )
+        current_detected = self.valid_attempt(
+            attemptId="attempt-3",
+            eventId="event-3",
+            observedAt="2026-07-13T01:02:00Z",
+        )
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, current_resolved, current_detected]),
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+        self.assertEqual(result["reason"], "NATIVE_BYPASS_UNRESOLVED")
+
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([current_resolved]),
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([prior_detected]),
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_current_detection_remains_unresolved_when_current_resolution_follows_it(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:58:00Z",
+        )
+        current_detected = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        current_resolved = self.valid_attempt(
+            attemptId="attempt-3",
+            eventId="event-3",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T01:00:00Z",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+        )
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, current_detected, current_resolved]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_BYPASS_UNRESOLVED", 2,
+        ))
+
+    def test_repeated_events_are_idempotent_and_dedup_groups_preserve_every_event(self):
+        resolved = self.valid_attempt(
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+        )
+        duplicate = dict(resolved)
+        second = dict(resolved)
+        second.update({"attemptId": "attempt-2", "eventId": "event-2"})
+        attempts_ref = self.write_attempts([resolved, duplicate, second])
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=attempts_ref,
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+        self.assertEqual(len(result["data"]["bypassAttemptRefs"]), 2)
+        attempts = json.loads((self.root / attempts_ref).read_text(encoding="utf-8"))["attempts"]
+        self.assertEqual([attempt["eventId"] for attempt in attempts], ["event-1", "event-1", "event-2"])
+        self.assertEqual({attempt["deduplicationKey"] for attempt in attempts}, {"dedupe-1"})
+
+    def test_command_file_read_intent_retains_command_surface(self):
+        attempt = self.valid_attempt(
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            commandIntent="FILE_READ",
+            surface="COMMAND",
+            operationType="FILE_READ",
+        )
+        attempts_ref = self.write_attempts([attempt])
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=attempts_ref,
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+        evaluated = json.loads((self.root / attempts_ref).read_text(encoding="utf-8"))["attempts"][0]
+        self.assertEqual((evaluated["surface"], evaluated["commandIntent"]), ("COMMAND", "FILE_READ"))
+
+    def test_supported_host_fixture_states_are_completion_blocking_and_never_pass(self):
+        policy_ref = self.write_supported_policy()
+        states = {
+            "missing": None,
+            "stale": {"fresh": False, "surfaces": self.supported_surfaces()},
+            "bad-signature": {"signatureValid": False, "surfaces": self.supported_surfaces()},
+            "callback-failure": {"signatureValid": True, "callbackStatus": "FAILED", "surfaces": self.supported_surfaces()},
+            "audit-only": {"signatureValid": True, "callbackStatus": "OK", "fresh": True, "surfaces": [
+                {"surface": surface, "status": "AUDIT_ONLY", "reasonCode": "AUDIT_ONLY_FIXTURE"}
+                for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+            ]},
+            "enforced-fixture": {"signatureValid": True, "callbackStatus": "OK", "fresh": True, "surfaces": [
+                {"surface": surface, "status": "ENFORCED", "reasonCode": "FIXTURE_ONLY"}
+                for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+            ]},
+        }
+        for name, snapshot in states.items():
+            with self.subTest(name=name):
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    "gate-1",
+                    self.write_temp_snapshot(snapshot) if snapshot is not None else None,
+                    policy_ref=policy_ref,
+                )
+                self.assertIn((result["result"], status), (("NOT_CONFIGURED", 3), ("BLOCKED", 2)))
+                self.assertNotEqual(result["result"], "PASS")
+
+    def test_prerelease_host_version_does_not_satisfy_release_minimum(self):
+        policy = self.supported_host_policy()
+        policy["currentHost"]["hostVersion"] = "1.0.0-beta"
+        policy["supportedHosts"][0]["hostId"] = "codex-desktop"
+        policy["supportedHosts"][0]["minimumHostVersion"] = "1.0.0"
+        policy_ref = self.write_fixture("prerelease-native-runtime-adapters.json", policy)
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", policy_ref=policy_ref,
+        )
+        self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
+
+    def test_native_semver_comparator_rejects_malformed_inputs_and_accepts_prerelease_build(self):
+        self.assertEqual(
+            self.helper.native_semver_key("1.0.0-rc.1+build.5"),
+            ((1, 0, 0), 0, ((1, "rc"), (0, 1))),
+        )
+        for version in ("01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-", "1.0.0\n"):
+            with self.subTest(version=version):
+                with self.assertRaises(ValueError):
+                    self.helper.native_semver_key(version)
+
+    def test_malformed_policy_versions_block_before_not_configured_evaluation(self):
+        invalid_versions = ("01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-")
+        for path in (("currentHost", "hostVersion"), ("supportedHosts", 0, "minimumHostVersion")):
+            for version in invalid_versions:
+                with self.subTest(path=path, version=version):
+                    policy = self.supported_host_policy()
+                    policy["supportedHosts"][0]["hostId"] = policy["currentHost"]["hostId"]
+                    target = policy
+                    for segment in path[:-1]:
+                        target = target[segment]
+                    target[path[-1]] = version
+                    result, status = self.helper.native_adapter_gate(
+                        self.root,
+                        "issue-10",
+                        "gate-1",
+                        policy_ref=self.write_fixture("malformed-native-runtime-adapters.json", policy),
+                    )
+                    self.assertEqual((result["result"], result["reason"], status), (
+                        "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
+                    ))
+
+    def test_native_adapter_gate_shell_wrapper_is_static_and_fixed_argument(self):
+        shell = REPOSITORY_ROOT / "scripts" / "ai" / "native-adapter-gate.sh"
+        bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        if not bash.is_file():
+            bash = Path("bash")
+        completed = subprocess.run(
+            [
+                str(bash), str(shell), "--task-key", "issue-10", "--gate-invocation-id", "gate-1", "--output", "-",
+            ],
+            cwd=str(REPOSITORY_ROOT),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 6, completed.stderr + completed.stdout)
+        result = json.loads(completed.stdout)
+        self.assertEqual((result["operation"], result["result"]), ("NATIVE_ADAPTER_GATE", "UNSUPPORTED"))
+        self.assertFalse((REPOSITORY_ROOT / ".ai-runs").exists())
+
+    def test_native_adapter_shell_fallback_envelopes_match_result_schema(self):
+        shell = (REPOSITORY_ROOT / "scripts/ai/native-adapter-gate.sh").read_text(encoding="utf-8")
+        payloads = re.findall(r"^\s*printf '%s\\n' '(\{.*\})'$", shell, flags=re.MULTILINE)
+        self.assertEqual(len(payloads), 2)
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                self.assert_valid("native-adapter-result", json.loads(payload))
+
+    def test_native_adapter_shell_wrapper_anchors_repository_from_another_directory(self):
+        shell = REPOSITORY_ROOT / "scripts" / "ai" / "native-adapter-gate.sh"
+        bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        if not bash.is_file():
+            bash = Path("bash")
+        other_repository = self.root / "other-repository"
+        other_repository.mkdir()
+
+        completed = subprocess.run(
+            [
+                str(bash), str(shell), "--task-key", "issue-10", "--gate-invocation-id", "gate-1", "--output", "-",
+            ],
+            cwd=str(other_repository),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 6, completed.stderr + completed.stdout)
+        result = json.loads(completed.stdout)
+        self.assertEqual((result["operation"], result["result"]), ("NATIVE_ADAPTER_GATE", "UNSUPPORTED"))
+        self.assertFalse((other_repository / ".ai-runs").exists())
+
+    def test_native_adapter_cli_semantic_arguments_and_invalid_output_are_structured(self):
+        invalid_cases = (
+            ("--repository-root", ""),
+            ("--task-key", ""),
+            ("--gate-invocation-id", ""),
+            ("--runtime-snapshot", ""),
+            ("--bypass-attempts", ""),
+            ("--output", ""),
+            ("--output", "nested/result.json"),
+        )
+        for option, value in invalid_cases:
+            with self.subTest(option=option):
+                arguments = [
+                    "--repository-root", str(REPOSITORY_ROOT),
+                    "--task-key", "issue-10",
+                    "--gate-invocation-id", "gate-1",
+                    "--output", "-",
+                ]
+                if option in arguments:
+                    arguments[arguments.index(option) + 1] = value
+                else:
+                    arguments.extend([option, value])
+                completed = self.run_native_adapter_cli_subprocess(*arguments)
+                self.assertEqual(completed.returncode, 2, completed.stderr + completed.stdout)
+                self.assertNotIn("Traceback", completed.stderr)
+                result = json.loads(completed.stdout)
+                expected_reason = (
+                    "NATIVE_ADAPTER_OUTPUT_PATH_INVALID"
+                    if option == "--output" else "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS"
+                )
+                self.assertEqual((result["result"], result["reason"]), ("BLOCKED", expected_reason))
+
+    def test_native_adapter_cli_rejects_empty_repository_root_before_resolving_from_repo_cwd(self):
+        completed = self.run_native_adapter_cli_subprocess(
+            "--repository-root", "",
+            "--task-key", "issue-10",
+            "--gate-invocation-id", "gate-1",
+            "--output", "-",
+        )
+
+        self.assertEqual(completed.returncode, 2, completed.stderr + completed.stdout)
+        self.assertNotIn("Traceback", completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual((result["result"], result["reason"]), (
+            "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+        ))
+        self.assert_valid("native-adapter-result", result)
+
+    def test_bypass_reference_faults_block_before_loaded_record_validation(self):
+        invalid_json_ref = "ai/fixtures/invalid-bypass-attempts.json"
+        (self.root / invalid_json_ref).write_text("{", encoding="utf-8")
+        unreadable_ref = "ai/fixtures/unreadable-bypass-attempts.json"
+        (self.root / unreadable_ref).mkdir()
+        references = ("", "ai/fixtures/missing-bypass-attempts.json", "../outside.json", invalid_json_ref, unreadable_ref)
+
+        for reference in references:
+            with self.subTest(reference=reference):
+                result, status = self.helper.native_adapter_gate(
+                    self.root, "issue-10", "gate-1", bypass_attempts_ref=reference,
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "NATIVE_BYPASS_REFERENCE_INVALID", 2,
+                ))
+
+    def test_malformed_loaded_bypass_records_remain_contract_failures(self):
+        result, status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([{"eventId": "missing-fields"}]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "FAIL", "NATIVE_BYPASS_CONTRACT_INVALID", 1,
+        ))
+
+    def test_bypass_lifecycle_compares_equivalent_fractional_second_instants_as_equal(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T01:00:00.100Z",
+        )
+        current_resolved = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T01:00:00.1Z",
+            resolvedAt="2026-07-13T01:00:01Z",
+            resolutionReason="REMEDIATED",
+        )
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, current_resolved]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", 2,
+        ))
+
+    def test_native_adapter_shell_wrapper_preserves_explicit_empty_optional_arguments(self):
+        shell = REPOSITORY_ROOT / "scripts" / "ai" / "native-adapter-gate.sh"
+        bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        if not bash.is_file():
+            bash = Path("bash")
+        for option in ("--runtime-snapshot", "--bypass-attempts"):
+            with self.subTest(option=option):
+                completed = subprocess.run(
+                    [
+                        str(bash), str(shell), "--task-key", "issue-10", "--gate-invocation-id", "gate-1",
+                        option, "", "--output", "-",
+                    ],
+                    cwd=str(REPOSITORY_ROOT),
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 2, completed.stderr + completed.stdout)
+                result = json.loads(completed.stdout)
+                self.assertEqual((result["result"], result["reason"]), (
+                    "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+                ))
 
 
 if __name__ == "__main__":

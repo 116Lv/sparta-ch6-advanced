@@ -10,6 +10,8 @@ Product commands remain NOT RUN unless a later approved gateway execution explic
 
 Repository scripts cannot intercept every host file read, search, or external tool call before Phase 3. Phase 2A can record policy, cache keys, and review evidence; it cannot prevent all direct shell, editor, MCP, browser, or host-runtime actions.
 
+Phase 3A declares the current host `UNSUPPORTED` for native `COMMAND`, `FILE_READ`, `SEARCH`, and `TOOL_CALL` interception. The internal native adapter check reports that state to Phase 2C as `NOT_APPLICABLE` with `HOST_UNSUPPORTED`; it does not turn repository policy into host-wide enforcement.
+
 ## Limits
 
 - Prefer `rg` or targeted file reads over broad tree scans.
@@ -21,3 +23,5 @@ Repository scripts cannot intercept every host file read, search, or external to
 ## Completion Impact
 
 Detected bypasses and unexplained repeated discovery can block later review or completion claims. Phase 2A itself does not claim host-wide enforcement.
+
+`scripts/ai/command-runner.sh` is the only supported product-command path. Native adapters may observe, classify, or block host operations but never execute product commands, and verification accepts no precomputed adapter result. Supported-host adapter faults remain completion-blocking. CI installation, remote-runner guarantees, durable native evidence, and cross-host parity are deferred to Phase 3B.

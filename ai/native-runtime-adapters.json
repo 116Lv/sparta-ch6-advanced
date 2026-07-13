@@ -1,0 +1,42 @@
+{
+  "$schema": "ai/schemas/native-runtime-adapters.schema.json",
+  "$id": "ai/native-runtime-adapters.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-13T01:00:00Z",
+  "supportedHosts": [],
+  "currentHost": {
+    "hostId": "codex-desktop",
+    "hostVersion": null,
+    "versionProvenance": "UNPROBED",
+    "probeRefs": [
+      "docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md"
+    ],
+    "surfaces": [
+      {
+        "surface": "COMMAND",
+        "status": "UNSUPPORTED",
+        "reasonCode": "HOST_NOT_SUPPORTED"
+      },
+      {
+        "surface": "FILE_READ",
+        "status": "UNSUPPORTED",
+        "reasonCode": "HOST_NOT_SUPPORTED"
+      },
+      {
+        "surface": "SEARCH",
+        "status": "UNSUPPORTED",
+        "reasonCode": "HOST_NOT_SUPPORTED"
+      },
+      {
+        "surface": "TOOL_CALL",
+        "status": "UNSUPPORTED",
+        "reasonCode": "HOST_NOT_SUPPORTED"
+      }
+    ]
+  },
+  "completionPolicy": {
+    "phase2cCheckId": "native-runtime-adapter",
+    "unsupportedLeafResult": "NOT_APPLICABLE",
+    "supportedHostFailureResult": "BLOCKED"
+  }
+}
