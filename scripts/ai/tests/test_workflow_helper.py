@@ -5720,6 +5720,38 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual(verified["reason"], "ARTIFACT_DIGEST_MISMATCH")
         self.assertEqual(before, after)
 
+    def test_verify_finalized_rejects_tampered_run_json(self):
+        self.publish_command_result(exit_code=0)
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            result, status = self.helper.prepare_done_claim(
+                self.root, "run-1", self.write_claim(self.done_claim()),
+            )
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        path = self.root / ".ai-runs" / "run-1" / "run.json"
+        path.chmod(0o600)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["taskKey"] = "other-task"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_verify_finalized_rejects_stale_run_result(self):
+        self.publish_command_result(exit_code=0)
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            result, status = self.helper.prepare_done_claim(
+                self.root, "run-1", self.write_claim(self.done_claim()),
+            )
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        path = self.root / ".ai-runs" / "run-1" / "run.json"
+        path.chmod(0o600)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["result"] = "BLOCKED"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
     def test_evidence_free_pass_claim_is_blocked(self):
         claim = self.done_claim(checks=[])
         claim["evidenceRefs"] = []

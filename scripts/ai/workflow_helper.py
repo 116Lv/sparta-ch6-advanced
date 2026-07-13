@@ -5013,6 +5013,36 @@ def final_run_result_for(gate_result):
     return gate_result
 
 
+def validate_final_run_projection(run_index, claim, gate, manifest):
+    expected_evidence = [
+        f".ai-runs/{run_index['runId']}/done-claim.json",
+        f".ai-runs/{run_index['runId']}/artifact-manifest.json",
+        f".ai-runs/{run_index['runId']}/gate-results/pre-done-claim.json",
+    ]
+
+    def manifest_references(kind):
+        return sorted(
+            artifact["path"] for artifact in manifest["artifacts"]
+            if artifact["kind"] == kind
+        )
+
+    mismatched = (
+        run_index["runId"] != claim["runId"]
+        or run_index["taskKey"] != claim["taskKey"]
+        or run_index["result"] != final_run_result_for(gate["result"])
+        or run_index["evidenceRefs"] != expected_evidence
+        or sorted(run_index["commandResultRefs"]) != manifest_references("COMMAND_RESULT")
+        or sorted(run_index["approvalRefs"]) != manifest_references("APPROVAL")
+        or sorted(run_index["policyViolationRefs"]) != manifest_references("POLICY_VIOLATION")
+        or gate.get("data") is not None and gate["data"]["manifestRef"] != manifest["$id"]
+    )
+    if mismatched:
+        raise InvalidStateError([validation_error(
+            "FINAL_RUN_PROJECTION_MISMATCH",
+            message="run.json does not match claim, gate, and manifest",
+        )])
+
+
 def publish_finalized_run(root, session, gate_result, reason):
     run_id = session["runId"]
     ended_at = utc_now()
@@ -5124,6 +5154,17 @@ def verify_finalized_run(root, run_id):
             actual.add(path.relative_to(root).as_posix())
         if set(manifest_paths) != actual:
             raise InvalidStateError([validation_error("FINALIZED_DIRECTORY_CLOSURE_MISMATCH", message="finalized directory closure mismatches manifest")])
+        _claim_path, claim = read_exact_run_json(
+            root, run_id, ("done-claim.json",), "ai/schemas/done-claim.schema.json",
+        )
+        if claim is None:
+            raise InvalidStateError([validation_error("FINAL_DONE_CLAIM_MISSING", message="final done claim is missing")])
+        _gate_path, gate = read_exact_run_json(
+            root, run_id, ("gate-results", "pre-done-claim.json"), "ai/schemas/gateway-result.schema.json",
+        )
+        if gate is None:
+            raise InvalidStateError([validation_error("FINAL_GATE_RESULT_MISSING", message="final gate result is missing")])
+        validate_final_run_projection(run_index, claim, gate, manifest)
         data = {
             "runId": run_id,
             "taskKey": run_index["taskKey"],
