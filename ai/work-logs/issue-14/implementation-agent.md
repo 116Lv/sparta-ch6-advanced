@@ -353,3 +353,85 @@ Ready to begin global Task 1 (Phase 1B-3 local Task 1).
   seed, deploy, infrastructure, push, PR, merge, Issue modification/closure,
   registry `VERIFIED`, phase-complete, native/CI enforcement, or unqualified
   overall `DONE` action or claim was made.
+
+## Task 5 Update - Phase 2 Task 2 (2026-07-14)
+
+### Routing And Handoff
+
+- `tracking_status: issue_backed`; Issue #14:
+  `https://github.com/116Lv/sparta-ch6-advanced/issues/14`.
+- `owning_feature: none`; this is repo-wide Phase 2C/3A verification-gate
+  infrastructure routed through `AGENTS.md`, `ai/document-routing.md`,
+  `ai/subagent-workflow.md`, `ai/github-issue-planning.md`,
+  `ai/verification-gates.md`, `ai/verification-policy.json`, and the exact Task
+  5 brief.
+- `skill_ids`: `verification-runner`, `failure-triage`, `docs-sync`;
+  `handoff_state_ref`: `ai/agent-handoff.json`; reusable context:
+  `ai/workflow-cache.json`, `ai/verification-policy.json`, and
+  `ai/native-runtime-adapters.json`; `github_reconciliation_status` is
+  `issue_backed`.
+
+### Changed Files And Decisions
+
+- `scripts/ai/workflow_helper.py`: removed policy-only PASS defaults, added the
+  three-input leaf mapper, preserved FAIL-over-BLOCKED aggregation, applied
+  canonical `notApplicableFor` authority to caller leaves, preserved the
+  internal `HOST_UNSUPPORTED` repository-only exception, and emitted verified
+  external/native leaf identities.
+- `scripts/ai/tests/test_workflow_helper.py`: added isolated required-N/A,
+  optional-FAIL, absent-static-leaf, and external/native identity regressions.
+- `ai/schemas/verification-gate-result.schema.json`: closed each check output
+  over nullable leaf reference/digest/producer/commit/policy identity fields.
+- `ai/verification-gates.md`: documented fail-closed defaults, applicability
+  authority, optional FAIL visibility, precedence, and identity semantics.
+- Verified external checks expose their bound evidence reference and leaf
+  identity. Missing/policy-derived checks use null identity fields rather than
+  implying verified evidence. The native leaf uses
+  `ai/native-adapter-result.json`, a SHA-256 of its canonical in-process result,
+  the canonical producer, checked-out commit, and canonical policy digest.
+- Task 4's evidence schema/digest validation and external native-forgery
+  precedence were not weakened. Cache identity and exact skill/handoff sets
+  remain Task 6 scope.
+
+### Exact TDD And Verification Evidence
+
+- Preliminary isolation command: the two brief-specified tests with
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest ... -v` exited `1`, but
+  required N/A was masked by another missing required leaf. The test helper was
+  corrected to provide bound PASS companions before accepting RED evidence.
+- Exact RED command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_required_caller_not_applicable_is_blocked scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_optional_fail_remains_visible -v`
+- Exact RED result: expected exit `1`; both tests failed for the intended
+  mapping reasons. Required caller N/A returned `PASS / 0` instead of
+  `BLOCKED / 2`; optional FAIL returned `PASS / 0` instead of `FAIL / 1`.
+- First focused GREEN result: the same two-test command exited `0`; 2 tests
+  passed in `1.742s`.
+- Second RED command targeted missing static evidence and verified identity;
+  it exited `1`. The missing required static leaf returned `PASS / 0`, and the
+  identity test raised `KeyError: 'leafResultRef'`.
+- Final focused command covered all four Task 5 regressions; exit `0`; 4 tests
+  passed in `3.437s`.
+- Final surrounding command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -q`
+- Final surrounding result: exit `0`; 109 tests passed in `44.009s` (21 Phase
+  2C and 88 Phase 3A). No fixture migration or compatibility weakening was
+  needed.
+- Phase 1B-3 integrity command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests -q`
+- Phase 1B-3 result: exit `0`; 17 tests passed in `24.550s`.
+- `git diff --check` and staged `git diff --cached --check` exited `0`; only
+  line-ending conversion warnings were emitted. Recursive `__pycache__` search
+  returned no paths and repository `.ai-runs` was absent.
+
+### Commit And Recovery State
+
+- Implementation/schema/tests/docs commit: `b704018`
+  (`fix(ai): fail closed phase 2 aggregation`).
+- Detailed ignored report: `.superpowers/sdd/task-5-phase2-report.md`.
+- This dated role-log append is committed separately. It records implementation
+  evidence only; independent review and orchestration remain with the parent.
+- Gradle, build/product tests, server, Docker, HTTP/API, database, migration,
+  seed, deploy, infrastructure, real `.ai-runs`, push, PR, merge, and GitHub
+  Issue state commands were NOT RUN. No registry `VERIFIED`, phase completion,
+  Issue closure, native/CI enforcement, or unqualified overall `DONE` claim is
+  made.
