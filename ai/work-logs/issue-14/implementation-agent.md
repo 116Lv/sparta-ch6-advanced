@@ -615,3 +615,45 @@ line-ending warnings were emitted.
   Issue mutation/closure were NOT RUN. No registry `VERIFIED`, phase-state,
   native/CI enforcement, closure, or unqualified overall completion claim is
   made.
+
+### Task 6 Review Fix - Policy Single-Read And Stale Precedence (2026-07-14)
+
+- Independent review found two Important defects and one directly related Minor
+  schema defect: verification policy validation and hashing used separate file
+  opens; early `UNCERTAIN` returns masked later deterministic `STALE` findings;
+  and the workflow-cache SHA-256 pattern accepted a terminal newline.
+- `scripts/ai/workflow_helper.py` now reads canonical verification policy once
+  into bounded immutable bytes, strict-parses and schema-validates that object,
+  hashes the same bytes, and derives producer mappings from the same object.
+  Cache findings accumulate across every safely checkable input. Any proven
+  commit/policy/producer/evidence mismatch or expiry yields `STALE`; otherwise
+  missing/unmapped task, classification, environment, path, or current input is
+  `UNCERTAIN`. Unsafe or unavailable evidence paths are recorded without a
+  digest open, while independent safe evidence and expiry checks continue.
+- `ai/schemas/workflow-cache.schema.json` now uses the portable exact-end guard
+  for SHA-256. `scripts/ai/tests/test_workflow_helper.py` covers the policy
+  replacement race, compound precedence, the purely unmapped control, and the
+  terminal-newline mutation. Exact skill and handoff sets and the no-canonical-
+  fake-decision boundary are unchanged.
+
+Exact review-fix RED command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2AContextCacheTests.test_verification_decision_cache_schema_requires_complete_identity scripts.ai.tests.test_workflow_helper.Phase2ARepoIntakeTests.test_verification_cache_stale_findings_precede_compound_uncertainty scripts.ai.tests.test_workflow_helper.Phase2ARepoIntakeTests.test_verification_cache_policy_is_parsed_hashed_and_mapped_from_one_read -v`
+exited `1`; 3 tests ran in `1.522s` with 5 intended failures: policy was
+opened twice, all three compound cases returned `UNCERTAIN`, and the newline
+digest validated.
+
+Focused GREEN used the same command and exited `0`; 3 tests passed in `1.520s`.
+Phase 2A/2B focus exited `0`; 19 tests passed in `7.380s`. The required Phase
+2A/2B/2C/3A command exited `0`; 130 tests passed in `52.915s`. The separate
+`Phase1B3DoneClaimGateTests -v` command exited `0`; 17 tests passed in
+`23.422s`. `git diff --check` and staged `git diff --cached --check` exited `0`
+with only line-ending warnings; `.ai-runs` and recursive `__pycache__` remained
+absent.
+
+- Review-fix implementation/schema/tests commit: `cf77ce1`
+  (`fix(ai): close phase 2 cache review gaps`). This evidence append is
+  committed separately.
+- Summary, index, reviewer log, canonical fake decision state, product,
+  infrastructure, and GitHub Issue state were not edited. Prohibited commands
+  and claims remain NOT RUN/not made as recorded above; independent rereview
+  remains with the parent.
