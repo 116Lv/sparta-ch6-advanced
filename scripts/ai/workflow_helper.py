@@ -5376,8 +5376,11 @@ def invalid_cli_result(operation):
         "post-command": ("POST_COMMAND", "INVALID_POST_COMMAND_ARGUMENTS"),
         "done-claim-prepare": ("PRE_DONE_CLAIM", "INVALID_DONE_CLAIM_ARGUMENTS"),
         "verify-finalized": ("PRE_DONE_CLAIM", "INVALID_VERIFY_FINALIZED_ARGUMENTS"),
+        "native-adapter-gate": ("NATIVE_ADAPTER_GATE", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS"),
     }
     gateway_operation, reason = profiles[operation]
+    if operation == "native-adapter-gate":
+        return native_adapter_gate_result("BLOCKED", reason, native_adapter_fallback_data()), 2
     return gateway_result("POLICY_VIOLATION", reason, operation=gateway_operation), 4
 
 

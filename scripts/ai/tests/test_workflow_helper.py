@@ -6480,6 +6480,63 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     def assert_invalid(self, schema_name, instance):
         self.assertNotEqual(list(self.validator(schema_name).iter_errors(instance)), [])
 
+    def test_invalid_native_adapter_cli_result_is_schema_valid_and_fail_closed(self):
+        result, status = self.helper.invalid_cli_result("native-adapter-gate")
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS", 2,
+        ))
+        self.assert_valid("native-adapter-result", result)
+
+    def run_native_adapter_cli_subprocess(self, *arguments):
+        return subprocess.run(
+            [
+                sys.executable,
+                str(REPOSITORY_ROOT / "scripts" / "ai" / "workflow_helper.py"),
+                "native-adapter-gate",
+                *arguments,
+            ],
+            cwd=str(REPOSITORY_ROOT),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    def test_native_adapter_cli_missing_required_argument_returns_structured_result(self):
+        completed = self.run_native_adapter_cli_subprocess(
+            "--task-key", "issue-10",
+            "--gate-invocation-id", "gate-1",
+            "--output", "-",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertNotIn("Traceback", completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual((result["result"], result["reason"]), (
+            "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+        ))
+        self.assert_valid("native-adapter-result", result)
+
+    def test_native_adapter_cli_unknown_option_returns_structured_result(self):
+        completed = self.run_native_adapter_cli_subprocess(
+            "--repository-root", str(REPOSITORY_ROOT),
+            "--task-key", "issue-10",
+            "--gate-invocation-id", "gate-1",
+            "--output", "-",
+            "--unknown-option",
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertNotIn("Traceback", completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual((result["result"], result["reason"]), (
+            "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+        ))
+        self.assert_valid("native-adapter-result", result)
+
     def supported_host_policy(self):
         return {
             "$schema": "ai/schemas/native-runtime-adapters.schema.json",
