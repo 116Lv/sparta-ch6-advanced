@@ -7407,7 +7407,7 @@ def native_adapter_phase2c_leaf(root, task_key, gate_invocation_id, runtime_snap
 
 
 
-CI_GATE_CHECK_ID = "phase-3b-ci-gates"
+CI_GATE_CHECK_ID = "phase-3b-native-enforcement"
 
 
 def ci_evidence_gate_result(result, reason, data):
@@ -7444,13 +7444,24 @@ def ci_evidence_gate_exit(result):
 
 def ci_evidence_gate_data(status, task_key, gate_invocation_id):
     current_ci = status["currentCi"]
+    enforcement = current_ci["nativeEnforcement"]
+    enforcement_status = enforcement["configurationStatus"]
+    installation_status = {
+        "VERIFIED": "INSTALLED",
+        "CONFIGURED_UNVERIFIED": "NOT_CONFIGURED",
+        "NOT_CONFIGURED": "NOT_CONFIGURED",
+        "BLOCKED": "BLOCKED",
+    }[enforcement_status]
     return {
         "taskKey": task_key,
         "gateInvocationId": gate_invocation_id,
-        "requiredCheck": current_ci["requiredCheck"],
+        "requiredCheck": enforcement["checkName"],
         "provider": current_ci["provider"],
-        "workflowRefs": current_ci["workflowRefs"],
-        "nativeAdapterInstallation": current_ci["nativeAdapterInstallation"],
+        "workflowRefs": [current_ci["repositoryContract"]["workflowRef"]],
+        "nativeAdapterInstallation": {
+            "status": installation_status,
+            "reasonCode": enforcement["reasonCode"],
+        },
         "durableEvidence": current_ci["durableEvidence"],
         "remoteRunner": current_ci["remoteRunner"],
         "nativeAdapterLeaf": status["phase2cLink"],
@@ -7479,9 +7490,10 @@ def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-ca
             return ci_evidence_gate_result("BLOCKED", "INVALID_CI_GATE_ARGUMENTS", fallback_data), 2
         status = validate_repository_instance(root, ci_status_ref)
         data = ci_evidence_gate_data(status, task_key, gate_invocation_id)
-        workflows_configured = all((root / ref).is_file() for ref in status["currentCi"]["workflowRefs"])
+        workflow_ref = status["currentCi"]["repositoryContract"]["workflowRef"]
+        workflows_configured = (root / workflow_ref).is_file()
         evidence = status["currentCi"]["durableEvidence"]
-        native_install = status["currentCi"]["nativeAdapterInstallation"]
+        native_enforcement = status["currentCi"]["nativeEnforcement"]
         remote_runner = status["currentCi"]["remoteRunner"]
         if not workflows_configured:
             return ci_evidence_gate_result("NOT_CONFIGURED", "CI_WORKFLOW_NOT_CONFIGURED", data), 3
@@ -7503,7 +7515,10 @@ def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-ca
             return ci_evidence_gate_result("BLOCKED", "CI_DURABLE_EVIDENCE_IDENTITY_MISSING", data), 2
         if any(not (root / ref).is_file() for ref in artifact_refs):
             return ci_evidence_gate_result("BLOCKED", "CI_DURABLE_EVIDENCE_ARTIFACT_MISSING", data), 2
-        if native_install["status"] != "INSTALLED":
+        if (
+            native_enforcement["configurationStatus"] != "VERIFIED"
+            or not native_enforcement["requiredCheckConfigured"]
+        ):
             return ci_evidence_gate_result("BLOCKED", "CI_NATIVE_ADAPTER_NOT_INSTALLED", data), 2
         if remote_runner["status"] != "PASS":
             return ci_evidence_gate_result("BLOCKED", "CI_REMOTE_RUNNER_NOT_PASSING", data), 2

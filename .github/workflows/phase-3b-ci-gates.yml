@@ -1,4 +1,4 @@
-name: phase-3b-ci-gates
+name: phase-3b-repository-contract
 
 on:
   pull_request:
@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  phase-3b-ci-gates:
-    name: phase-3b-ci-gates
+  phase-3b-repository-contract:
+    name: phase-3b-repository-contract
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -40,38 +40,21 @@ jobs:
           assert version('cryptography') == '45.0.5'
           PY
       - name: Run Phase 2C and Phase 3 static helper tests
-        run: python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v
-      - name: Run contract tests
-        run: bash scripts/ai/tests/run-contract-tests.sh
-      - name: Evaluate CI evidence gate
-        if: ${{ !cancelled() }}
         shell: bash
         run: |
-          set +e
-          bash scripts/ai/ci-evidence-gate.sh --task-key issue-12 --gate-invocation-id github-actions --output phase3b-ci-gate-result.json > phase3b-ci-gate-fallback.json
-          status=$?
-          set -e
-          if [ ! -s phase3b-ci-gate-result.json ] && [ -s phase3b-ci-gate-fallback.json ]; then
-            mv phase3b-ci-gate-fallback.json phase3b-ci-gate-result.json
-          else
-            rm -f phase3b-ci-gate-fallback.json
-          fi
-          test -s phase3b-ci-gate-result.json
-          if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
-            exit "$status"
-          fi
-          python - <<'PY'
-          import json
-          result = json.load(open('phase3b-ci-gate-result.json', encoding='utf-8'))
-          if result['result'] != 'NOT_CONFIGURED' or result['reason'] != 'CI_EVIDENCE_NOT_AVAILABLE':
-              raise SystemExit('unexpected CI evidence gate result')
-          PY
+          set -o pipefail
+          python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v 2>&1 | tee phase3b-helper-test-output.txt
+      - name: Run contract tests
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/ai/tests/run-contract-tests.sh 2>&1 | tee phase3b-contract-test-output.txt
       - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() && hashFiles('phase3b-ci-gate-result.json') != '' && hashFiles('ai/ci-capability-status.json') != '' }}
+        if: ${{ !cancelled() }}
         with:
-          name: phase3b-ci-gate-evidence
+          name: phase3b-repository-contract-diagnostics
           path: |
-            phase3b-ci-gate-result.json
-            ai/ci-capability-status.json
+            phase3b-helper-test-output.txt
+            phase3b-contract-test-output.txt
           if-no-files-found: error
           retention-days: 90

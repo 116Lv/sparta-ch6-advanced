@@ -30,12 +30,30 @@
     "currentCi": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "requiredCheck", "workflowRefs", "nativeAdapterInstallation", "durableEvidence", "remoteRunner", "hostMappings"],
+      "required": ["provider", "repositoryContract", "nativeEnforcement", "durableEvidence", "remoteRunner", "hostMappings"],
       "properties": {
         "provider": { "const": "github-actions" },
-        "requiredCheck": { "const": "phase-3b-ci-gates" },
-        "workflowRefs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repositoryPath" } },
-        "nativeAdapterInstallation": { "$ref": "#/$defs/statusReason" },
+        "repositoryContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["checkName", "workflowRef", "configurationStatus"],
+          "properties": {
+            "checkName": { "const": "phase-3b-repository-contract" },
+            "workflowRef": { "$ref": "#/$defs/repositoryPath" },
+            "configurationStatus": { "enum": ["CONFIGURED_UNVERIFIED", "VERIFIED", "BLOCKED"] }
+          }
+        },
+        "nativeEnforcement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["checkName", "configurationStatus", "requiredCheckConfigured", "reasonCode"],
+          "properties": {
+            "checkName": { "const": "phase-3b-native-enforcement" },
+            "configurationStatus": { "enum": ["VERIFIED", "CONFIGURED_UNVERIFIED", "NOT_CONFIGURED", "BLOCKED"] },
+            "requiredCheckConfigured": { "type": "boolean" },
+            "reasonCode": { "$ref": "#/$defs/identifier" }
+          }
+        },
         "durableEvidence": {
           "type": "object",
           "additionalProperties": false,

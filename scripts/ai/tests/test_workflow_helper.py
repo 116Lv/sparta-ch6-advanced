@@ -10999,7 +10999,18 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         self.assertEqual(status["issue"]["number"], 12)
         self.assertEqual(status["pullRequest"]["phase3AMerged"], True)
         self.assertEqual(status["currentCi"]["provider"], "github-actions")
-        self.assertEqual(status["currentCi"]["nativeAdapterInstallation"]["status"], "NOT_CONFIGURED")
+        self.assertEqual(status["currentCi"].get("repositoryContract"), {
+            "checkName": "phase-3b-repository-contract",
+            "workflowRef": ".github/workflows/phase-3b-ci-gates.yml",
+            "configurationStatus": "CONFIGURED_UNVERIFIED",
+        })
+        self.assertEqual(status["currentCi"].get("nativeEnforcement"), {
+            "checkName": "phase-3b-native-enforcement",
+            "configurationStatus": "NOT_CONFIGURED",
+            "requiredCheckConfigured": False,
+            "reasonCode": "GITHUB_REQUIRED_CHECK_AND_NATIVE_ADAPTER_NOT_CONFIGURED",
+        })
+        self.assertNotIn("requiredCheck", status["currentCi"])
         self.assertEqual(status["currentCi"]["durableEvidence"]["status"], "NOT_CONFIGURED")
         self.assertEqual(status["currentCi"]["remoteRunner"]["completionBlocking"], True)
         self.assertEqual(status["phase2cLink"]["nativeAdapterCheckId"], "native-runtime-adapter")
@@ -11010,16 +11021,35 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         result, status = self.helper.ci_evidence_gate(self.root, "issue-12", "gate-ci")
         self.assertEqual((result["result"], result["phase2cLeafResult"], status), ("NOT_CONFIGURED", "BLOCKED", 3))
         self.assertEqual(result["reason"], "CI_EVIDENCE_NOT_AVAILABLE")
-        self.assertEqual(result["data"]["requiredCheck"], "phase-3b-ci-gates")
+        self.assertEqual(result["data"]["requiredCheck"], "phase-3b-native-enforcement")
         self.assertEqual(result["data"]["durableEvidence"]["retentionDays"], 90)
         self.assertEqual(result["data"]["nativeAdapterLeaf"]["currentHostResult"], "UNSUPPORTED")
         self.assertFalse((self.root / ".ai-runs").exists())
 
+    def test_project_state_reports_contract_workflow_without_native_enforcement(self):
+        state = json.loads((self.root / "ai/project-state.json").read_text(encoding="utf-8"))
+        ci_environment = next(item for item in state["environments"] if item["kind"] == "CI")
+        self.assertEqual(ci_environment["configurationStatus"], "CONFIGURED_UNVERIFIED")
+        notes = " ".join(ci_environment["notes"])
+        self.assertIn("phase-3b-repository-contract", notes)
+        self.assertIn("native enforcement remains NOT_CONFIGURED", notes)
+        local_environment = next(item for item in state["environments"] if item["kind"] == "LOCAL")
+        self.assertEqual(local_environment["configurationStatus"], "VERIFIED")
+
+        markdown = (self.root / "ai/project-state.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "| CI | CONFIGURED_UNVERIFIED | phase-3b-repository-contract workflow exists; "
+            "native enforcement remains NOT_CONFIGURED. |",
+            markdown,
+        )
+
     def test_ci_evidence_available_requires_retained_artifact_identity(self):
         status = self.helper.validate_repository_instance(self.root, "ai/ci-capability-status.json")
-        status["currentCi"]["nativeAdapterInstallation"] = {
-            "status": "INSTALLED",
-            "reasonCode": "REMOTE_NATIVE_ADAPTER_INSTALLED",
+        status["currentCi"]["nativeEnforcement"] = {
+            "checkName": "phase-3b-native-enforcement",
+            "configurationStatus": "VERIFIED",
+            "requiredCheckConfigured": True,
+            "reasonCode": "NATIVE_ENFORCEMENT_VERIFIED",
         }
         status["currentCi"]["durableEvidence"]["status"] = "AVAILABLE"
         status["currentCi"]["durableEvidence"]["reasonCode"] = "DURABLE_EVIDENCE_AVAILABLE"
@@ -11041,9 +11071,11 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
             status_path.unlink(missing_ok=True)
     def test_ci_evidence_available_requires_retained_artifact_file(self):
         status = self.helper.validate_repository_instance(self.root, "ai/ci-capability-status.json")
-        status["currentCi"]["nativeAdapterInstallation"] = {
-            "status": "INSTALLED",
-            "reasonCode": "REMOTE_NATIVE_ADAPTER_INSTALLED",
+        status["currentCi"]["nativeEnforcement"] = {
+            "checkName": "phase-3b-native-enforcement",
+            "configurationStatus": "VERIFIED",
+            "requiredCheckConfigured": True,
+            "reasonCode": "NATIVE_ENFORCEMENT_VERIFIED",
         }
         status["currentCi"]["durableEvidence"].update({
             "status": "AVAILABLE",
@@ -11082,7 +11114,12 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         workflow = self.root / ".github/workflows/phase-3b-ci-gates.yml"
         self.assertTrue(workflow.is_file())
         workflow_text = workflow.read_text(encoding="utf-8")
-        self.assertIn("scripts/ai/ci-evidence-gate.sh", workflow_text)
+        self.assertTrue(workflow_text.startswith("name: phase-3b-repository-contract\n"))
+        self.assertIn("\n  phase-3b-repository-contract:\n", workflow_text)
+        self.assertIn("    name: phase-3b-repository-contract\n", workflow_text)
+        self.assertNotIn("phase-3b-native-enforcement", workflow_text)
+        self.assertNotIn("scripts/ai/ci-evidence-gate.sh", workflow_text)
+        self.assertNotIn('"$status" -ne 3', workflow_text)
         self.assertNotIn("gradle", workflow_text.lower())
         self.assertNotIn("docker compose", workflow_text.lower())
         doc_text = "\n".join(
@@ -11097,7 +11134,7 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         self.assertIn("bypass event", doc_text)
         self.assertIn("registry `VERIFIED`", doc_text)
 
-    def test_ci_workflow_provisions_contract_runtime_and_retains_failure_evidence(self):
+    def test_ci_workflow_provisions_contract_runtime_and_uploads_diagnostics(self):
         workflow_text = (
             self.root / ".github/workflows/phase-3b-ci-gates.yml"
         ).read_text(encoding="utf-8")
@@ -11117,8 +11154,9 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         contract_install = workflow_text.index(contract_install_command)
         contract_run = workflow_text.index("bash scripts/ai/tests/run-contract-tests.sh")
         self.assertLess(contract_install, contract_run)
-        self.assertIn("> phase3b-ci-gate-fallback.json", workflow_text)
-        self.assertIn("if: ${{ !cancelled() }}\n        shell: bash", workflow_text)
-        self.assertIn("hashFiles('phase3b-ci-gate-result.json') != ''", workflow_text)
-        self.assertIn("hashFiles('ai/ci-capability-status.json') != ''", workflow_text)
+        self.assertIn("phase3b-helper-test-output.txt", workflow_text)
+        self.assertIn("phase3b-contract-test-output.txt", workflow_text)
+        self.assertIn("name: phase3b-repository-contract-diagnostics", workflow_text)
+        self.assertNotIn("phase3b-ci-gate-result.json", workflow_text)
+        self.assertNotIn("ai/ci-capability-status.json", workflow_text)
         self.assertIn("if-no-files-found: error", workflow_text)

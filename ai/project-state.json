@@ -2,7 +2,7 @@
   "$schema": "./schemas/project-state.schema.json",
   "$id": "ai/project-state.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-10T14:17:27Z",
+  "updatedAt": "2026-07-14T00:00:00Z",
   "project": {
     "name": "sparta-ch6-advanced",
     "productType": "Spring Boot backend API assignment",
@@ -124,9 +124,9 @@
     },
     {
       "kind": "CI",
-      "configurationStatus": "NOT_CONFIGURED",
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
       "notes": [
-        "No CI workflow exists; CI enforcement is Phase 3 scope."
+        "phase-3b-repository-contract workflow exists; native enforcement remains NOT_CONFIGURED."
       ]
     }
   ],
