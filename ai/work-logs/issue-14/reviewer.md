@@ -143,3 +143,39 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: The implementation matches the specified deterministic projection contract and preserves the integrity-only verification boundary. No correctness or scope violation is visible in the packaged diff (`scripts/ai/workflow_helper.py:5016-5044`, `scripts/ai/workflow_helper.py:5155-5176`).
+
+## Task 3 Re-review (2026-07-14)
+
+### Spec Compliance
+
+- Verdict: Spec compliant.
+- The prior Critical durable-replacement defect is closed: failed OPEN-to-FINALIZING and FINALIZING-to-OPEN replacements reconcile the exact full session while validating the retained lock before and after the read (`scripts/ai/workflow_helper.py:5114-5120`, `scripts/ai/workflow_helper.py:5173-5176`, `scripts/ai/workflow_helper.py:5312-5321`).
+- Both post-apply fault regressions assert deep equality with the complete captured OPEN snapshot (`scripts/ai/tests/test_workflow_helper.py:5904-5932`, `scripts/ai/tests/test_workflow_helper.py:5934-5971`).
+- Publication remains rollback-blocking, rollback requires the exact finalization refs and FINALIZING projection, and cleanup retains secure path resolution and lock validation (`scripts/ai/workflow_helper.py:5130-5163`).
+- Integrity-only semantics remain preserved (`scripts/ai/workflow_helper.py:5005-5006`, `scripts/ai/tests/test_workflow_helper.py:5670-5671`).
+- The updated report records the test file, exact focused command, focused RED/GREEN results, surrounding-class result, and diff-check result (`.superpowers/sdd/task-3-phase1b3-report.md:24`, `.superpowers/sdd/task-3-phase1b3-report.md:56-63`). Per the review constraint, these commands were not independently rerun.
+
+### Strengths
+
+- Reconciliation distinguishes the exact original OPEN snapshot, exact expected FINALIZING projection, and any conflicting or unreadable state without adding an unlocked or state-only bypass (`scripts/ai/workflow_helper.py:5306-5321`).
+- Successful rollback preserves the original validation or I/O result; ambiguous or unsafe rollback maps to `FINALIZATION_RECOVERY_REQUIRED` (`scripts/ai/workflow_helper.py:5287-5296`, `scripts/ai/workflow_helper.py:5334-5354`).
+- The specification documents the exact-session, publication, cleanup, and explicit-recovery boundary while retaining `INTEGRITY_ONLY` scope (`docs/superpowers/specs/2026-07-10-ai-workflow-phase-1b-spec.md:344-350`).
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None. The prior Critical is closed by exact post-replacement session reconciliation and the two full-snapshot regressions (`scripts/ai/workflow_helper.py:5173-5176`, `scripts/ai/workflow_helper.py:5312-5321`, `scripts/ai/tests/test_workflow_helper.py:5904-5971`).
+
+#### Important (Should Fix)
+
+- None.
+
+#### Minor (Nice to Have)
+
+- The updated report says Issue #14 remains `in_progress`, while the committed Issue work log is `in_review` (`.superpowers/sdd/task-3-phase1b3-report.md:6`, `ai/work-logs/issue-14/README.md:5`). This is non-blocking status metadata drift.
+
+### Assessment
+
+- Task quality: Approved.
+- Reasoning: Static re-review confirms the prior Critical is closed, rollback remains lock-bound and exact-session guarded, and publication remains irreversible. Only the non-blocking report/work-log status drift remains.
