@@ -6,7 +6,7 @@ status: in_progress
 owning_feature: none
 current_owner: main-agent
 started_at: 2026-07-13T23:30:00+09:00
-last_updated: 2026-07-13T23:30:00+09:00
+last_updated: 2026-07-14T01:17:40+09:00
 branch: codex/phase-3b-ci-gates-durable-evidence
 related_files:
   - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3b-ci-gates-durable-evidence-design.md
@@ -80,3 +80,37 @@ Post-review verification:
 | `python -m unittest scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v` | 0 | PASS: 5 tests. |
 | `python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v` | 0 | PASS: 100 tests. |
 | `C:\Program Files\Git\bin\bash.exe scripts/ai/ci-evidence-gate.sh --task-key issue-12 --gate-invocation-id local-static --output -` | non-pass | Expected fail-closed JSON: `NOT_CONFIGURED`, `CI_EVIDENCE_NOT_AVAILABLE`, Phase 2C leaf `BLOCKED`. |
+
+## GitHub Actions Follow-up (2026-07-14)
+
+PR #13 workflow run `29258536257` failed in `Run contract tests` after the
+100-test predecessor suite passed. The contract harness intentionally puts
+`/usr/bin` first, so it selected Ubuntu's distribution `jsonschema` instead of
+the `actions/setup-python` interpreter that received the workflow's pip
+dependencies. The older validator failed while resolving the project-state
+schema with `TypeError: unhashable type: 'dict'`.
+
+The workflow now pins `jsonschema==4.25.1` and `cryptography==45.0.5` into both
+the setup-python interpreter and the `/usr/bin/python3` interpreter exercised
+by the shell contracts. Evidence evaluation uses `!cancelled()` so an earlier
+test failure still produces fail-closed diagnostic evidence without delaying a
+cancelled run. Wrapper fallback JSON is promoted to the result path, and the
+named evidence artifact is uploaded only when both the gate result and
+repository capability status exist; missing files are an upload error. This
+installs CI helper dependencies only; it does not change the native adapter
+status from `NOT_CONFIGURED`.
+
+| Command | Exit | Result |
+| --- | ---: | --- |
+| `python -m unittest scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests.test_ci_workflow_provisions_contract_runtime_and_retains_failure_evidence -v` before workflow fix | 1 | RED: contract runtime provisioning command was absent. |
+| same targeted command after workflow fix | 0 | GREEN: runtime provisioning order and failure-evidence retention are enforced. |
+| `python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v` | 0 | PASS: 101 tests. |
+| `C:\Program Files\Git\bin\bash.exe scripts/ai/tests/run-contract-tests.sh` | 0 | PASS: runtime preflight and thin closed command shell contracts. |
+
+Follow-up reviewer `Newton` found no Critical issues and two Important issues:
+partial artifact publication and under-specified provisioning assertions. Both
+were fixed with fallback result capture, complete-bundle upload conditions,
+exact two-interpreter package-pin assertions, and a runtime import/version probe
+in the workflow. Minor cancellation and stale timestamp findings were also
+addressed. The actual rerun on `ubuntu-latest` remains required before this
+follow-up can be considered ready to merge.

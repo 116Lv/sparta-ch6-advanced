@@ -9003,3 +9003,29 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         self.assertIn("cross-process challenge", doc_text)
         self.assertIn("bypass event", doc_text)
         self.assertIn("registry `VERIFIED`", doc_text)
+
+    def test_ci_workflow_provisions_contract_runtime_and_retains_failure_evidence(self):
+        workflow_text = (
+            self.root / ".github/workflows/phase-3b-ci-gates.yml"
+        ).read_text(encoding="utf-8")
+        packages = "jsonschema==4.25.1 cryptography==45.0.5"
+        setup_install = f"python -m pip install {packages}"
+        contract_install_command = (
+            f"/usr/bin/python3 -m pip install --break-system-packages {packages}"
+        )
+        self.assertIn(setup_install, workflow_text)
+        self.assertIn(contract_install_command, workflow_text)
+        self.assertEqual(
+            workflow_text.count("assert version('jsonschema') == '4.25.1'"), 2,
+        )
+        self.assertEqual(
+            workflow_text.count("assert version('cryptography') == '45.0.5'"), 2,
+        )
+        contract_install = workflow_text.index(contract_install_command)
+        contract_run = workflow_text.index("bash scripts/ai/tests/run-contract-tests.sh")
+        self.assertLess(contract_install, contract_run)
+        self.assertIn("> phase3b-ci-gate-fallback.json", workflow_text)
+        self.assertIn("if: ${{ !cancelled() }}\n        shell: bash", workflow_text)
+        self.assertIn("hashFiles('phase3b-ci-gate-result.json') != ''", workflow_text)
+        self.assertIn("hashFiles('ai/ci-capability-status.json') != ''", workflow_text)
+        self.assertIn("if-no-files-found: error", workflow_text)
