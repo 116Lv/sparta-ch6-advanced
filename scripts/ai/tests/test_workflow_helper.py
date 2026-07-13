@@ -6842,9 +6842,20 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             with self.subTest(suffix=suffix):
                 self.assertTrue(self.helper.native_summary_has_secret(f"Bearer opaqueToken{suffix}"))
 
+    def test_bypass_summary_rejects_bearer_credentials_with_regex_whitespace(self):
+        for separator in ("\u00a0", "\n", "\r\n"):
+            with self.subTest(separator=repr(separator)):
+                self.assertTrue(self.helper.native_summary_has_secret(f"Bearer{separator}opaqueToken"))
+
     def test_bypass_summary_allows_bearer_token_documentation(self):
         self.assertFalse(self.helper.native_summary_has_secret("bearer token documentation"))
         self.assertTrue(self.helper.native_summary_has_secret("bearer token documentation extra"))
+
+    def test_bypass_summary_allows_only_normalized_ascii_bearer_token_documentation(self):
+        self.assertFalse(self.helper.native_summary_has_secret("Bearer Token Documentation"))
+        for summary in ("bearer\ntoken documentation", "bearer\u00a0token documentation"):
+            with self.subTest(summary=repr(summary)):
+                self.assertTrue(self.helper.native_summary_has_secret(summary))
 
     def test_bypass_summary_rejects_basic_credentials_regardless_of_trailing_non_whitespace(self):
         for punctuation in (".", ")", "]", ":", "!", "?", ",", ";", '"', "'", "}", "/"):
@@ -6856,6 +6867,11 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             with self.subTest(credential=credential):
                 self.assertTrue(self.helper.native_summary_has_secret(f"Basic {credential}"))
                 self.assertTrue(self.helper.native_summary_has_secret(f"Basic {credential} followed"))
+
+    def test_bypass_summary_rejects_basic_credentials_with_regex_whitespace(self):
+        for separator in ("\n", "\r\n"):
+            with self.subTest(separator=repr(separator)):
+                self.assertTrue(self.helper.native_summary_has_secret(f"Basic{separator}dXNlcjpwYXNz"))
 
     def test_bypass_summary_allows_ordinary_non_secret_descriptions(self):
         attempt = self.valid_attempt(

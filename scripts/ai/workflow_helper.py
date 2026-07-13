@@ -5675,8 +5675,8 @@ NATIVE_SECRET_BEARING_SUMMARY = re.compile(
     r"\b(?:request\s+body|raw\s+(?:auth(?:orization)?|cookies?|bod(?:y|ies)|credentials?|payload|query|argv|env(?:ironment)?)))",
     re.IGNORECASE,
 )
-NATIVE_BASIC_CREDENTIAL = re.compile(r"\bbasic[ \t]+\S+", re.IGNORECASE)
-NATIVE_BEARER_CREDENTIAL = re.compile(r"\bbearer[ \t]+\S+", re.IGNORECASE)
+NATIVE_BASIC_CREDENTIAL = re.compile(r"\bbasic\s+\S+", re.IGNORECASE)
+NATIVE_BEARER_CREDENTIAL = re.compile(r"\bbearer\s+\S+", re.IGNORECASE)
 NATIVE_ALLOWED_BEARER_DOCUMENTATION = frozenset(("bearer token documentation",))
 
 
