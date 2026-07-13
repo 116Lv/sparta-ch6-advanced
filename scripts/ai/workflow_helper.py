@@ -5383,9 +5383,12 @@ def invalid_cli_result(operation):
         "post-command": ("POST_COMMAND", "INVALID_POST_COMMAND_ARGUMENTS"),
         "done-claim-prepare": ("PRE_DONE_CLAIM", "INVALID_DONE_CLAIM_ARGUMENTS"),
         "verify-finalized": ("PRE_DONE_CLAIM", "INVALID_VERIFY_FINALIZED_ARGUMENTS"),
+        "verification-gate": ("VERIFICATION_GATE", "INVALID_VERIFICATION_GATE_ARGUMENTS"),
         "native-adapter-gate": ("NATIVE_ADAPTER_GATE", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS"),
     }
     gateway_operation, reason = profiles[operation]
+    if operation == "verification-gate":
+        return verification_gate_result("POLICY_VIOLATION", reason, None), 4
     if operation == "native-adapter-gate":
         return native_adapter_gate_result("BLOCKED", reason, native_adapter_fallback_data()), 2
     return gateway_result("POLICY_VIOLATION", reason, operation=gateway_operation), 4
@@ -5589,6 +5592,9 @@ def publish_verification_gate_result(root, result, status):
     return result, status
 
 
+NATIVE_ADAPTER_CHECK_ID = "native-runtime-adapter"
+
+
 def load_verification_leaf_results(root, leaf_results_ref):
     if leaf_results_ref is None:
         return {}
@@ -5608,6 +5614,11 @@ def load_verification_leaf_results(root, leaf_results_ref):
             if not isinstance(item, dict):
                 raise ValueError("leaf result must be an object")
             check_id = item.get("checkId")
+            if check_id == NATIVE_ADAPTER_CHECK_ID:
+                raise InvalidStateError([validation_error(
+                    "NATIVE_ADAPTER_LEAF_FORGED",
+                    message="native runtime adapter leaf results are internal-only",
+                )])
             raw_result = item.get("result")
             if not isinstance(check_id, str) or raw_result not in (
                 "PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON",
@@ -5622,6 +5633,8 @@ def load_verification_leaf_results(root, leaf_results_ref):
                 "reason": item.get("reason"),
             }
         return by_id
+    except InvalidStateError:
+        raise
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
         raise InvalidStateError([validation_error(
             "VERIFICATION_LEAF_RESULTS_INVALID",
@@ -6126,7 +6139,25 @@ def run_native_adapter_gate_cli(arguments):
     return result, status
 
 
-def verification_gate(root, change_type, entry_point, leaf_results_ref=None):
+def native_adapter_phase2c_leaf(root, task_key, gate_invocation_id, runtime_snapshot_ref=None,
+                                bypass_attempts_ref=None):
+    adapter_result, _ = native_adapter_gate(
+        root,
+        task_key,
+        gate_invocation_id,
+        runtime_snapshot_ref,
+        bypass_attempts_ref,
+    )
+    return {
+        "checkId": NATIVE_ADAPTER_CHECK_ID,
+        "result": adapter_result["phase2cLeafResult"],
+        "evidenceRef": "ai/native-runtime-adapters.json",
+        "reason": adapter_result["reason"],
+    }
+
+
+def verification_gate(root, change_type, entry_point, leaf_results_ref=None, task_key=None,
+                      gate_invocation_id=None, runtime_snapshot_ref=None, bypass_attempts_ref=None):
     root = Path(root).resolve()
     try:
         policy = validate_repository_instance(root, root / "ai" / "verification-policy.json")
@@ -6142,6 +6173,29 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None):
                 "POLICY_VIOLATION", "UNKNOWN_ENTRY_POINT", None,
             ), 4)
         change = change_types[change_type]
+        if not all(
+            isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
+            for value in (task_key, gate_invocation_id)
+        ):
+            raw = native_adapter_phase2c_leaf(root, task_key, gate_invocation_id)
+            data = {
+                "changeType": change_type,
+                "entryPoint": entry_point,
+                "minimumVerificationLevel": change["minimumVerificationLevel"],
+                "completenessEvaluated": True,
+                "checks": [{
+                    "checkId": NATIVE_ADAPTER_CHECK_ID,
+                    "required": True,
+                    "rawResult": raw["result"],
+                    "mappedResult": map_verification_leaf(raw["result"], True),
+                    "reason": raw["reason"],
+                    "evidenceRef": raw["evidenceRef"],
+                }],
+                "createdAiRuns": False,
+            }
+            return publish_verification_gate_result(root, verification_gate_result(
+                "BLOCKED", "VERIFICATION_GATE_BLOCKED", data,
+            ), 2)
         if entry_point not in change["entryPoints"]:
             data = {
                 "changeType": change_type,
@@ -6171,7 +6225,16 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None):
                     "VERIFICATION_POLICY_CHECK_INVALID",
                     message="verification policy references an unknown check",
                 )])
-            raw = leaf_results.get(check_id, default_leaf_result_for_check(check_id, policy_check))
+            if check_id == NATIVE_ADAPTER_CHECK_ID:
+                raw = native_adapter_phase2c_leaf(
+                    root,
+                    task_key,
+                    gate_invocation_id,
+                    runtime_snapshot_ref,
+                    bypass_attempts_ref,
+                )
+            else:
+                raw = leaf_results.get(check_id, default_leaf_result_for_check(check_id, policy_check))
             required = check_id in change["requiredChecks"]
             raw_result = raw["result"]
             mapped_checks.append({
@@ -6191,7 +6254,14 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None):
             "checks": mapped_checks,
             "createdAiRuns": False,
         }
-        reason = None if overall == "PASS" else "VERIFICATION_GATE_" + overall
+        native_check = next(
+            (item for item in mapped_checks if item["checkId"] == NATIVE_ADAPTER_CHECK_ID),
+            None,
+        )
+        if overall == "PASS" and native_check is not None and native_check["reason"] == "HOST_UNSUPPORTED":
+            reason = "REPOSITORY_ONLY_HOST_UNSUPPORTED"
+        else:
+            reason = None if overall == "PASS" else "VERIFICATION_GATE_" + overall
         return publish_verification_gate_result(root, verification_gate_result(overall, reason, data), verification_gate_exit(overall))
     except InvalidStateError as error:
         return publish_verification_gate_result(root, verification_gate_result(
@@ -6205,7 +6275,16 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None):
 
 def run_verification_gate_cli(arguments):
     root = Path(arguments.repository_root).resolve()
-    result, status = verification_gate(root, arguments.change_type, arguments.entry_point, arguments.leaf_results_file)
+    result, status = verification_gate(
+        root,
+        arguments.change_type,
+        arguments.entry_point,
+        arguments.leaf_results_file,
+        arguments.task_key,
+        arguments.gate_invocation_id,
+        arguments.runtime_snapshot,
+        arguments.bypass_attempts,
+    )
     output_status = write_resolve_output(root, arguments.output, result)
     if output_status != 0:
         return publish_verification_gate_result(root, verification_gate_result(
@@ -6255,6 +6334,10 @@ def main():
     verification_gate_parser.add_argument("--change-type", required=True)
     verification_gate_parser.add_argument("--entry-point", required=True)
     verification_gate_parser.add_argument("--leaf-results-file")
+    verification_gate_parser.add_argument("--task-key", required=True)
+    verification_gate_parser.add_argument("--gate-invocation-id", required=True)
+    verification_gate_parser.add_argument("--runtime-snapshot")
+    verification_gate_parser.add_argument("--bypass-attempts")
     verification_gate_parser.add_argument("--output", required=True)
     native_adapter_gate_parser = subparsers.add_parser("native-adapter-gate", add_help=False)
     native_adapter_gate_parser.add_argument("--repository-root", required=True)

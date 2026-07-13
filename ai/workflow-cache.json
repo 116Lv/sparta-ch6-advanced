@@ -12,7 +12,7 @@
         "paths": [
           {
             "path": "ai/agent-handoff.json",
-            "sha256": "b37bdc353e315a6d641f57310a4a75161992909c5eb188a987140054cc1eef5e"
+            "sha256": "95a119a55849c82ebd384cdd5345d63d4cbed36d15c64f799e5dbe28b62a6996"
           }
         ],
         "environmentFingerprint": null

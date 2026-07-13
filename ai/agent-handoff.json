@@ -14,13 +14,16 @@
     "ai/resource-budget.md",
     "ai/workflow-cache.md",
     "ai/skills/README.md",
-    "ai/verification-gates.md"
+    "ai/verification-gates.md",
+    "ai/native-runtime-adapters.md",
+    "ai/native-runtime-adapters.json"
   ],
   "reusableContextRefs": [
     "ai/context-map.json",
     "ai/workflow-cache.json",
     "ai/work-logs/issue-5/README.md",
-    "ai/verification-policy.json"
+    "ai/verification-policy.json",
+    "ai/native-runtime-adapters.json"
   ],
   "skillCatalogRef": "ai/skill-catalog.json",
   "skillIds": [
@@ -36,7 +39,10 @@
     "ai/work-logs/issue-6/README.md",
     "ai/work-logs/issue-6/implementation-agent.md",
     "ai/work-logs/issue-6/plan-reviewer.md",
-    "ai/work-logs/issue-7/README.md"
+    "ai/work-logs/issue-7/README.md",
+    "ai/work-logs/issue-10/README.md",
+    "ai/work-logs/issue-10/implementation-agent.md",
+    "ai/work-logs/issue-10/reviewer.md"
   ],
   "githubIssue": {
     "issueNumber": 7,
@@ -63,6 +69,10 @@
     "Registry VERIFIED promotion remains unsupported without durable command-runner evidence.",
     "GitHub Issue #7 now backs the current Phase 2C handoff; the migration comment is recorded and the prior 403 remains historical evidence.",
     "Issue-backed tracking does not by itself close the Issue or authorize an unqualified overall DONE claim.",
-    "Phase 2C static/helper gates define verification completeness and task/change applicability but do not execute product commands."
+    "Phase 2C static/helper gates define verification completeness and task/change applicability but do not execute product commands.",
+    "Phase 3A requires the internal native-runtime-adapter leaf for every change type; the current host is UNSUPPORTED and maps to repository-qualified NOT_APPLICABLE with HOST_UNSUPPORTED.",
+    "scripts/ai/command-runner.sh remains the only supported product-command path; native adapters do not execute product commands.",
+    "Phase 1B-3 remains INTEGRITY_ONLY and does not establish verification completeness, registry VERIFIED promotion, closure, or unqualified overall DONE.",
+    "Phase 3B owns CI adapter installation, remote-runner guarantees, durable CI evidence, and cross-host parity."
   ]
 }

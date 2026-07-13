@@ -29,3 +29,9 @@ Phase 2B does not create repository `.ai-runs`, artifact manifests, finalized `r
 ## Phase 2C Verification Gates
 
 Phase 2C handoffs should include `ai/verification-gates.md`, `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh` when verification completeness or task/change applicability is in scope. `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` are mapped by change type. Product commands remain NOT RUN for static/helper gates. GitHub Issue #7 now backs the handoff, but Issue tracking does not by itself close the Issue or authorize an unqualified overall DONE claim.
+
+## Phase 3A Native Adapter Handoff
+
+Phase 3A handoffs also include `ai/native-runtime-adapters.json`, `ai/native-runtime-adapters.md`, and Issue #10 work logs. The current host is `UNSUPPORTED`; its internal `native-runtime-adapter` leaf maps to `NOT_APPLICABLE` with `HOST_UNSUPPORTED`, so any overall PASS is repository-only qualified. A supported-host fault remains completion-blocking.
+
+The verification gate evaluates the native leaf in-process with matching task and gate correlation and accepts no intermediate or precomputed adapter result. `scripts/ai/command-runner.sh` remains the only supported product-command path. Phase 1B-3 remains `INTEGRITY_ONLY`; no registry `VERIFIED` promotion, closure, reconciliation-complete claim, or unqualified overall DONE follows from this handoff. Phase 3B owns CI adapter installation, remote-runner guarantees, durable CI evidence, and cross-host parity.

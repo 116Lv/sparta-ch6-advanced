@@ -6209,6 +6209,12 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         path.write_text(json.dumps({"results": results}), encoding="utf-8")
         return "ai/fixtures/phase-2c-leaf-results.json"
 
+    def write_json_fixture(self, name, payload):
+        path = self.root / "ai" / "fixtures" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path.relative_to(self.root).as_posix()
+
     def test_verification_policy_and_result_schemas_are_allowlisted(self):
         self.assertIn("verification-policy", self.helper.SCHEMA_NAMES)
         self.assertIn("verification-gate-result", self.helper.SCHEMA_NAMES)
@@ -6232,6 +6238,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         ])
         doc_result, doc_status = self.helper.verification_gate(
             self.root, "documentation-only", "verification-level", not_configured,
+            task_key="issue-10", gate_invocation_id="gate-doc",
         )
         self.assertEqual((doc_result["result"], doc_status), ("PASS", 0))
         doc_checks = {item["checkId"]: item for item in doc_result["data"]["checks"]}
@@ -6240,12 +6247,14 @@ class Phase2CVerificationGateTests(unittest.TestCase):
 
         not_applicable_result, not_applicable_status = self.helper.verification_gate(
             self.root, "documentation-only", "api-smoke", not_configured,
+            task_key="issue-10", gate_invocation_id="gate-na",
         )
         self.assertEqual((not_applicable_result["result"], not_applicable_status), ("NOT_APPLICABLE", 6))
         self.assertEqual(not_applicable_result["data"]["entryPoint"], "api-smoke")
 
         api_result, api_status = self.helper.verification_gate(
             self.root, "db-api", "api-smoke", not_configured,
+            task_key="issue-10", gate_invocation_id="gate-api",
         )
         self.assertEqual((api_result["result"], api_status), ("BLOCKED", 2))
         api_checks = {item["checkId"]: item for item in api_result["data"]["checks"]}
@@ -6256,6 +6265,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         ])
         logic_result, logic_status = self.helper.verification_gate(
             self.root, "domain-logic", "verification-level", failed,
+            task_key="issue-10", gate_invocation_id="gate-logic",
         )
         self.assertEqual((logic_result["result"], logic_status), ("FAIL", 1))
         logic_checks = {item["checkId"]: item for item in logic_result["data"]["checks"]}
@@ -6264,6 +6274,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
     def test_review_and_done_claim_gates_require_explicit_leaf_evidence(self):
         review_result, review_status = self.helper.verification_gate(
             self.root, "documentation-only", "review",
+            task_key="issue-10", gate_invocation_id="gate-review",
         )
         self.assertEqual((review_result["result"], review_status), ("BLOCKED", 2))
         review_checks = {item["checkId"]: item for item in review_result["data"]["checks"]}
@@ -6272,6 +6283,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
 
         done_result, done_status = self.helper.verification_gate(
             self.root, "documentation-only", "done-claim",
+            task_key="issue-10", gate_invocation_id="gate-done",
         )
         self.assertEqual((done_result["result"], done_status), ("BLOCKED", 2))
         done_checks = {item["checkId"]: item for item in done_result["data"]["checks"]}
@@ -6284,6 +6296,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         ])
         passed_result, passed_status = self.helper.verification_gate(
             self.root, "documentation-only", "review", explicit,
+            task_key="issue-10", gate_invocation_id="gate-review-pass",
         )
         self.assertEqual((passed_result["result"], passed_status), ("PASS", 0))
 
@@ -6300,11 +6313,19 @@ class Phase2CVerificationGateTests(unittest.TestCase):
             "documentation-only",
             "--entry-point",
             "verification-level",
+            "--task-key",
+            "issue-10",
+            "--gate-invocation-id",
+            "gate-shell",
             "--leaf-results-file",
             str(self.write_leaf_results([
                 {"checkId": "review-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/reviewer.md", "reason": "Independent static review evidence is present."},
                 {"checkId": "done-claim-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/README.md", "reason": "Completion claim checklist evidence is present."},
             ])),
+            "--runtime-snapshot",
+            self.write_json_fixture("runtime-snapshot.json", {"producerId": "fixture", "surfaces": []}),
+            "--bypass-attempts",
+            self.write_json_fixture("bypass-attempts.json", {"attempts": []}),
             "--output",
             "-",
         ]
@@ -6331,6 +6352,10 @@ class Phase2CVerificationGateTests(unittest.TestCase):
                 "documentation-only",
                 "--entry-point",
                 "api-smoke",
+                "--task-key",
+                "issue-10",
+                "--gate-invocation-id",
+                "gate-shell-na",
                 "--output",
                 "-",
             ],
@@ -6439,6 +6464,10 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             REPOSITORY_ROOT / "ai" / "native-runtime-adapters.json",
             self.root / "ai" / "native-runtime-adapters.json",
         )
+        shutil.copyfile(
+            REPOSITORY_ROOT / "ai" / "verification-policy.json",
+            self.root / "ai" / "verification-policy.json",
+        )
         (self.root / "ai" / "fixtures").mkdir()
 
     def tearDown(self):
@@ -6448,6 +6477,23 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         path = self.root / "ai" / "fixtures" / name
         path.write_text(json.dumps(value), encoding="utf-8")
         return path.relative_to(self.root).as_posix()
+
+    def write_verification_leaf_results(self, results, name="phase-3a-leaf-results.json"):
+        return self.write_fixture(name, {"results": results})
+
+    def copy_repository_fixture(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name) / "repository"
+        shutil.copytree(self.root, root)
+        return root
+
+    @staticmethod
+    def native_check(result):
+        return next(
+            check for check in result["data"]["checks"]
+            if check["checkId"] == "native-runtime-adapter"
+        )
 
     def write_temp_snapshot(self, snapshot):
         return self.write_fixture("runtime-snapshot.json", snapshot)
@@ -6494,6 +6540,23 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 sys.executable,
                 str(REPOSITORY_ROOT / "scripts" / "ai" / "workflow_helper.py"),
                 "native-adapter-gate",
+                *arguments,
+            ],
+            cwd=str(REPOSITORY_ROOT),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    def run_verification_gate_cli_subprocess(self, *arguments):
+        return subprocess.run(
+            [
+                sys.executable,
+                str(REPOSITORY_ROOT / "scripts" / "ai" / "workflow_helper.py"),
+                "verification-gate",
                 *arguments,
             ],
             cwd=str(REPOSITORY_ROOT),
@@ -6920,6 +6983,181 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             attempt_path.write_text(json.dumps(invalid_attempt), encoding="utf-8")
             with self.assertRaises(self.helper.InvalidStateError):
                 self.helper.validate_repository_instance(root, "ai/native-bypass-attempt.json")
+
+    def test_native_adapter_leaf_is_required_for_every_change_type(self):
+        policy = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/verification-policy.json")
+        for change in policy["changeTypes"]:
+            with self.subTest(change_type=change["id"]):
+                self.assertIn("native-runtime-adapter", change["requiredChecks"])
+
+    def test_every_change_type_aggregates_explicit_native_adapter_state(self):
+        supported_root = self.copy_repository_fixture()
+        supported_policy = self.supported_host_policy()
+        supported_policy["supportedHosts"][0].update({
+            "hostId": "codex-desktop",
+            "minimumHostVersion": "1.0.0",
+        })
+        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(supported_policy), encoding="utf-8",
+        )
+        policy = self.helper.validate_repository_instance(self.root, "ai/verification-policy.json")
+        for change in policy["changeTypes"]:
+            change_type = change["id"]
+            with self.subTest(change_type=change_type, host="unsupported"):
+                result, _ = self.helper.verification_gate(
+                    self.root,
+                    change_type,
+                    "verification-level",
+                    task_key="issue-10",
+                    gate_invocation_id=f"gate-u-{change_type}",
+                )
+                native = self.native_check(result)
+                self.assertEqual((native["rawResult"], native["mappedResult"], native["reason"]), (
+                    "NOT_APPLICABLE", "NOT_APPLICABLE", "HOST_UNSUPPORTED",
+                ))
+            with self.subTest(change_type=change_type, host="supported"):
+                blocked_result, blocked_status = self.helper.verification_gate(
+                    supported_root,
+                    change_type,
+                    "verification-level",
+                    task_key="issue-10",
+                    gate_invocation_id=f"gate-b-{change_type}",
+                )
+                self.assertEqual((blocked_result["result"], blocked_status), ("BLOCKED", 2))
+                self.assertEqual(self.native_check(blocked_result)["rawResult"], "NOT_CONFIGURED")
+
+    def test_unsupported_host_pass_is_explicitly_repository_qualified(self):
+        explicit = self.write_verification_leaf_results([
+            {"checkId": "review-gate", "result": "PASS"},
+            {"checkId": "done-claim-gate", "result": "PASS"},
+        ])
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "verification-level",
+            explicit,
+            task_key="issue-10",
+            gate_invocation_id="gate-qualified",
+        )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "PASS", "REPOSITORY_ONLY_HOST_UNSUPPORTED", 0,
+        ))
+
+    def test_external_native_adapter_leaf_is_rejected_before_leaf_lookup(self):
+        supported_root = self.copy_repository_fixture()
+        supported_policy = self.supported_host_policy()
+        supported_policy["supportedHosts"][0].update({
+            "hostId": "codex-desktop",
+            "minimumHostVersion": "1.0.0",
+        })
+        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(supported_policy), encoding="utf-8",
+        )
+        variants = {
+            "plain-pass": {"checkId": "native-runtime-adapter", "result": "PASS"},
+            "repository-result-ref": {
+                "checkId": "native-runtime-adapter",
+                "result": "PASS",
+                "adapterResultRef": "ai/fixtures/fake-native-adapter-result.json",
+            },
+            "correlation-mismatch": {
+                "checkId": "native-runtime-adapter",
+                "result": "PASS",
+                "taskKey": "other-task",
+                "gateInvocationId": "other-gate",
+            },
+            "policy-digest-mismatch": {
+                "checkId": "native-runtime-adapter",
+                "result": "PASS",
+                "policySha256": "0" * 64,
+            },
+            "fixture-pass-empty-supported-hosts": {
+                "checkId": "native-runtime-adapter",
+                "result": "PASS",
+                "reason": "fixture claimed PASS",
+            },
+        }
+        for root_name, root in (("canonical", self.root), ("supported", supported_root)):
+            for name, forged in variants.items():
+                with self.subTest(root=root_name, variant=name):
+                    ref = self.write_fixture(f"forged-{root_name}-{name}.json", {"results": [forged]})
+                    if root != self.root:
+                        destination = root / ref
+                        destination.write_bytes((self.root / ref).read_bytes())
+                    result, status = self.helper.verification_gate(
+                        root,
+                        "documentation-only",
+                        "verification-level",
+                        ref,
+                        task_key="issue-10",
+                        gate_invocation_id=f"gate-forged-{name}",
+                    )
+                    self.assertEqual((result["result"], result["reason"], status), (
+                        "INVALID_STATE", "NATIVE_ADAPTER_LEAF_FORGED", 5,
+                    ))
+
+    def test_native_adapter_phase2c_leaf_validates_correlation_fail_closed(self):
+        invalid_vectors = ((None, "gate-1"), ("issue-10", None), ("", "gate-1"), ("issue-10", ""))
+        for task_key, gate_invocation_id in invalid_vectors:
+            with self.subTest(task_key=task_key, gate_invocation_id=gate_invocation_id):
+                leaf = self.helper.native_adapter_phase2c_leaf(
+                    self.root, task_key, gate_invocation_id,
+                )
+                self.assertEqual((leaf["checkId"], leaf["result"], leaf["reason"]), (
+                    "native-runtime-adapter", "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+                ))
+
+                gate_result, gate_status = self.helper.verification_gate(
+                    self.root,
+                    "documentation-only",
+                    "api-smoke",
+                    task_key=task_key,
+                    gate_invocation_id=gate_invocation_id,
+                )
+                self.assertEqual((gate_result["result"], gate_result["reason"], gate_status), (
+                    "BLOCKED", "VERIFICATION_GATE_BLOCKED", 2,
+                ))
+                self.assertEqual(self.native_check(gate_result)["reason"], "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS")
+
+    def test_verification_cli_accepts_only_live_native_adapter_inputs(self):
+        completed = self.run_verification_gate_cli_subprocess(
+            "--repository-root", str(REPOSITORY_ROOT),
+            "--change-type", "documentation-only",
+            "--entry-point", "verification-level",
+            "--task-key", "issue-10",
+            "--gate-invocation-id", "gate-cli",
+            "--native-adapter-result", "ai/fixtures/fake-native-adapter-result.json",
+            "--output", "-",
+        )
+        self.assertEqual(completed.returncode, 4, completed.stderr + completed.stdout)
+        self.assertNotIn("Traceback", completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual((result["result"], result["reason"]), (
+            "POLICY_VIOLATION", "INVALID_VERIFICATION_GATE_ARGUMENTS",
+        ))
+
+    def test_repository_and_native_boundaries_are_documented(self):
+        policy_docs = (
+            "AGENTS.md",
+            "ai/document-routing.md",
+            "ai/verification-gates.md",
+            "ai/cache-policy.md",
+            "ai/tool-call-policy.md",
+            "ai/agent-handoff.md",
+        )
+        text = "\n".join(
+            (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
+            for path in policy_docs
+        )
+        for phrase in (
+            "only supported product-command path",
+            "UNSUPPORTED",
+            "Phase 3B",
+            "INTEGRITY_ONLY",
+            "unqualified overall DONE",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
 
     def test_unsupported_host_maps_to_explicit_not_applicable_leaf(self):
         result, status = self.helper.native_adapter_gate(self.root, "issue-10", "gate-1")

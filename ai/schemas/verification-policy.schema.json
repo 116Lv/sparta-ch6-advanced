@@ -21,8 +21,13 @@
     },
     "checks": {
       "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/check" }
+      "minItems": 9,
+      "items": { "$ref": "#/$defs/check" },
+      "contains": {
+        "type": "object",
+        "properties": { "id": { "const": "native-runtime-adapter" } },
+        "required": ["id"]
+      }
     },
     "changeTypes": {
       "type": "array",
@@ -61,7 +66,19 @@
         "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" },
         "entryPoint": { "enum": ["verification-level", "api-smoke", "failure-triage", "review", "done-claim"] },
         "registryCommandId": { "type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9.-]*$" }
-      }
+      },
+      "allOf": [{
+        "if": {
+          "properties": { "id": { "const": "native-runtime-adapter" } },
+          "required": ["id"]
+        },
+        "then": {
+          "properties": {
+            "entryPoint": { "const": "verification-level" },
+            "registryCommandId": { "type": "null" }
+          }
+        }
+      }]
     },
     "changeType": {
       "type": "object",
@@ -77,7 +94,8 @@
         },
         "requiredChecks": {
           "type": "array",
-          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" }
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" },
+          "contains": { "const": "native-runtime-adapter" }
         },
         "optionalChecks": {
           "type": "array",
