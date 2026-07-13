@@ -28,11 +28,11 @@
     "timestamp": {
       "type": "string",
       "format": "date-time",
-      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z(?![\\s\\S])"
     },
-    "identifier": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
-    "version": { "type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?\\Z" },
-    "probeRef": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
+    "identifier": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])" },
+    "version": { "type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?![\\s\\S])" },
+    "probeRef": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|(?![\\s\\S]))).+(?![\\s\\S])" },
     "surfaceName": { "enum": ["COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL"] },
     "supportedSurface": {
       "type": "object",
@@ -87,7 +87,7 @@
         "minimumHostVersion": { "$ref": "#/$defs/version" },
         "adapterVersionRange": { "type": "string", "minLength": 1, "maxLength": 128 },
         "producerId": { "$ref": "#/$defs/identifier" },
-        "ed25519KeyFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "ed25519KeyFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}(?![\\s\\S])" },
         "surfaces": { "$ref": "#/$defs/fourSupportedSurfaces" }
       }
     },

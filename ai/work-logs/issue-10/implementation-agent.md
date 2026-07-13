@@ -179,3 +179,21 @@ Task 1 is complete. Issue #10 remains in progress for later Phase 3A tasks.
 
 - No Phase 1/2 baseline, product command, workflow evidence, `.ai-runs` artifact, network call, database operation, or infrastructure command was touched or run.
 - External target and payload/query classifications are deliberately closed. A future producer needing another category must update the schema and tests explicitly rather than publish an arbitrary label.
+
+## Task 3 Portable Closed-Pattern Fix Report (2026-07-13)
+
+### Scope
+
+- Required the canonical unsupported-host minimum snapshot to contain a nonempty `producerId` and exactly `surfaces: []`; every nonempty or malformed surface value now yields `BLOCKED` with `NATIVE_ADAPTER_SNAPSHOT_INVALID`.
+- Replaced terminal `$` and Python-only `\Z` usage in the three Phase3A-native schemas with the portable exact-end assertion `(?![\s\S])`, including identifiers, timestamps, repository paths/refs, SHA-256 digests/fingerprints, and SemVer.
+- Added schema contract vectors for valid values and terminal-newline rejection, including `eventId`, fingerprints, result refs, digests, and versions.
+
+### TDD Evidence
+
+- RED: `python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_canonical_empty_supported_hosts_block_malformed_unsigned_snapshot scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_native_adapter_schema_patterns_use_portable_exact_end_and_reject_terminal_newlines -v` exited `1` with 9 expected failures. `[null]` and other nonempty snapshots returned `UNSUPPORTED`; `$`-anchored values accepted terminal newlines.
+- GREEN: the same focused command exited `0`; 2 tests passed.
+- GREEN: `python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v` exited `0`; 54 tests passed.
+
+### Boundary Notes
+
+- No product commands, runtime evidence, `.ai-runs` artifacts, network calls, database operations, or infrastructure commands were run or created.

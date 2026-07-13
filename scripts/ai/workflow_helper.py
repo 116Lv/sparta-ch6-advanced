@@ -5976,7 +5976,7 @@ def native_unsupported_runtime_snapshot_contract(snapshot):
         return "NATIVE_ADAPTER_SNAPSHOT_INVALID"
     if not isinstance(snapshot["producerId"], str) or not snapshot["producerId"].strip():
         return "NATIVE_ADAPTER_SNAPSHOT_INVALID"
-    if not isinstance(snapshot["surfaces"], list):
+    if not isinstance(snapshot["surfaces"], list) or snapshot["surfaces"] != []:
         return "NATIVE_ADAPTER_SNAPSHOT_INVALID"
     return None
 

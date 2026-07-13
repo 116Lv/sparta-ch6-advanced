@@ -6781,6 +6781,62 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                     target[path[-1]] = invalid_version
                     self.assert_invalid(schema_name, instance)
 
+    def test_native_adapter_schema_patterns_use_portable_exact_end_and_reject_terminal_newlines(self):
+        vectors = (
+            ("native-runtime-adapters", self.supported_host_policy, ("updatedAt",), "2026-07-13T01:00:00Z"),
+            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "producerId"), "example.native.adapter"),
+            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "ed25519KeyFingerprint"), "a" * 64),
+            ("native-runtime-adapters", self.supported_host_policy, ("currentHost", "probeRefs", 0), "ai/native-runtime-adapters.md"),
+            ("native-bypass-attempt", self.bypass_attempt, ("eventId",), "event-1"),
+            ("native-bypass-attempt", self.bypass_attempt, ("observedAt",), "2026-07-13T01:00:00Z"),
+            ("native-bypass-attempt", self.bypass_attempt, ("summary", "argumentSummary", "sha256"), "a" * 64),
+            ("native-bypass-attempt", self.bypass_attempt, ("summary", "target", "repositoryPath"), "docs/00-index.md"),
+            ("native-adapter-result", self.adapter_result, ("data", "hostVersion"), "1.0.0"),
+        )
+        for schema_name, factory, path, value in vectors:
+            with self.subTest(schema_name=schema_name, path=path, value="valid"):
+                instance = factory()
+                target = instance
+                for segment in path[:-1]:
+                    target = target[segment]
+                target[path[-1]] = value
+                self.assert_valid(schema_name, instance)
+            with self.subTest(schema_name=schema_name, path=path, value="terminal-newline"):
+                instance = factory()
+                target = instance
+                for segment in path[:-1]:
+                    target = target[segment]
+                target[path[-1]] = value + "\n"
+                self.assert_invalid(schema_name, instance)
+
+        result = self.adapter_result()
+        result["data"]["bypassAttemptRefs"] = ["ai/native-bypass-attempts.json"]
+        self.assert_valid("native-adapter-result", result)
+        result["data"]["bypassAttemptRefs"] = ["ai/native-bypass-attempts.json\n"]
+        self.assert_invalid("native-adapter-result", result)
+
+        for schema_name in (
+            "native-runtime-adapters",
+            "native-bypass-attempt",
+            "native-adapter-result",
+        ):
+            schema = json.loads((REPOSITORY_ROOT / "ai" / "schemas" / f"{schema_name}.schema.json").read_text(encoding="utf-8"))
+            patterns = []
+            pending = [schema]
+            while pending:
+                value = pending.pop()
+                if isinstance(value, dict):
+                    if "pattern" in value:
+                        patterns.append(value["pattern"])
+                    pending.extend(value.values())
+                elif isinstance(value, list):
+                    pending.extend(value)
+            self.assertTrue(patterns)
+            for pattern in patterns:
+                self.assertNotIn("$", pattern)
+                self.assertNotIn(r"\Z", pattern)
+                self.assertIn(r"(?![\s\S])", pattern)
+
     def test_closed_native_adapter_schemas_reject_unknown_values_and_secret_bearing_fields(self):
         policy = self.supported_host_policy()
         policy["unexpected"] = True
@@ -6899,6 +6955,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             {"producerId": "fixture"},
             {"producerId": [], "surfaces": []},
             {"producerId": "fixture", "surfaces": {}},
+            {"producerId": "fixture", "surfaces": [None]},
+            {"producerId": "fixture", "surfaces": ["COMMAND"]},
             {"producerId": "fixture", "surfaces": [], "fresh": False},
         )
         for snapshot in invalid_snapshots:
