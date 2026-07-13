@@ -5638,6 +5638,28 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         path.write_text(json.dumps(claim), encoding="utf-8")
         return ".ai-runs/run-1/claim-input.json"
 
+    def partial_finalization_paths(self):
+        run = self.root / ".ai-runs" / "run-1"
+        return (
+            run / "done-claim.json",
+            run / "gate-results" / "pre-done-claim.json",
+            run / "artifact-manifest.json",
+        )
+
+    def inject_partial_finalization_failure(self, error, *, mutate_session=False):
+        for path in self.partial_finalization_paths():
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            path.write_text("{}\n", encoding="utf-8")
+        if mutate_session:
+            session = self.session()
+            session["startedAt"] = "2026-07-12T00:00:00Z"
+            self.session_path.write_text(json.dumps(session), encoding="utf-8")
+        raise error
+
+    def assert_partial_finalization_absent(self):
+        for path in self.partial_finalization_paths():
+            self.assertFalse(path.exists(), path)
+
     def test_valid_all_pass_claim_finalizes_integrity_only_run(self):
         self.publish_command_result(exit_code=0)
         with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
@@ -5803,6 +5825,81 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual((result["operation"], result["result"], status), ("PRE_DONE_CLAIM", "INVALID_STATE", 5))
         self.assertEqual(result["reason"], "PROJECT_STATE_SUMMARY_STALE")
         self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+
+    def test_validation_failure_before_run_publication_rolls_back_and_retries(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        failure = self.helper.InvalidStateError([self.helper.validation_error(
+            "INJECTED_FINALIZATION_FAILURE", message="injected finalization validation failure",
+        )])
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(
+                self.helper,
+                "publish_done_gate_manifest_run",
+                side_effect=lambda *args: self.inject_partial_finalization_failure(failure),
+            ),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "INJECTED_FINALIZATION_FAILURE", 5,
+        ))
+        self.assertEqual(self.session()["state"], "OPEN")
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        self.assert_partial_finalization_absent()
+
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            retry, retry_status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((retry["result"], retry_status), ("PASS", 0))
+
+    def test_io_failure_before_run_publication_rolls_back_and_retries(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        failure = OSError("injected finalization I/O failure")
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(
+                self.helper,
+                "publish_done_gate_manifest_run",
+                side_effect=lambda *args: self.inject_partial_finalization_failure(failure),
+            ),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "PRE_DONE_CLAIM_FAILED", 5,
+        ))
+        self.assertEqual(self.session()["state"], "OPEN")
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        self.assert_partial_finalization_absent()
+
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            retry, retry_status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((retry["result"], retry_status), ("PASS", 0))
+
+    def test_mutated_finalizing_session_requires_explicit_recovery(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        failure = self.helper.InvalidStateError([self.helper.validation_error(
+            "INJECTED_FINALIZATION_FAILURE", message="injected finalization validation failure",
+        )])
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(
+                self.helper,
+                "publish_done_gate_manifest_run",
+                side_effect=lambda *args: self.inject_partial_finalization_failure(
+                    failure, mutate_session=True,
+                ),
+            ),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "FINALIZATION_RECOVERY_REQUIRED", 2,
+        ))
+        self.assertEqual(self.session()["state"], "FINALIZING")
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        for path in self.partial_finalization_paths():
+            self.assertTrue(path.exists(), path)
 
 
 class Phase1B2Task7RepositoryBoundaryTests(unittest.TestCase):

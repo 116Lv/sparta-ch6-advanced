@@ -341,13 +341,15 @@ This per-ID/per-attempt layout explicitly supersedes the parent design's illustr
 6. The finalizer constructs and schema-validates the candidate `run.json`, which references the artifact manifest and exact evidence graph, then atomically publishes it last.
 7. Once `run.json` exists, the run is immutable and `.state/` is removed. A read-only `verify-finalized` operation recomputes directory closure and digests and emits its result outside the run; it never appends evidence to a finalized run.
 
-Any crash before step 6 leaves no finalized run and resumes only through explicit stale-lock/session recovery. A crash after `run.json` publication is verified from the immutable manifest. No PRE_DONE_CLAIM operation requires a finalized `run.json`, so finalization has no circular write dependency.
+An in-process validation or publication exception before step 6 invokes bounded rollback while the same validated run-lock owner is still held. Rollback first proves that `run.json` is absent and that `.state/run-session.json` still equals the exact FINALIZING projection of the captured OPEN session, removes only the attributed `done-claim.json`, PRE_DONE_CLAIM gate result, and artifact manifest, then restores that exact OPEN session with the existing compare-and-swap session mutation. A changed lock owner, changed FINALIZING session, unsafe cleanup target, cleanup failure, or any appearance of `run.json` prevents rollback and returns `BLOCKED` with `FINALIZATION_RECOVERY_REQUIRED`, leaving FINALIZING for explicit recovery. A crash before step 6 likewise requires explicit stale-lock/session recovery; a crash after `run.json` publication is verified from the immutable manifest, and a published `run.json` is never rolled back. No PRE_DONE_CLAIM operation requires a finalized `run.json`, so finalization has no circular write dependency.
 
 ## Phase 1B-3 Completion Contract
 
 Phase 1B-3 is an integrity gate, not a task-applicability or verification-completeness authority. Phase 2C owns machine-readable change classification, required-check selection, allowed N/A/skip policy, and unqualified completion gating. Phase 1B-3 therefore must not introduce a caller-authored requirements manifest or claim that omitted checks were permissible. Until Phase 2C exists, any `NOT_APPLICABLE` or `SKIPPED_WITH_REASON` check makes the Phase 1B-3 integrity gate `BLOCKED`; a recorded reason is necessary but not sufficient authorization.
 
 During finalization, `done-claim-check.sh prepare` validates the FINALIZING run session, every reservation and discovered artifact, command result, process attempt, approval, policy violation, gate result, evidence reference, artifact digest, and proposed done claim. Its gateway result includes `completenessEvaluated: false` and `scope: INTEGRITY_ONLY`.
+
+Every check-level `evidenceRefs` entry must resolve to evidence owned by the active session and must also appear in the claim's top-level evidence closure. The claim cannot declare a PASS check, executed command, or completed capability as not run. After publication, `verify-finalized` schema-validates the done claim and PRE_DONE_CLAIM result, reconstructs manifest-kind references, and rejects a `run.json` whose identity, result, or evidence projection is stale or altered.
 
 An overall `PASS` requires:
 

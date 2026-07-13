@@ -4,6 +4,7 @@
 import argparse
 import base64
 import codecs
+from collections.abc import Sequence
 import ctypes
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -5096,6 +5097,68 @@ def publish_done_gate_manifest_run(root, session, claim, gate_result_name, gate_
     return gate
 
 
+def finalization_artifact_refs(run_id):
+    return (
+        f".ai-runs/{run_id}/done-claim.json",
+        f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
+        f".ai-runs/{run_id}/artifact-manifest.json",
+    )
+
+
+def rollback_finalization(root: Path, original_session: dict, final_refs: Sequence[str], acquired) -> None:
+    root = Path(root).resolve(strict=True)
+    validate(root, original_session, "ai/schemas/run-session.schema.json")
+    if original_session["state"] != "OPEN":
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_ORIGINAL_SESSION_INVALID", message="rollback requires the exact prior OPEN session",
+        )])
+    run_id = original_session["runId"]
+    expected_refs = finalization_artifact_refs(run_id)
+    if isinstance(final_refs, (str, bytes)) or tuple(final_refs) != expected_refs:
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_ROLLBACK_REFS_INVALID", message="rollback references are not the exact finalization set",
+        )])
+
+    validate_held_run_lock(root, run_id, acquired)
+    run = root / ".ai-runs" / run_id
+    try:
+        (run / "run.json").lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        raise RegistryBlockedError([validation_error(
+            "FINALIZATION_ALREADY_PUBLISHED", message="published run.json cannot be rolled back",
+        )])
+
+    expected_finalizing = json.loads(json.dumps(original_session))
+    expected_finalizing["state"] = "FINALIZING"
+    _session_path, current_session = read_exact_run_json(
+        root, run_id, (".state", "run-session.json"), "ai/schemas/run-session.schema.json",
+    )
+    if current_session != expected_finalizing:
+        raise RegistryBlockedError([validation_error(
+            "FINALIZING_SESSION_CHANGED", message="FINALIZING session changed before rollback",
+        )])
+
+    for reference in final_refs:
+        validate_held_run_lock(root, run_id, acquired)
+        relative = reference.removeprefix(f".ai-runs/{run_id}/")
+        _root, path, exists = secure_run_artifact_path(root, run_id, tuple(relative.split("/")))
+        if not exists:
+            continue
+        path.chmod(0o600)
+        path.unlink()
+        fsync_directory(path.parent)
+
+    replace_run_session(
+        root,
+        run / ".state" / "run-session.json",
+        original_session,
+        acquired,
+        expected_session=expected_finalizing,
+    )
+
+
 def final_artifact_manifest(root, run_id):
     root = Path(root).resolve(strict=True)
     run = root / ".ai-runs" / run_id
@@ -5192,6 +5255,26 @@ def prepare_done_claim(root, run_id, claim_ref):
             preflight["result"], preflight["reason"], operation="PRE_DONE_CLAIM", errors=preflight["errors"],
         ), preflight_status)
     acquired = None
+    original_session = None
+    finalization_started = False
+
+    def rollback_or_recovery_required():
+        if not finalization_started:
+            return None
+        try:
+            rollback_finalization(
+                root, original_session, finalization_artifact_refs(run_id), acquired,
+            )
+        except Exception:
+            error = validation_error(
+                "FINALIZATION_RECOVERY_REQUIRED",
+                message="failed finalization requires explicit recovery while the session remains FINALIZING",
+            )
+            return publish_result(root, gateway_result(
+                "BLOCKED", error["code"], operation="PRE_DONE_CLAIM", errors=[error],
+            ), 2)
+        return None
+
     try:
         validate_run_start_inputs(run_id, "done-claim")
         session = active_open_session(root, run_id)
@@ -5200,9 +5283,13 @@ def prepare_done_claim(root, run_id, claim_ref):
         validate_held_run_lock(root, run_id, acquired)
         session = resume_immutable_publications(root, session, acquired)
         require_no_reserved_attempts(session)
-        replacement = json.loads(json.dumps(session))
+        original_session = json.loads(json.dumps(session))
+        replacement = json.loads(json.dumps(original_session))
         replacement["state"] = "FINALIZING"
-        replace_run_session(root, root / replacement["$id"], replacement, acquired, expected_session=session)
+        replace_run_session(
+            root, root / replacement["$id"], replacement, acquired, expected_session=original_session,
+        )
+        finalization_started = True
         session = replacement
 
         source = done_claim_source_path(root, run_id, claim_ref)
@@ -5215,14 +5302,23 @@ def prepare_done_claim(root, run_id, claim_ref):
         gate = publish_done_gate_manifest_run(root, session, claim, result, reason)
         return publish_result(root, gate, status)
     except RegistryBlockedError as error:
+        recovery = rollback_or_recovery_required()
+        if recovery is not None:
+            return recovery
         return publish_result(root, gateway_result(
             "BLOCKED", error.errors[0]["code"], operation="PRE_DONE_CLAIM", errors=error.errors,
         ), 2)
     except InvalidStateError as error:
+        recovery = rollback_or_recovery_required()
+        if recovery is not None:
+            return recovery
         return publish_result(root, gateway_result(
             "INVALID_STATE", error.errors[0]["code"], operation="PRE_DONE_CLAIM", errors=error.errors,
         ), 5)
     except (OSError, TypeError, ValueError) as error:
+        recovery = rollback_or_recovery_required()
+        if recovery is not None:
+            return recovery
         return publish_result(root, gateway_result(
             "INVALID_STATE", "PRE_DONE_CLAIM_FAILED", operation="PRE_DONE_CLAIM",
         ), 5)
