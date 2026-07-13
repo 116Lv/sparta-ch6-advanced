@@ -195,3 +195,40 @@ Ready to begin global Task 1 (Phase 1B-3 local Task 1).
 - The required ignored report is at `.superpowers/sdd/task-3-phase1b3-report.md`; this assigned role-log update is committed separately.
 - No Task 4 or later-phase implementation was started. Gradle, build/product tests, server, Docker, HTTP/API, database, migration, seed, deploy, and infrastructure commands remain NOT RUN.
 - No verification-completeness, registry `VERIFIED`, phase-completion, Issue closure, native/CI enforcement, or unqualified overall `DONE` claim is made.
+
+## Task 3 Critical Review Fix (2026-07-14)
+
+### Finding And Root Cause
+
+- Critical review found that OPEN-to-FINALIZING and FINALIZING-to-OPEN replacement callers assumed an exception meant the exact compare-and-swap had not taken effect.
+- `replace_run_session` can durably apply `os.replace` before a later directory fsync or chmod raises, so the durable session must be reconciled under the retained lock before deciding whether rollback started or succeeded.
+
+### Changed Files
+
+- `scripts/ai/tests/test_workflow_helper.py`: added post-apply exception injection after each session replacement and deep-equality assertions against the full captured OPEN snapshot.
+- `scripts/ai/workflow_helper.py`: added exact expected-FINALIZING derivation and schema-valid session rereads bracketed by same-owner lock validation; reconciled both transition and restoration exceptions.
+- `.superpowers/sdd/task-3-phase1b3-report.md`: appended the ignored detailed review-fix evidence.
+- `ai/work-logs/issue-14/implementation-agent.md`: appended this review-fix recovery record.
+
+### Exact TDD Evidence
+
+- RED command: `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests.test_transition_exception_after_finalizing_replace_rolls_back_exact_open_session scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests.test_restore_exception_after_open_replace_preserves_original_failure_and_snapshot -v`
+- RED result: expected exit `1`; 2 tests failed in `2.481s`. The transition case retained FINALIZING instead of the complete OPEN snapshot; the restore case returned `BLOCKED / FINALIZATION_RECOVERY_REQUIRED / 2` instead of the original `INVALID_STATE / INJECTED_FINALIZATION_FAILURE / 5` although exact OPEN was durable.
+- Focused GREEN command: same two-test command after reconciliation implementation.
+- Focused GREEN result: exit `0`; 2 tests passed in `2.616s`.
+- Surrounding GREEN command: `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests -v`
+- Surrounding GREEN result: exit `0`; 17 tests passed in `23.840s`; repository `.ai-runs` was absent.
+- Self-review command: `git diff --check`
+- Self-review result: exit `0`; no whitespace errors, only Git line-ending conversion warnings.
+
+### Recovery And Lock Decisions
+
+- After a transition exception, exact expected FINALIZING is treated as started and enters bounded rollback; exact captured OPEN preserves the original result; conflict, unreadability, or owner change returns `FINALIZATION_RECOVERY_REQUIRED` without cleanup.
+- After a restore exception, exact captured OPEN is accepted as successful rollback and preserves the original pre-publication result; exact FINALIZING, conflict, unreadability, or owner change remains recovery-required.
+- Both reconciliation reads validate the same held lock owner before and after full schema-valid session loading. No state-only match or unlocked bypass was introduced; publication and cleanup guards remain unchanged.
+
+### Recovery State
+
+- Reconciliation helper/test changes are committed as `e2f85d7` with message `fix(ai): reconcile phase 1b3 session replacements` and await independent rereview.
+- Gradle, build/product tests, server, Docker, HTTP/API, database, migration, seed, deploy, and infrastructure commands remain NOT RUN. No real repository `.ai-runs` was created.
+- No verification-completeness, registry `VERIFIED`, phase-completion, Issue closure, native/CI enforcement, or unqualified overall `DONE` claim is made.
