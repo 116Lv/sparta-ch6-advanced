@@ -213,3 +213,45 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: The evidence reopen path has been removed, the bounded single-read implementation binds parsing, schema validation, and hashing to identical bytes, and the required reason precedence and native boundary remain intact. No findings remain.
+
+## Task 5 Final Re-review (2026-07-14)
+
+### Routing Outcome
+
+- Owning feature: none. This is repo-wide Phase 2C/3A verification-gate infrastructure and a non-normative review-log update.
+
+### Spec Compliance
+
+- Verdict: Spec compliant.
+- The prior Important verified-identity nullability finding is closed. The result schema now has mutually exclusive verified/all-string and synthesized/all-null identity shapes; missing or partially null verified identities satisfy neither branch (`ai/schemas/verification-gate-result.schema.json:43-93`).
+- The prior Important accepted-leaf digest reopen finding is closed. Referenced leaf bytes and the parsed value are captured in one bounded open, passed through verification, and `leafResultSha256` is derived from those exact accepted bytes without reopening the path (`scripts/ai/workflow_helper.py:5919-5969`, `scripts/ai/workflow_helper.py:5979-6044`).
+- The prior Important synthesized `mappedResult` finding is closed. The all-null schema branch excludes both raw and mapped `PASS`/`FAIL`, and the regression covers mapped-only PASS and FAIL mutations while raw `NOT_CONFIGURED` remains unchanged (`ai/schemas/verification-gate-result.schema.json:82-92`, `scripts/ai/tests/test_workflow_helper.py:6822-6836`).
+- Required caller `NOT_APPLICABLE` remains canonical-policy-only, optional `FAIL` remains visible, missing required leaves fail closed, and aggregate precedence remains `FAIL` before `BLOCKED` (`scripts/ai/workflow_helper.py:6074-6103`, `scripts/ai/workflow_helper.py:7055-7074`).
+- Internal native identity and repository-only `HOST_UNSUPPORTED` qualification remain preserved, as does external native-forgery precedence (`scripts/ai/workflow_helper.py:6790-6807`, `scripts/ai/workflow_helper.py:6976-6984`, `scripts/ai/workflow_helper.py:7083-7091`, `scripts/ai/tests/test_workflow_helper.py:7009-7032`).
+- The implementation-agent binding is `verification-runner`, `failure-triage`, and `docs-sync`, with reusable references `ai/workflow-cache.json`, `ai/verification-policy.json`, and `ai/native-runtime-adapters.json`. `review-gate` belongs to the independent reviewer handoff; it is not missing from the implementation-agent dispatch (`ai/work-logs/issue-14/implementation-agent.md:31-39`, `ai/work-logs/issue-14/implementation-agent.md:525-528`).
+- The implementation log records focused RED/GREEN evidence and a final Phase 2C/3A result of 111 passing tests. Per the review constraint, these commands were not independently rerun (`ai/work-logs/issue-14/implementation-agent.md:510-520`).
+
+### Strengths
+
+- The schema regression directly tests missing/null verified identity, a valid synthesized all-null record, and both mapped-only PASS/FAIL bypasses (`scripts/ai/tests/test_workflow_helper.py:6775-6850`).
+- The replacement regression asserts exactly one leaf-path open and binds output identity to the first accepted byte sequence (`scripts/ai/tests/test_workflow_helper.py:6852-6899`).
+- The focused Task 5 tests supply explicit PASS companions for unrelated required checks, isolating required-N/A and optional-FAIL behavior from missing evidence (`scripts/ai/tests/test_workflow_helper.py:6532-6562`, `scripts/ai/tests/test_workflow_helper.py:6713-6723`).
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+- None. All three prior Important findings are closed.
+
+#### Minor (Nice to Have)
+
+- None.
+
+### Assessment
+
+- Task quality: Approved.
+- Reasoning: Static final re-review confirms fail-closed aggregation, exclusive identity shapes, exact accepted-byte digest binding, mapped-only synthesized-result closure, native boundary preservation, and accurate role metadata. No findings remain.
