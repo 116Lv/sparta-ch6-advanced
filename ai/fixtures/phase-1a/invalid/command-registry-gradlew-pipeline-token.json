@@ -1,0 +1,24 @@
+{
+  "$schema": "ai/schemas/command-registry.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/command-registry-gradlew-pipeline-token.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-10T10:16:58Z",
+  "commands": [
+    {
+      "id": "verify.unit",
+      "purpose": "Reject a gradlew argv token that embeds a pipeline metacharacter",
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "test|tee"],
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        { "kind": "STATIC_FILE", "path": "build.gradle", "claim": "The test task uses JUnit Platform." }
+      ],
+      "inputPaths": ["build.gradle"],
+      "lastVerifiedAt": null,
+      "notes": []
+    }
+  ]
+}

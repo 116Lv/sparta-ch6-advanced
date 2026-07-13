@@ -97,3 +97,7 @@ Disallowed examples:
 - `The tests were not run, but the work is complete.`
 - `The logic appears correct.`
 - `Mock verification proves the real API works.`
+
+## Phase 2C Executable Gate
+
+Before recording implementation QA, use `ai/verification-gates.md`, canonical `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh` to classify the change type, evaluate task/change applicability, and map `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL`. Product commands remain NOT RUN for this static/helper gate. A complete `pending_issue` fallback may support implementation QA, but issue-backed closure, reconciliation-complete claims, and unqualified overall DONE remain blocked.

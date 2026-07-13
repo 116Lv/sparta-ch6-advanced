@@ -1,0 +1,46 @@
+{
+  "$schema": "./schemas/workflow-cache.schema.json",
+  "$id": "ai/workflow-cache.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-12T00:00:00Z",
+  "entries": [
+    {
+      "id": "phase-2b-handoff-context",
+      "kind": "HANDOFF_CONTEXT",
+      "status": "FRESH",
+      "key": {
+        "paths": [
+          {
+            "path": "ai/agent-handoff.json",
+            "sha256": "dccea92788ab8cd71c7a63cc30973513035933c216cd339229bb0e256e6043a7"
+          }
+        ],
+        "environmentFingerprint": null
+      },
+      "summary": "Phase 2B and Phase 2C reusable handoff context linking skill contracts, verification gates, Phase 2A context-cache recovery, and Issue-backed work logs.",
+      "evidenceRefs": [
+        "ai/agent-handoff.json",
+        "ai/work-logs/issue-5/README.md",
+        "ai/work-logs/issue-6/README.md",
+        "ai/verification-gates.md",
+        "ai/verification-policy.json",
+        "scripts/ai/verification-gate.sh",
+        "ai/work-logs/issue-7/README.md"
+      ],
+      "createdAt": "2026-07-13T00:00:00Z"
+    }
+  ],
+  "handoffNotes": [
+    {
+      "id": "phase-2b-skills-handoff",
+      "summary": "Use ai/agent-handoff.json and ai/skill-catalog.json when dispatching or reviewing Phase 2B skill/handoff reuse work.",
+      "createdAt": "2026-07-13T00:00:00Z"
+    },
+    {
+      "id": "phase-2c-verification-gates",
+      "summary": "Use ai/verification-gates.md, ai/verification-policy.json, and scripts/ai/verification-gate.sh for Phase 2C verification completeness and task/change applicability mapping.",
+      "createdAt": "2026-07-13T00:00:00Z"
+    }
+  ],
+  "invalidationEvents": []
+}

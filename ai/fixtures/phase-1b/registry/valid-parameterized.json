@@ -1,0 +1,37 @@
+{
+  "$schema": "ai/schemas/command-registry.schema.json",
+  "$id": "ai/fixtures/phase-1b/registry/valid-parameterized.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-11T00:00:00Z",
+  "commands": [
+    {
+      "id": "verify.unit-class",
+      "purpose": "Run one requested unit-test class",
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "test", "--tests", "{{testClass}}"],
+      "workingDirectory": ".",
+      "parameters": {
+        "allowed": true,
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["testClass"],
+          "properties": {
+            "testClass": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.$*]+$"
+            }
+          }
+        }
+      },
+      "prerequisites": [],
+      "evidence": [
+        { "kind": "STATIC_FILE", "path": "gradlew", "claim": "The POSIX Gradle wrapper entry point exists." }
+      ],
+      "inputPaths": ["build.gradle", "src/test/**"],
+      "lastVerifiedAt": null,
+      "notes": []
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "ai/schemas/gateway-result.schema.json",
+  "$id": "ai/gateway-result.json",
+  "schemaVersion": 1,
+  "operation": "RESOLVE",
+  "result": "BLOCKED",
+  "reason": "prerequisites are incomplete",
+  "errors": [],
+  "data": {
+    "prerequisiteIds": ["compile-main", "compile-test"]
+  }
+}

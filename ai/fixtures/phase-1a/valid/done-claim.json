@@ -1,0 +1,26 @@
+{
+  "$schema": "ai/schemas/done-claim.schema.json",
+  "$id": "ai/fixtures/phase-1a/valid/done-claim.json",
+  "schemaVersion": 1,
+  "runId": "fixture-run-001",
+  "taskKey": "phase-1b-contract-fixture",
+  "generatedAt": "2026-07-10T08:02:00Z",
+  "implementationStatus": "PASS",
+  "overallResult": "PASS",
+  "checks": [
+    {
+      "id": "verify.unit",
+      "result": "PASS",
+      "evidenceRefs": [".ai-runs/fixture-run-001/commands/verify.unit.json"],
+      "reason": null
+    }
+  ],
+  "notRunItems": [
+    { "id": "verify.api-smoke", "reason": "Not applicable to the fixture task." }
+  ],
+  "evidenceRefs": [".ai-runs/fixture-run-001/run.json"],
+  "unexpected500Status": "NOT_APPLICABLE",
+  "unhandledExceptionStatus": "NOT_APPLICABLE",
+  "blockers": [],
+  "remainingRisks": []
+}

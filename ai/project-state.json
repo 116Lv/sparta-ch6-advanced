@@ -1,0 +1,167 @@
+{
+  "$schema": "./schemas/project-state.schema.json",
+  "$id": "ai/project-state.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-10T14:17:27Z",
+  "project": {
+    "name": "sparta-ch6-advanced",
+    "productType": "Spring Boot backend API assignment",
+    "mainLanguage": "Java 21",
+    "framework": "Spring Boot 4.1.0",
+    "buildSystem": "Gradle Wrapper 9.0.0"
+  },
+  "facts": [
+    {
+      "id": "test.framework",
+      "value": "JUnit Platform via Spring Boot Test",
+      "confidence": "CONFIRMED",
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "build.gradle",
+          "claim": "Spring Boot Test is declared and the test task uses JUnit Platform."
+        }
+      ],
+      "observedAt": "2026-07-10T08:26:30Z"
+    },
+    {
+      "id": "database.primary",
+      "value": "MySQL",
+      "confidence": "CONFIRMED",
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "src/main/resources/application.yml",
+          "claim": "The primary datasource uses MySQL."
+        }
+      ],
+      "observedAt": "2026-07-10T08:26:30Z"
+    }
+  ],
+  "importantPaths": [
+    {
+      "purpose": "Application source",
+      "path": "src/main/java"
+    },
+    {
+      "purpose": "Tests",
+      "path": "src/test"
+    },
+    {
+      "purpose": "Project documentation",
+      "path": "docs"
+    },
+    {
+      "purpose": "Feature specifications",
+      "path": "specs"
+    },
+    {
+      "purpose": "Architecture decisions",
+      "path": "adr"
+    },
+    {
+      "purpose": "AI workflow policy",
+      "path": "ai"
+    }
+  ],
+  "ports": [
+    {
+      "service": "application",
+      "value": 8080,
+      "confidence": "INFERRED",
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "src/main/resources/application.yml",
+          "claim": "No explicit server.port is configured; 8080 is the Spring Boot default inference."
+        }
+      ]
+    },
+    {
+      "service": "mysql",
+      "value": 3306,
+      "confidence": "CONFIRMED",
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "docker-compose.yml",
+          "claim": "MySQL maps port 3306."
+        }
+      ]
+    },
+    {
+      "service": "redis",
+      "value": 6379,
+      "confidence": "CONFIRMED",
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "docker-compose.yml",
+          "claim": "Redis maps port 6379."
+        }
+      ]
+    },
+    {
+      "service": "kafka",
+      "value": 9092,
+      "confidence": "CONFIRMED",
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "docker-compose.yml",
+          "claim": "Kafka maps port 9092."
+        }
+      ]
+    }
+  ],
+  "environments": [
+    {
+      "kind": "LOCAL",
+      "configurationStatus": "VERIFIED",
+      "notes": [
+        "Local Python 3 helper runtime passed the recorded Phase 1B preflight."
+      ]
+    },
+    {
+      "kind": "CI",
+      "configurationStatus": "NOT_CONFIGURED",
+      "notes": [
+        "No CI workflow exists; CI enforcement is Phase 3 scope."
+      ]
+    }
+  ],
+  "helperRuntimes": [
+    {
+      "environment": "LOCAL",
+      "targetRuntime": "Python 3",
+      "detectedRuntime": "Python 3",
+      "configurationStatus": "VERIFIED",
+      "version": "3.9.6 (tags/v3.9.6:db3ff76, Jun 28 2021, 15:26:21) [MSC v.1929 64 bit (AMD64)]",
+      "evidence": [
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": "ai/evidence/local-helper-runtime.json",
+          "claim": "Local Python 3 helper runtime passed the Phase 1B preflight."
+        }
+      ]
+    },
+    {
+      "environment": "CI",
+      "targetRuntime": "Python 3",
+      "detectedRuntime": null,
+      "configurationStatus": "NOT_CONFIGURED",
+      "version": null,
+      "evidence": []
+    }
+  ],
+  "commandRegistryRef": "ai/command-registry.json",
+  "cacheInvalidationInputs": [
+    "build.gradle",
+    "settings.gradle",
+    "gradle/wrapper/gradle-wrapper.properties",
+    "docker-compose.yml",
+    "src/main/resources/application.yml",
+    "src/test/resources/application-test.yml",
+    ".github/**"
+  ]
+}

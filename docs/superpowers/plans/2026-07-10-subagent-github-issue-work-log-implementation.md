@@ -70,7 +70,7 @@
 **Files:**
 - Review: all files from Tasks 1 and 2
 - Update: `ai/work-logs/index.md`
-- Update: current execution logs under `ai/work-logs/no-issue/subagent-workflow-20260710/`
+- Update: current execution logs under `ai/work-logs/issue-8/`
 
 **Interfaces:**
 - Consumes: complete documentation diff and approved design.

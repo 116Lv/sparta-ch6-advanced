@@ -89,3 +89,7 @@ Complete this section when an API changed.
 Implementation completion, tracking availability, and GitHub Issue closure are separate decisions. `implementation_status: PASS` with `tracking_status: pending_issue` is valid when the fallback is complete, but `overall_decision` must not be `DONE`. Use `DONE_WITH_CONCERNS` when tracking reconciliation is the only remaining concern; otherwise use the decision supported by the remaining blockers or incomplete scope.
 
 An unqualified `overall_decision: DONE` requires workflow `status: done`, `implementation_status: PASS`, `tracking_status: issue_backed`, and `github_issue_closure_status` of `ready_to_close` or `closed`. The closure checklist may verify this done claim exists; the pre-QA checklist must not.
+
+## Phase 2C Gate Inputs
+
+Reference `ai/verification-gates.md`, `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh` when reporting verification completeness and task/change applicability. Include the selected change type and the mapped results for `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL`. Product commands remain NOT RUN unless separately executed through a supported evidence path. While `tracking_status` is `pending_issue`, do not claim issue-backed closure, reconciliation-complete status, or unqualified overall DONE.

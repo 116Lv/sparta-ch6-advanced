@@ -46,3 +46,10 @@
 - [ ] decisions.md 업데이트
 - [ ] done claim 작성
 
+# Phase 2C Verification Gate
+
+- [ ] Select the change type from `ai/verification-policy.json`.
+- [ ] Run or explicitly report NOT RUN for `scripts/ai/verification-gate.sh`.
+- [ ] Link `ai/verification-gates.md`.
+- [ ] Record verification completeness, task/change applicability, and `NOT_CONFIGURED` / `NOT_APPLICABLE` / `BLOCKED` / `FAIL` mapping.
+- [ ] Product commands remain NOT RUN unless separately executed through a supported evidence path.

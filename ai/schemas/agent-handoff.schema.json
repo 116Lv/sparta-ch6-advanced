@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:agent-handoff:v1",
+  "schemaVersion": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "updatedAt", "routeId", "owningFeature", "startupDocuments", "reusableContextRefs", "skillCatalogRef", "skillIds", "workLogRefs", "githubIssue", "notRunProjectCommands", "laterPhaseBoundaries"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "$id": { "const": "ai/agent-handoff.json" },
+    "schemaVersion": { "const": 1 },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
+    },
+    "routeId": { "const": "repo-wide-ai-workflow" },
+    "owningFeature": { "const": "none" },
+    "startupDocuments": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repositoryPath" } },
+    "reusableContextRefs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repositoryPath" } },
+    "skillCatalogRef": { "const": "ai/skill-catalog.json" },
+    "skillIds": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": { "enum": ["repo-intake", "command-runner", "verification-runner", "api-smoke-verifier", "failure-triage", "docs-sync", "review-gate"] }
+    },
+    "workLogRefs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repositoryPath" } },
+    "githubIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issueNumber", "issueUrl", "trackingStatus", "reconciliationRequired", "previousReconciliationError"],
+      "properties": {
+        "issueNumber": { "const": 7 },
+        "issueUrl": { "const": "https://github.com/116Lv/sparta-ch6-advanced/issues/7" },
+        "trackingStatus": { "const": "issue_backed" },
+        "reconciliationRequired": { "const": true },
+        "previousReconciliationError": { "const": "authorization failure: GitHub API 403 Resource not accessible by integration" }
+      }
+    },
+    "notRunProjectCommands": { "type": "array", "minItems": 10, "items": { "type": "string", "minLength": 1 } },
+    "laterPhaseBoundaries": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*\\\\).+$"
+    }
+  }
+}

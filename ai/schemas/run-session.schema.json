@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:run-session:v1",
+  "schemaVersion": 1,
+  "title": "AI Workflow Active Run Session",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "workingDirectory", "environment", "state", "commandResultRefs", "processAttemptRefs", "approvalRefs", "policyViolationRefs", "gateResultRefs", "reservations", "lockRecoveries", "redactionApplied"],
+  "properties": {
+    "$schema": { "const": "ai/schemas/run-session.schema.json" },
+    "$id": { "$ref": "#/$defs/repositoryPath" },
+    "schemaVersion": { "const": 1 },
+    "runId": { "$ref": "#/$defs/identifier" },
+    "taskKey": { "type": "string", "minLength": 1 },
+    "startedAt": { "$ref": "#/$defs/timestamp" },
+    "workingDirectory": { "$ref": "#/$defs/repositoryPath" },
+    "environment": { "enum": ["LOCAL", "CI"] },
+    "state": { "enum": ["OPEN", "FINALIZING"] },
+    "commandResultRefs": { "$ref": "#/$defs/referenceList" },
+    "processAttemptRefs": { "$ref": "#/$defs/referenceList" },
+    "approvalRefs": { "$ref": "#/$defs/referenceList" },
+    "policyViolationRefs": { "$ref": "#/$defs/referenceList" },
+    "gateResultRefs": { "$ref": "#/$defs/referenceList" },
+    "reservations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reservation" }
+    },
+    "lockRecoveries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/lockRecovery" }
+    },
+    "redactionApplied": { "type": "boolean" }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
+    },
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "commandId": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$" },
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "referenceList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/repositoryPath" }
+    },
+    "reservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attemptId", "commandId", "argvHash", "inputFingerprint", "environmentFingerprint", "reservedAt", "state", "commandResultRef", "processAttemptRef", "terminalAt", "rerunReasonHash", "rerunOfAttemptId"],
+      "properties": {
+        "attemptId": { "$ref": "#/$defs/identifier" },
+        "commandId": { "$ref": "#/$defs/commandId" },
+        "argvHash": { "$ref": "#/$defs/digest" },
+        "inputFingerprint": { "$ref": "#/$defs/digest" },
+        "environmentFingerprint": { "$ref": "#/$defs/digest" },
+        "reservedAt": { "$ref": "#/$defs/timestamp" },
+        "state": { "enum": ["RESERVED", "PASS", "FAIL", "BLOCKED"] },
+        "commandResultRef": { "oneOf": [{ "$ref": "#/$defs/repositoryPath" }, { "type": "null" }] },
+        "processAttemptRef": { "oneOf": [{ "$ref": "#/$defs/repositoryPath" }, { "type": "null" }] },
+        "terminalAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "rerunReasonHash": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "rerunOfAttemptId": { "oneOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "RESERVED" } }, "required": ["state"] },
+          "then": {
+            "properties": {
+              "commandResultRef": { "type": "null" },
+              "processAttemptRef": { "type": "null" },
+              "terminalAt": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "state": { "enum": ["PASS", "FAIL", "BLOCKED"] } }, "required": ["state"] },
+          "then": {
+            "properties": {
+              "commandResultRef": { "$ref": "#/$defs/repositoryPath" },
+              "processAttemptRef": { "$ref": "#/$defs/repositoryPath" },
+              "terminalAt": { "$ref": "#/$defs/timestamp" }
+            }
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "rerunReasonHash": { "type": "null" },
+                "rerunOfAttemptId": { "type": "null" }
+              }
+            },
+            {
+              "properties": {
+                "rerunReasonHash": { "$ref": "#/$defs/digest" },
+                "rerunOfAttemptId": { "$ref": "#/$defs/identifier" }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "lockRecovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recoveryId", "runId", "recoveredOwnerId", "replacementOwnerId", "previousPid", "previousAcquiredAt", "recoveredAt", "reason"],
+      "properties": {
+        "recoveryId": { "$ref": "#/$defs/identifier" },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "recoveredOwnerId": { "$ref": "#/$defs/identifier" },
+        "replacementOwnerId": { "$ref": "#/$defs/identifier" },
+        "previousPid": { "type": "integer", "minimum": 1 },
+        "previousAcquiredAt": { "$ref": "#/$defs/timestamp" },
+        "recoveredAt": { "$ref": "#/$defs/timestamp" },
+        "reason": { "const": "DEAD_AND_EXPIRED" }
+      }
+    }
+  }
+}

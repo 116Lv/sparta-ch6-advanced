@@ -1,0 +1,17 @@
+{
+  "$schema": "ai/schemas/policy-violation.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/policy-violation-invalid-type.json",
+  "schemaVersion": 1,
+  "violationId": "violation-invalid",
+  "runId": "fixture-run-invalid",
+  "type": "OTHER",
+  "description": "This fixture uses an invented policy violation type.",
+  "detectedAt": "2026-07-10T08:00:00Z",
+  "blocking": true,
+  "context": {
+    "commandId": null,
+    "toolName": "shell",
+    "path": null,
+    "operation": "direct-command"
+  }
+}

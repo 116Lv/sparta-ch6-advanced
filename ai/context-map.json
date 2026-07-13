@@ -1,0 +1,73 @@
+{
+  "$schema": "./schemas/context-map.schema.json",
+  "$id": "ai/context-map.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-12T00:00:00Z",
+  "routes": [
+    {
+      "id": "repo-wide-ai-workflow",
+      "description": "Repository-wide AI workflow policy, gates, evidence, context, and cache work.",
+      "owningFeature": "NONE_ALLOWED",
+      "requiredDocuments": [
+        "AGENTS.md",
+        "ai/document-routing.md",
+        "ai/context-map.md",
+        "ai/cache-policy.md",
+        "ai/tool-call-policy.md",
+        "ai/resource-budget.md",
+        "ai/workflow-cache.md"
+      ]
+    },
+    {
+      "id": "product-feature",
+      "description": "Feature-owned product behavior and verification work.",
+      "owningFeature": "FEATURE_REQUIRED",
+      "requiredDocuments": [
+        "AGENTS.md",
+        "ai/document-routing.md",
+        "specs"
+      ]
+    },
+    {
+      "id": "documentation-only",
+      "description": "Non-normative documentation wording, index, status, or report updates after ownership routing.",
+      "owningFeature": "DIRECT_DOCUMENT",
+      "requiredDocuments": [
+        "ai/document-routing.md"
+      ]
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "product-source",
+      "paths": ["src/main"],
+      "owner": "product feature specs"
+    },
+    {
+      "id": "product-tests",
+      "paths": ["src/test"],
+      "owner": "product feature specs"
+    },
+    {
+      "id": "ai-workflow",
+      "paths": ["ai", "scripts/ai"],
+      "owner": "repo-wide AI workflow"
+    },
+    {
+      "id": "project-docs",
+      "paths": ["docs", "README.md"],
+      "owner": "documentation routes"
+    }
+  ],
+  "generatedPaths": [
+    "ai/project-state.md",
+    "ai/command-registry.md",
+    "ai/workflow-cache.md"
+  ],
+  "excludedPaths": [
+    ".ai-runs",
+    ".git",
+    "scripts/ai/__pycache__",
+    "scripts/ai/tests/__pycache__"
+  ]
+}

@@ -27,6 +27,11 @@ changed_files: []
 commands_run: []
 tests_run: []
 blockers: []
+skill_ids: []
+handoff_state_ref:
+reusable_context_refs: []
+not_run_project_commands: []
+github_reconciliation_status:
 reconciliation_required: false
 issue_creation_attempted_at:
 issue_creation_failure_reason:
@@ -100,6 +105,11 @@ changed_files: []
 commands_run: []
 tests_run: []
 blockers: []
+skill_ids: []
+handoff_state_ref:
+reusable_context_refs: []
+not_run_project_commands: []
+github_reconciliation_status:
 reconciliation_required: false
 issue_creation_attempted_at:
 issue_creation_failure_reason:
@@ -169,6 +179,11 @@ changed_files: []
 commands_run: []
 tests_run: []
 blockers: []
+skill_ids: []
+handoff_state_ref:
+reusable_context_refs: []
+not_run_project_commands: []
+github_reconciliation_status:
 reconciliation_required: true
 issue_creation_attempted_at: <ISO-8601 timestamp>
 issue_creation_failure_reason: <authentication, authorization, outage, or network failure>
@@ -199,6 +214,11 @@ changed_files: []
 commands_run: []
 tests_run: []
 blockers: []
+skill_ids: []
+handoff_state_ref:
+reusable_context_refs: []
+not_run_project_commands: []
+github_reconciliation_status:
 reconciliation_required: true
 issue_creation_attempted_at: <ISO-8601 timestamp>
 issue_creation_failure_reason: <authentication, authorization, outage, or network failure>
@@ -210,6 +230,8 @@ migration_history: []
 Use the **Role Log Template** sections without removing or renaming any section.
 
 A fallback that finishes implementation may set workflow `status: done` while retaining `tracking_status: pending_issue`. This combination may support `implementation_status: PASS`, but it is not issue-backed and cannot support an unqualified overall `DONE` or Issue closure.
+
+Phase 2C work logs must include links to `ai/verification-gates.md`, `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh` whenever verification completeness or task/change applicability is evaluated. Record the selected change type and the `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` mapping. Product commands remain NOT RUN for static/helper gates.
 
 During reconciliation, move the full `no-issue/{work-key}/` directory to `issue-{number}/`. In every migrated record, set `tracking_status: issue_backed`, preserve workflow `status`, and replace `migration_history: []` with a structured entry:
 

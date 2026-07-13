@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:run:v1",
+  "schemaVersion": 1,
+  "title": "AI Workflow Run Index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "$id",
+    "schemaVersion",
+    "runId",
+    "taskKey",
+    "startedAt",
+    "endedAt",
+    "workingDirectory",
+    "environment",
+    "result",
+    "commandResultRefs",
+    "approvalRefs",
+    "policyViolationRefs",
+    "evidenceRefs",
+    "redactionApplied",
+    "reason"
+  ],
+  "properties": {
+    "$schema": { "const": "ai/schemas/run.schema.json" },
+    "$id": { "$ref": "#/$defs/repositoryPath" },
+    "schemaVersion": { "const": 1 },
+    "runId": { "$ref": "#/$defs/identifier" },
+    "taskKey": { "type": "string", "minLength": 1 },
+    "startedAt": { "$ref": "#/$defs/timestamp" },
+    "endedAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+    "workingDirectory": { "$ref": "#/$defs/repositoryPath" },
+    "environment": { "enum": ["LOCAL", "CI"] },
+    "result": { "$ref": "#/$defs/workflowResult" },
+    "commandResultRefs": { "$ref": "#/$defs/referenceList" },
+    "approvalRefs": { "$ref": "#/$defs/referenceList" },
+    "policyViolationRefs": { "$ref": "#/$defs/referenceList" },
+    "evidenceRefs": { "$ref": "#/$defs/referenceList" },
+    "redactionApplied": { "type": "boolean" },
+    "reason": { "type": ["string", "null"] }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"]
+          }
+        },
+        "required": ["result"]
+      },
+      "then": { "properties": { "endedAt": { "$ref": "#/$defs/timestamp" } } }
+    },
+    {
+      "if": { "properties": { "result": { "const": "SKIPPED_WITH_REASON" } }, "required": ["result"] },
+      "then": {
+        "properties": {
+          "evidenceRefs": { "minItems": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
+    },
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "workflowResult": {
+      "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"]
+    },
+    "referenceList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/repositoryPath" }
+    }
+  }
+}

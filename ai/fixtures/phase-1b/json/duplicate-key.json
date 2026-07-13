@@ -1,0 +1,6 @@
+{
+  "$schema": "ai/schemas/project-state.schema.json",
+  "$id": "ai/fixtures/phase-1b/json/duplicate-key.json",
+  "schemaVersion": 1,
+  "schemaVersion": 1
+}

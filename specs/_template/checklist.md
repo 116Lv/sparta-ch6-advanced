@@ -32,3 +32,9 @@
 - [ ] rollback 방법이 있다.
 - [ ] 문서가 업데이트되었다.
 
+# Phase 2C Verification Gate
+
+- [ ] `ai/verification-gates.md`, `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh` are linked in the final verification evidence.
+- [ ] Verification completeness and task/change applicability are recorded for the selected change type.
+- [ ] `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` mapping is recorded.
+- [ ] Product commands remain NOT RUN unless supported evidence exists.

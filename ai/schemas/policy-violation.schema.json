@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:policy-violation:v1",
+  "schemaVersion": 1,
+  "title": "AI Workflow Policy Violation Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "$id",
+    "schemaVersion",
+    "violationId",
+    "runId",
+    "type",
+    "description",
+    "detectedAt",
+    "blocking",
+    "context"
+  ],
+  "properties": {
+    "$schema": { "const": "ai/schemas/policy-violation.schema.json" },
+    "$id": { "$ref": "#/$defs/repositoryPath" },
+    "schemaVersion": { "const": 1 },
+    "violationId": { "$ref": "#/$defs/identifier" },
+    "runId": { "$ref": "#/$defs/identifier" },
+    "type": {
+      "enum": [
+        "RAW_COMMAND_ATTEMPT",
+        "UNREGISTERED_COMMAND",
+        "UNSAFE_PARAMETER",
+        "MISSING_RERUN_REASON",
+        "DESTRUCTIVE_WITHOUT_APPROVAL",
+        "UNSCRUBBED_EVIDENCE",
+        "COMPLETION_WITHOUT_EVIDENCE",
+        "DIRECT_TOOL_BYPASS"
+      ]
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "detectedAt": { "$ref": "#/$defs/timestamp" },
+    "blocking": { "type": "boolean" },
+    "context": { "$ref": "#/$defs/context" }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$",
+      "$comment": "Phase 1B validation must enable the Draft 2020-12 FormatChecker so calendar validity, including leap years, is enforced in addition to this UTC shape."
+    },
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commandId", "toolName", "path", "operation"],
+      "properties": {
+        "commandId": { "type": ["string", "null"] },
+        "toolName": { "type": ["string", "null"] },
+        "path": {
+          "oneOf": [{ "$ref": "#/$defs/repositoryPath" }, { "type": "null" }]
+        },
+        "operation": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

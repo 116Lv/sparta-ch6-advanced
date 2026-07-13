@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:command-registry:v1",
+  "schemaVersion": 1,
+  "title": "AI Workflow Command Registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "updatedAt", "commands"],
+  "properties": {
+    "$schema": {
+      "enum": [
+        "./schemas/command-registry.schema.json",
+        "ai/schemas/command-registry.schema.json"
+      ]
+    },
+    "$id": { "$ref": "#/$defs/repositoryPath" },
+    "schemaVersion": { "const": 1 },
+    "updatedAt": { "$ref": "#/$defs/timestamp" },
+    "commands": {
+      "type": "array",
+      "uniqueItems": true,
+      "$comment": "Draft 2020-12 does not enforce uniqueness of commands[*].id; Phase 1B semantic validation must reject exact duplicate IDs as INVALID_STATE before lookup or execution.",
+      "items": { "$ref": "#/$defs/command" }
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
+    },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "commandId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$"
+    },
+    "argvToken": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:\\r|\\n|[|&;<>\\x60()]))(?![\\s\\S]*\\$)(?![\\s\\S]*\\beval\\b).+$"
+    },
+    "parameterName": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+    },
+    "stringParameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "pattern"],
+      "properties": {
+        "type": { "const": "string" },
+        "pattern": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "parameterSchema": {
+      "type": "object",
+      "$comment": "Draft 2020-12 cannot compare required items with dynamic properties keys. Phase 1B semantic validation must require the required names to exactly match the properties keys and reject a mismatch as INVALID_STATE before execution.",
+      "additionalProperties": false,
+      "required": ["type", "additionalProperties", "required", "properties"],
+      "properties": {
+        "type": { "const": "object" },
+        "additionalProperties": { "const": false },
+        "required": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/parameterName" }
+        },
+        "properties": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 16,
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z][A-Za-z0-9_]*$": { "$ref": "#/$defs/stringParameter" }
+          }
+        }
+      }
+    },
+    "configurationStatus": {
+      "enum": [
+        "UNKNOWN",
+        "CONFIGURED_UNVERIFIED",
+        "VERIFIED",
+        "NOT_CONFIGURED",
+        "STALE",
+        "UNCERTAIN"
+      ]
+    },
+    "classification": {
+      "enum": ["SAFE", "RISKY", "DESTRUCTIVE", "UNAVAILABLE"]
+    },
+    "evidenceKind": {
+      "enum": ["STATIC_FILE", "RUNTIME_COMMAND", "EXTERNAL_APPROVAL", "CI_ARTIFACT"]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "claim"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/evidenceKind" },
+        "path": { "$ref": "#/$defs/repositoryPath" },
+        "claim": { "type": "string", "minLength": 1 }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "schema"],
+      "properties": {
+        "allowed": { "type": "boolean" },
+        "schema": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/parameterSchema" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "allowed": { "const": false } }, "required": ["allowed"] },
+          "then": { "properties": { "schema": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "allowed": { "const": true } }, "required": ["allowed"] },
+          "then": { "properties": { "schema": { "$ref": "#/$defs/parameterSchema" } } }
+        }
+      ]
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "purpose",
+        "configurationStatus",
+        "classification",
+        "argv",
+        "workingDirectory",
+        "parameters",
+        "prerequisites",
+        "evidence",
+        "inputPaths",
+        "lastVerifiedAt",
+        "notes"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/commandId" },
+        "purpose": { "type": "string", "minLength": 1 },
+        "configurationStatus": { "$ref": "#/$defs/configurationStatus" },
+        "classification": { "$ref": "#/$defs/classification" },
+        "argv": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "minItems": 1,
+              "$comment": "schemaVersion 1 executable argv is allowlisted to ./gradlew. Future non-Gradle executable profiles require an approved schema contract or version expansion; Phase 1B must reject any non-allowlisted executable as INVALID_STATE before execution.",
+              "prefixItems": [
+                { "const": "./gradlew" }
+              ],
+              "items": { "$ref": "#/$defs/argvToken" }
+            }
+          ]
+        },
+        "workingDirectory": { "$ref": "#/$defs/repositoryPath" },
+        "parameters": { "$ref": "#/$defs/parameters" },
+        "prerequisites": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/commandId" }
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence" }
+        },
+        "inputPaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/repositoryPath" }
+        },
+        "lastVerifiedAt": {
+          "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }]
+        },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "configurationStatus": { "const": "CONFIGURED_UNVERIFIED" } },
+            "required": ["configurationStatus"]
+          },
+          "then": {
+            "properties": {
+              "argv": { "type": "array", "minItems": 1 },
+              "classification": { "not": { "const": "UNAVAILABLE" } },
+              "evidence": { "minItems": 1 },
+              "lastVerifiedAt": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "configurationStatus": { "const": "VERIFIED" } },
+            "required": ["configurationStatus"]
+          },
+          "then": {
+            "properties": {
+              "argv": { "type": "array", "minItems": 1 },
+              "classification": { "not": { "const": "UNAVAILABLE" } },
+              "evidence": {
+                "minItems": 1,
+                "contains": {
+                  "type": "object",
+                  "required": ["kind"],
+                  "properties": { "kind": { "const": "RUNTIME_COMMAND" } }
+                }
+              },
+              "lastVerifiedAt": { "$ref": "#/$defs/timestamp" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "configurationStatus": {
+                "enum": ["UNKNOWN", "NOT_CONFIGURED", "STALE", "UNCERTAIN"]
+              }
+            },
+            "required": ["configurationStatus"]
+          },
+          "then": {
+            "properties": {
+              "argv": { "type": "null" },
+              "classification": { "const": "UNAVAILABLE" },
+              "lastVerifiedAt": { "type": "null" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

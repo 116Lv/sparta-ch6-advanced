@@ -4,6 +4,10 @@ Repository work logs are the durable execution and recovery record for delegated
 
 Follow [github-issue-planning.md](../github-issue-planning.md) and [work-log-template.md](../work-log-template.md). `ai/document-routing.md` is always the ownership gate before issue creation or dispatch.
 
+When Phase 2B skill or handoff reuse applies, issue summaries and role logs must carry `skill_ids`, `handoff_state_ref`, `reusable_context_refs`, `not_run_project_commands`, and `github_reconciliation_status`. Use `ai/agent-handoff.json`, `ai/skill-catalog.json`, and `ai/workflow-cache.json` before rediscovering reusable workflow context.
+
+When Phase 2C verification gates apply, issue summaries and role logs must link `ai/verification-gates.md`, canonical `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh`. Record verification completeness, task/change applicability, and the `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` mapping by change type. Product commands remain NOT RUN for static/helper gates.
+
 ## Directory Layout
 
 ```text

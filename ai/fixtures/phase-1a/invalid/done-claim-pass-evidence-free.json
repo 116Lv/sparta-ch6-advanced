@@ -1,0 +1,24 @@
+{
+  "$schema": "ai/schemas/done-claim.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/done-claim-pass-evidence-free.json",
+  "schemaVersion": 1,
+  "runId": "fixture-run-evidence-free",
+  "taskKey": "evidence-free-pass-fixture",
+  "generatedAt": "2026-07-10T08:02:00Z",
+  "implementationStatus": "PASS",
+  "overallResult": "PASS",
+  "checks": [
+    {
+      "id": "verify.unit",
+      "result": "PASS",
+      "evidenceRefs": [".ai-runs/fixture-run-evidence-free/commands/verify.unit.json"],
+      "reason": null
+    }
+  ],
+  "notRunItems": [],
+  "evidenceRefs": [],
+  "unexpected500Status": "PASS",
+  "unhandledExceptionStatus": "PASS",
+  "blockers": [],
+  "remainingRisks": []
+}

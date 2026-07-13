@@ -1,0 +1,17 @@
+{
+  "$schema": "ai/schemas/run.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/run-missing-skip-reason.json",
+  "schemaVersion": 1,
+  "runId": "fixture-run-missing-skip-reason",
+  "taskKey": "missing-skip-reason-fixture",
+  "startedAt": "2026-07-10T08:00:00Z",
+  "endedAt": "2026-07-10T08:01:00Z",
+  "workingDirectory": ".",
+  "environment": "LOCAL",
+  "result": "SKIPPED_WITH_REASON",
+  "commandResultRefs": [],
+  "approvalRefs": [],
+  "policyViolationRefs": [],
+  "evidenceRefs": [".ai-runs/fixture-run-missing-skip-reason/run.json"],
+  "redactionApplied": true
+}

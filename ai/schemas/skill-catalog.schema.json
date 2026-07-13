@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:skill-catalog:v1",
+  "schemaVersion": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "updatedAt", "skills"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "$id": { "const": "ai/skill-catalog.json" },
+    "schemaVersion": { "const": 1 },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
+    },
+    "skills": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": { "$ref": "#/$defs/skill" },
+      "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "repo-intake" } } }
+    }
+  },
+  "$defs": {
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*\\\\).+$"
+    },
+    "skill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "document", "routeId", "allowedEntryPoint", "prohibitedOperations", "evidenceOutputs", "handoffFields"],
+      "properties": {
+        "id": { "enum": ["repo-intake", "command-runner", "verification-runner", "api-smoke-verifier", "failure-triage", "docs-sync", "review-gate"] },
+        "document": { "$ref": "#/$defs/repositoryPath" },
+        "routeId": { "const": "repo-wide-ai-workflow" },
+        "allowedEntryPoint": { "type": "string", "minLength": 1 },
+        "prohibitedOperations": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "evidenceOutputs": { "type": "array", "items": { "$ref": "#/$defs/repositoryPath" } },
+        "handoffFields": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "ai/schemas/done-claim.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/done-claim-pass-failed-check.json",
+  "schemaVersion": 1,
+  "runId": "fixture-run-pass-failed-check",
+  "taskKey": "pass-failed-check-fixture",
+  "generatedAt": "2026-07-10T08:02:00Z",
+  "implementationStatus": "PASS",
+  "overallResult": "PASS",
+  "checks": [
+    {
+      "id": "verify.unit",
+      "result": "FAIL",
+      "evidenceRefs": [".ai-runs/fixture-run-pass-failed-check/commands/verify.unit.json"],
+      "reason": null
+    }
+  ],
+  "notRunItems": [],
+  "evidenceRefs": [".ai-runs/fixture-run-pass-failed-check/run.json"],
+  "unexpected500Status": "PASS",
+  "unhandledExceptionStatus": "PASS",
+  "blockers": [],
+  "remainingRisks": []
+}

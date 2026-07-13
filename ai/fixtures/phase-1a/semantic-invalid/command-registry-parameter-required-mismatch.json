@@ -1,0 +1,37 @@
+{
+  "$schema": "ai/schemas/command-registry.schema.json",
+  "$id": "ai/fixtures/phase-1a/semantic-invalid/command-registry-parameter-required-mismatch.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-10T08:26:30Z",
+  "commands": [
+    {
+      "id": "verify.unit-class",
+      "purpose": "Require Phase 1B to reject a parameter required/properties mismatch",
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "test", "--tests", "{{testClass}}"],
+      "workingDirectory": ".",
+      "parameters": {
+        "allowed": true,
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["testClass", "missingClass"],
+          "properties": {
+            "testClass": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.$*]+$"
+            }
+          }
+        }
+      },
+      "prerequisites": [],
+      "evidence": [
+        { "kind": "STATIC_FILE", "path": "build.gradle", "claim": "The test task uses JUnit Platform." }
+      ],
+      "inputPaths": ["build.gradle", "src/test/**"],
+      "lastVerifiedAt": null,
+      "notes": []
+    }
+  ]
+}

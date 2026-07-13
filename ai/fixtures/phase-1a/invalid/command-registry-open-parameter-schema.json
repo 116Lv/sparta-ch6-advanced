@@ -1,0 +1,37 @@
+{
+  "$schema": "ai/schemas/command-registry.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/command-registry-open-parameter-schema.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-10T08:26:30Z",
+  "commands": [
+    {
+      "id": "verify.unit",
+      "purpose": "Reject an open enabled parameter schema",
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "test", "--tests", "{{testClass}}"],
+      "workingDirectory": ".",
+      "parameters": {
+        "allowed": true,
+        "schema": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["testClass"],
+          "properties": {
+            "testClass": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.$*]+$"
+            }
+          }
+        }
+      },
+      "prerequisites": [],
+      "evidence": [
+        { "kind": "STATIC_FILE", "path": "build.gradle", "claim": "The test task uses JUnit Platform." }
+      ],
+      "inputPaths": ["build.gradle"],
+      "lastVerifiedAt": null,
+      "notes": []
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+#!/bin/sh
+printf '%s\n' "$#"
+for argument do
+  printf '<%s>\n' "$argument"
+done

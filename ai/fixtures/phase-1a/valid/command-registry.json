@@ -1,0 +1,69 @@
+{
+  "$schema": "ai/schemas/command-registry.schema.json",
+  "$id": "ai/fixtures/phase-1a/valid/command-registry.json",
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-10T08:26:30Z",
+  "commands": [
+    {
+      "id": "verify.unit",
+      "purpose": "Run the configured Gradle test task",
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "test"],
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        { "kind": "STATIC_FILE", "path": "build.gradle", "claim": "The test task uses JUnit Platform." }
+      ],
+      "inputPaths": ["build.gradle", "src/main/**", "src/test/**"],
+      "lastVerifiedAt": null,
+      "notes": ["Fixture represents static configuration evidence only."]
+    },
+    {
+      "id": "verify.lint",
+      "purpose": "Run lint checks",
+      "configurationStatus": "NOT_CONFIGURED",
+      "classification": "UNAVAILABLE",
+      "argv": null,
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        { "kind": "STATIC_FILE", "path": "build.gradle", "claim": "No lint task or plugin is declared." }
+      ],
+      "inputPaths": ["build.gradle"],
+      "lastVerifiedAt": null,
+      "notes": []
+    },
+    {
+      "id": "verify.unit-class",
+      "purpose": "Run a selected configured Gradle test class",
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "test", "--tests", "{{testClass}}"],
+      "workingDirectory": ".",
+      "parameters": {
+        "allowed": true,
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["testClass"],
+          "properties": {
+            "testClass": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.$*]+$"
+            }
+          }
+        }
+      },
+      "prerequisites": [],
+      "evidence": [
+        { "kind": "STATIC_FILE", "path": "build.gradle", "claim": "The test task uses JUnit Platform." }
+      ],
+      "inputPaths": ["build.gradle", "src/test/**"],
+      "lastVerifiedAt": null,
+      "notes": ["Fixture demonstrates the approved closed string-pattern parameter shape."]
+    }
+  ]
+}

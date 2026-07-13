@@ -1,0 +1,18 @@
+{
+  "authorization": "Authorization: Bearer header-secret",
+  "cookie": "Cookie: session=header-secret",
+  "setCookie": "Set-Cookie: session=header-secret; HttpOnly",
+  "bearer": "prefix Bearer token-secret suffix",
+  "assignments": [
+    "token=unquoted-secret",
+    "access_token=access-secret",
+    "refresh_token = refresh-secret",
+    "password: \"double-quoted-secret\"",
+    "passwd=passwd-secret",
+    "secret=assignment-secret",
+    "api_key='single-quoted-secret'",
+    "private_key=private-secret",
+    "credential=credential-secret"
+  ],
+  "replacement": "[REDACTED]"
+}

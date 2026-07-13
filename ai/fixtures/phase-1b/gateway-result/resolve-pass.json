@@ -1,0 +1,16 @@
+{
+  "$schema": "ai/schemas/gateway-result.schema.json",
+  "$id": "ai/gateway-result.json",
+  "schemaVersion": 1,
+  "operation": "RESOLVE",
+  "result": "PASS",
+  "reason": null,
+  "errors": [],
+  "data": {
+    "commandId": "test-unit",
+    "classification": "SAFE",
+    "workingDirectory": ".",
+    "argv": ["./gradlew", "test"],
+    "prerequisiteIds": []
+  }
+}

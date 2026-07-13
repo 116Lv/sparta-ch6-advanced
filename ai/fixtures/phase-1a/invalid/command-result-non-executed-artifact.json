@@ -1,0 +1,18 @@
+{
+  "$schema": "ai/schemas/command-result.schema.json",
+  "$id": "ai/fixtures/phase-1a/invalid/command-result-non-executed-artifact.json",
+  "schemaVersion": 1,
+  "runId": "fixture-run-non-executed-artifact",
+  "commandId": "verify.api-smoke",
+  "startedAt": "2026-07-10T10:00:00Z",
+  "endedAt": "2026-07-10T10:00:00Z",
+  "result": "BLOCKED",
+  "processExitCode": null,
+  "argvHash": null,
+  "inputFingerprint": null,
+  "environmentFingerprint": null,
+  "stdoutPath": ".ai-runs/fixture-run-non-executed-artifact/logs/verify.api-smoke.stdout.log",
+  "stderrPath": null,
+  "redactionApplied": false,
+  "reason": "Phase 1A blocks non-configured runtime command execution."
+}

@@ -20,3 +20,11 @@ Thumbs.db
 .env
 .env.*
 
+### AI Workflow Local Evidence ###
+.ai-runs/
+ai/.workflow-state-txn/
+
+### Python Helper Cache (generated local artifacts; not Phase 1B deliverables) ###
+__pycache__/
+*.py[cod]
+
