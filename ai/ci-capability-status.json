@@ -1,0 +1,86 @@
+{
+    "$schema":  "ai/schemas/ci-capability-status.schema.json",
+    "$id":  "ai/ci-capability-status.json",
+    "schemaVersion":  1,
+    "phase":  "3B",
+    "updatedAt":  "2026-07-13T14:30:00Z",
+    "issue":  {
+                  "number":  12,
+                  "url":  "https://github.com/116Lv/sparta-ch6-advanced/issues/12"
+              },
+    "pullRequest":  {
+                        "phase3APullRequest":  "https://github.com/116Lv/sparta-ch6-advanced/pull/11",
+                        "phase3AMerged":  true,
+                        "phase3AMergeCommit":  "400c00f35f9d21cbeec44b0f40f49dac564a4bb6"
+                    },
+    "currentCi":  {
+                      "provider":  "github-actions",
+                      "requiredCheck":  "phase-3b-ci-gates",
+                      "workflowRefs":  [
+                                           ".github/workflows/phase-3b-ci-gates.yml"
+                                       ],
+                      "nativeAdapterInstallation":  {
+                                                        "status":  "NOT_CONFIGURED",
+                                                        "reasonCode":  "REMOTE_NATIVE_ADAPTER_NOT_INSTALLED"
+                                                    },
+                      "durableEvidence":  {
+                                              "status":  "NOT_CONFIGURED",
+                                              "reasonCode":  "NO_COMPLETED_WORKFLOW_RUN_EVIDENCE",
+                                              "retentionDays":  90,
+                                              "artifactRefs":  [
+
+                                                               ],
+                                              "requiredBindings":  [
+                                                                       "repository",
+                                                                       "commitSha",
+                                                                       "workflowRunId",
+                                                                       "jobId",
+                                                                       "attempt",
+                                                                       "taskKey",
+                                                                       "gateInvocationId",
+                                                                       "nativeAdapterStatusDigest",
+                                                                       "bypassEventSetSha256",
+                                                                       "resolutionEventIds"
+                                                                   ],
+                                              "retainedRun":  null
+                                          },
+                      "remoteRunner":  {
+                                           "status":  "NOT_CONFIGURED",
+                                           "completionBlocking":  true,
+                                           "reasonCode":  "NO_REMOTE_RUNNER_EVIDENCE"
+                                       },
+                      "hostMappings":  [
+                                           {
+                                               "hostClass":  "SUPPORTED_ENFORCED",
+                                               "ciResult":  "PASS",
+                                               "completionBlocking":  false
+                                           },
+                                           {
+                                               "hostClass":  "SUPPORTED_NOT_CONFIGURED",
+                                               "ciResult":  "BLOCKED",
+                                               "completionBlocking":  true
+                                           },
+                                           {
+                                               "hostClass":  "UNSUPPORTED_OR_UNPROBED",
+                                               "ciResult":  "NOT_APPLICABLE",
+                                               "completionBlocking":  false
+                                           }
+                                       ]
+                  },
+    "phase2cLink":  {
+                        "nativeAdapterCheckId":  "native-runtime-adapter",
+                        "currentHostResult":  "UNSUPPORTED",
+                        "phase2CUnsupportedLeaf":  "NOT_APPLICABLE",
+                        "ciGateLeaf":  "BLOCKED"
+                    },
+    "cachePolicy":  {
+                        "reuse":  "FORBIDDEN_WITHOUT_MATCHING_RUN_ID",
+                        "handoff":  "SUMMARY_ONLY",
+                        "retentionDays":  90
+                    },
+    "responsibilityBoundary":  [
+                                   "The repository gateway remains the only product command authority.",
+                                   "CI/native adapters discover, attest, and block CI evidence claims; they do not execute product commands outside registered gateway policy.",
+                                   "A remote runner without durable GitHub Actions run identity and retained artifacts is completion-blocking for CI evidence claims."
+                               ]
+}

@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:ci-capability-status:v1",
+  "schemaVersion": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "phase", "updatedAt", "issue", "pullRequest", "currentCi", "phase2cLink", "cachePolicy", "responsibilityBoundary"],
+  "properties": {
+    "$schema": { "enum": ["ai/schemas/ci-capability-status.schema.json", "./schemas/ci-capability-status.schema.json"] },
+    "$id": { "const": "ai/ci-capability-status.json" },
+    "schemaVersion": { "const": 1 },
+    "phase": { "const": "3B" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "url"],
+      "properties": { "number": { "const": 12 }, "url": { "const": "https://github.com/116Lv/sparta-ch6-advanced/issues/12" } }
+    },
+    "pullRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase3APullRequest", "phase3AMerged", "phase3AMergeCommit"],
+      "properties": {
+        "phase3APullRequest": { "const": "https://github.com/116Lv/sparta-ch6-advanced/pull/11" },
+        "phase3AMerged": { "const": true },
+        "phase3AMergeCommit": { "type": "string", "pattern": "^[a-f0-9]{40}$" }
+      }
+    },
+    "currentCi": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "requiredCheck", "workflowRefs", "nativeAdapterInstallation", "durableEvidence", "remoteRunner", "hostMappings"],
+      "properties": {
+        "provider": { "const": "github-actions" },
+        "requiredCheck": { "const": "phase-3b-ci-gates" },
+        "workflowRefs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repositoryPath" } },
+        "nativeAdapterInstallation": { "$ref": "#/$defs/statusReason" },
+        "durableEvidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reasonCode", "retentionDays", "artifactRefs", "requiredBindings", "retainedRun"],
+          "properties": {
+            "status": { "enum": ["AVAILABLE", "NOT_CONFIGURED", "BLOCKED"] },
+            "reasonCode": { "$ref": "#/$defs/identifier" },
+            "retentionDays": { "type": "integer", "minimum": 90, "maximum": 400 },
+            "artifactRefs": { "type": "array", "items": { "$ref": "#/$defs/repositoryPath" } },
+            "requiredBindings": {
+              "type": "array",
+              "minItems": 10,
+              "maxItems": 10,
+              "uniqueItems": true,
+              "items": { "enum": ["repository", "commitSha", "workflowRunId", "jobId", "attempt", "taskKey", "gateInvocationId", "nativeAdapterStatusDigest", "bypassEventSetSha256", "resolutionEventIds"] }
+            },
+            "retainedRun": {
+              "anyOf": [
+                { "type": "null" },
+                { "$ref": "#/$defs/retainedRun" }
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "status": { "const": "AVAILABLE" } }, "required": ["status"] },
+              "then": {
+                "properties": {
+                  "artifactRefs": { "minItems": 1 },
+                  "retainedRun": { "$ref": "#/$defs/retainedRun" }
+                }
+              }
+            },
+            {
+              "if": { "properties": { "status": { "enum": ["NOT_CONFIGURED", "BLOCKED"] } }, "required": ["status"] },
+              "then": { "properties": { "retainedRun": { "type": "null" } } }
+            }
+          ]
+        },
+        "remoteRunner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "completionBlocking", "reasonCode"],
+          "properties": { "status": { "enum": ["PASS", "NOT_CONFIGURED", "BLOCKED"] }, "completionBlocking": { "type": "boolean" }, "reasonCode": { "$ref": "#/$defs/identifier" } }
+        },
+        "hostMappings": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/hostMapping" } }
+      }
+    },
+    "phase2cLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nativeAdapterCheckId", "currentHostResult", "phase2CUnsupportedLeaf", "ciGateLeaf"],
+      "properties": {
+        "nativeAdapterCheckId": { "const": "native-runtime-adapter" },
+        "currentHostResult": { "const": "UNSUPPORTED" },
+        "phase2CUnsupportedLeaf": { "const": "NOT_APPLICABLE" },
+        "ciGateLeaf": { "const": "BLOCKED" }
+      }
+    },
+    "cachePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reuse", "handoff", "retentionDays"],
+      "properties": { "reuse": { "const": "FORBIDDEN_WITHOUT_MATCHING_RUN_ID" }, "handoff": { "const": "SUMMARY_ONLY" }, "retentionDays": { "type": "integer", "minimum": 90 } }
+    },
+    "responsibilityBoundary": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+    "repositoryPath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "gitSha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "retainedRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commitSha", "workflowRunId", "jobId", "attempt", "taskKey", "gateInvocationId", "nativeAdapterStatusDigest", "bypassEventSetSha256", "resolutionEventIds"],
+      "properties": {
+        "repository": { "const": "116Lv/sparta-ch6-advanced" },
+        "commitSha": { "$ref": "#/$defs/gitSha" },
+        "workflowRunId": { "type": "integer", "minimum": 1 },
+        "jobId": { "type": "integer", "minimum": 1 },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "taskKey": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])" },
+        "gateInvocationId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])" },
+        "nativeAdapterStatusDigest": { "$ref": "#/$defs/sha256" },
+        "bypassEventSetSha256": { "$ref": "#/$defs/sha256" },
+        "resolutionEventIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128 } }
+      }
+    },
+    "statusReason": { "type": "object", "additionalProperties": false, "required": ["status", "reasonCode"], "properties": { "status": { "enum": ["INSTALLED", "SUPPORTED", "UNSUPPORTED", "NOT_CONFIGURED", "BLOCKED"] }, "reasonCode": { "$ref": "#/$defs/identifier" } } },
+    "hostMapping": { "type": "object", "additionalProperties": false, "required": ["hostClass", "ciResult", "completionBlocking"], "properties": { "hostClass": { "enum": ["SUPPORTED_ENFORCED", "SUPPORTED_NOT_CONFIGURED", "UNSUPPORTED_OR_UNPROBED"] }, "ciResult": { "enum": ["PASS", "BLOCKED", "NOT_APPLICABLE"] }, "completionBlocking": { "type": "boolean" } } }
+  }
+}

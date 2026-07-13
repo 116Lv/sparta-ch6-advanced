@@ -350,7 +350,7 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
             "native-runtime-snapshot",
         }
         self.assertTrue(phase_3a.issubset(self.helper.SCHEMA_NAMES))
-        self.assertEqual(len(self.helper.SCHEMA_NAMES), 23)
+        self.assertEqual(len(self.helper.SCHEMA_NAMES), 25)
         self.assertEqual(
             {name for name in self.helper.SCHEMA_NAMES if name in additions},
             additions,
@@ -8891,3 +8891,141 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.helper = load_helper()
+        self.root = REPOSITORY_ROOT
+
+    def test_phase_3b_schemas_policy_and_work_log_are_issue_backed(self):
+        self.assertIn("ci-capability-status", self.helper.SCHEMA_NAMES)
+        self.assertIn("ci-gate-result", self.helper.SCHEMA_NAMES)
+        status = self.helper.validate_repository_instance(self.root, "ai/ci-capability-status.json")
+        self.assertEqual(status["phase"], "3B")
+        self.assertEqual(status["issue"]["number"], 12)
+        self.assertEqual(status["pullRequest"]["phase3AMerged"], True)
+        self.assertEqual(status["currentCi"]["provider"], "github-actions")
+        self.assertEqual(status["currentCi"]["nativeAdapterInstallation"]["status"], "NOT_CONFIGURED")
+        self.assertEqual(status["currentCi"]["durableEvidence"]["status"], "NOT_CONFIGURED")
+        self.assertEqual(status["currentCi"]["remoteRunner"]["completionBlocking"], True)
+        self.assertEqual(status["phase2cLink"]["nativeAdapterCheckId"], "native-runtime-adapter")
+        summary = (self.root / "ai/work-logs/issue-12/README.md").read_text(encoding="utf-8")
+        self.assertIn("https://github.com/116Lv/sparta-ch6-advanced/issues/12", summary)
+
+    def test_ci_gate_is_fail_closed_without_durable_github_actions_evidence(self):
+        result, status = self.helper.ci_evidence_gate(self.root, "issue-12", "gate-ci")
+        self.assertEqual((result["result"], result["phase2cLeafResult"], status), ("NOT_CONFIGURED", "BLOCKED", 3))
+        self.assertEqual(result["reason"], "CI_EVIDENCE_NOT_AVAILABLE")
+        self.assertEqual(result["data"]["requiredCheck"], "phase-3b-ci-gates")
+        self.assertEqual(result["data"]["durableEvidence"]["retentionDays"], 90)
+        self.assertEqual(result["data"]["nativeAdapterLeaf"]["currentHostResult"], "UNSUPPORTED")
+        self.assertFalse((self.root / ".ai-runs").exists())
+
+    def test_ci_evidence_available_requires_retained_artifact_identity(self):
+        status = self.helper.validate_repository_instance(self.root, "ai/ci-capability-status.json")
+        status["currentCi"]["nativeAdapterInstallation"] = {
+            "status": "INSTALLED",
+            "reasonCode": "REMOTE_NATIVE_ADAPTER_INSTALLED",
+        }
+        status["currentCi"]["durableEvidence"]["status"] = "AVAILABLE"
+        status["currentCi"]["durableEvidence"]["reasonCode"] = "DURABLE_EVIDENCE_AVAILABLE"
+        status["currentCi"]["remoteRunner"] = {
+            "status": "PASS",
+            "completionBlocking": False,
+            "reasonCode": "REMOTE_RUNNER_ATTESTED",
+        }
+        status_path = self.root / "phase3b-ci-status-underbound.tmp.json"
+        try:
+            status_path.write_text(json.dumps(status, sort_keys=True), encoding="utf-8")
+            result, exit_status = self.helper.ci_evidence_gate(
+                self.root, "issue-12", "gate-available", "phase3b-ci-status-underbound.tmp.json",
+            )
+            self.assertEqual((result["result"], result["reason"], exit_status), (
+                "BLOCKED", "CI_EVIDENCE_EVALUATION_INVALID", 2,
+            ))
+        finally:
+            status_path.unlink(missing_ok=True)
+    def test_ci_evidence_available_requires_retained_artifact_file(self):
+        status = self.helper.validate_repository_instance(self.root, "ai/ci-capability-status.json")
+        status["currentCi"]["nativeAdapterInstallation"] = {
+            "status": "INSTALLED",
+            "reasonCode": "REMOTE_NATIVE_ADAPTER_INSTALLED",
+        }
+        status["currentCi"]["durableEvidence"].update({
+            "status": "AVAILABLE",
+            "reasonCode": "DURABLE_EVIDENCE_AVAILABLE",
+            "artifactRefs": ["ai/evidence/missing-phase3b-ci-artifact.json"],
+            "retainedRun": {
+                "repository": "116Lv/sparta-ch6-advanced",
+                "commitSha": "400c00f35f9d21cbeec44b0f40f49dac564a4bb6",
+                "workflowRunId": 1,
+                "jobId": 1,
+                "attempt": 1,
+                "taskKey": "issue-12",
+                "gateInvocationId": "gate-available",
+                "nativeAdapterStatusDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+                "bypassEventSetSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                "resolutionEventIds": [],
+            },
+        })
+        status["currentCi"]["remoteRunner"] = {
+            "status": "PASS",
+            "completionBlocking": False,
+            "reasonCode": "REMOTE_RUNNER_ATTESTED",
+        }
+        status_path = self.root / "phase3b-ci-status-missing-artifact.tmp.json"
+        try:
+            status_path.write_text(json.dumps(status, sort_keys=True), encoding="utf-8")
+            result, exit_status = self.helper.ci_evidence_gate(
+                self.root, "issue-12", "gate-available", "phase3b-ci-status-missing-artifact.tmp.json",
+            )
+            self.assertEqual((result["result"], result["reason"], exit_status), (
+                "BLOCKED", "CI_DURABLE_EVIDENCE_ARTIFACT_MISSING", 2,
+            ))
+        finally:
+            status_path.unlink(missing_ok=True)
+    def test_ci_workflow_and_policy_docs_preserve_product_command_boundary(self):
+        workflow = self.root / ".github/workflows/phase-3b-ci-gates.yml"
+        self.assertTrue(workflow.is_file())
+        workflow_text = workflow.read_text(encoding="utf-8")
+        self.assertIn("scripts/ai/ci-evidence-gate.sh", workflow_text)
+        self.assertNotIn("gradle", workflow_text.lower())
+        self.assertNotIn("docker compose", workflow_text.lower())
+        doc_text = "\n".join(
+            (self.root / path).read_text(encoding="utf-8")
+            for path in (
+                "ai/ci-gates.md",
+                "docs/superpowers/specs/2026-07-13-ai-workflow-phase-3b-ci-gates-durable-evidence-design.md",
+            )
+        )
+        self.assertIn("repository gateway", doc_text)
+        self.assertIn("cross-process challenge", doc_text)
+        self.assertIn("bypass event", doc_text)
+        self.assertIn("registry `VERIFIED`", doc_text)
+
+    def test_ci_workflow_provisions_contract_runtime_and_retains_failure_evidence(self):
+        workflow_text = (
+            self.root / ".github/workflows/phase-3b-ci-gates.yml"
+        ).read_text(encoding="utf-8")
+        packages = "jsonschema==4.25.1 cryptography==45.0.5"
+        setup_install = f"python -m pip install {packages}"
+        contract_install_command = (
+            f"/usr/bin/python3 -m pip install --break-system-packages {packages}"
+        )
+        self.assertIn(setup_install, workflow_text)
+        self.assertIn(contract_install_command, workflow_text)
+        self.assertEqual(
+            workflow_text.count("assert version('jsonschema') == '4.25.1'"), 2,
+        )
+        self.assertEqual(
+            workflow_text.count("assert version('cryptography') == '45.0.5'"), 2,
+        )
+        contract_install = workflow_text.index(contract_install_command)
+        contract_run = workflow_text.index("bash scripts/ai/tests/run-contract-tests.sh")
+        self.assertLess(contract_install, contract_run)
+        self.assertIn("> phase3b-ci-gate-fallback.json", workflow_text)
+        self.assertIn("if: ${{ !cancelled() }}\n        shell: bash", workflow_text)
+        self.assertIn("hashFiles('phase3b-ci-gate-result.json') != ''", workflow_text)
+        self.assertIn("hashFiles('ai/ci-capability-status.json') != ''", workflow_text)
+        self.assertIn("if-no-files-found: error", workflow_text)

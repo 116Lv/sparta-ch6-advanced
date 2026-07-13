@@ -1,0 +1,77 @@
+name: phase-3b-ci-gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  phase-3b-ci-gates:
+    name: phase-3b-ci-gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install helper dependencies
+        run: |
+          python -m pip install jsonschema==4.25.1 cryptography==45.0.5
+          /usr/bin/python3 -m pip install --break-system-packages jsonschema==4.25.1 cryptography==45.0.5
+      - name: Verify helper dependency provenance
+        run: |
+          python - <<'PY'
+          from importlib.metadata import version
+          from jsonschema import Draft202012Validator, FormatChecker
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+          assert version('jsonschema') == '4.25.1'
+          assert version('cryptography') == '45.0.5'
+          PY
+          /usr/bin/python3 - <<'PY'
+          from importlib.metadata import version
+          from jsonschema import Draft202012Validator, FormatChecker
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+          assert version('jsonschema') == '4.25.1'
+          assert version('cryptography') == '45.0.5'
+          PY
+      - name: Run Phase 2C and Phase 3 static helper tests
+        run: python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v
+      - name: Run contract tests
+        run: bash scripts/ai/tests/run-contract-tests.sh
+      - name: Evaluate CI evidence gate
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set +e
+          bash scripts/ai/ci-evidence-gate.sh --task-key issue-12 --gate-invocation-id github-actions --output phase3b-ci-gate-result.json > phase3b-ci-gate-fallback.json
+          status=$?
+          set -e
+          if [ ! -s phase3b-ci-gate-result.json ] && [ -s phase3b-ci-gate-fallback.json ]; then
+            mv phase3b-ci-gate-fallback.json phase3b-ci-gate-result.json
+          else
+            rm -f phase3b-ci-gate-fallback.json
+          fi
+          test -s phase3b-ci-gate-result.json
+          if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
+            exit "$status"
+          fi
+          python - <<'PY'
+          import json
+          result = json.load(open('phase3b-ci-gate-result.json', encoding='utf-8'))
+          if result['result'] != 'NOT_CONFIGURED' or result['reason'] != 'CI_EVIDENCE_NOT_AVAILABLE':
+              raise SystemExit('unexpected CI evidence gate result')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('phase3b-ci-gate-result.json') != '' && hashFiles('ai/ci-capability-status.json') != '' }}
+        with:
+          name: phase3b-ci-gate-evidence
+          path: |
+            phase3b-ci-gate-result.json
+            ai/ci-capability-status.json
+          if-no-files-found: error
+          retention-days: 90

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:ci-gate-result:v1",
+  "schemaVersion": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "operation", "result", "phase2cLeafResult", "reason", "data"],
+  "properties": {
+    "$schema": { "const": "ai/schemas/ci-gate-result.schema.json" },
+    "$id": { "const": "ai/ci-gate-result.json" },
+    "schemaVersion": { "const": 1 },
+    "operation": { "const": "CI_EVIDENCE_GATE" },
+    "result": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "UNSUPPORTED"] },
+    "phase2cLeafResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_APPLICABLE"] },
+    "reason": { "type": ["string", "null"], "maxLength": 512 },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskKey", "gateInvocationId", "requiredCheck", "provider", "workflowRefs", "nativeAdapterInstallation", "durableEvidence", "remoteRunner", "nativeAdapterLeaf", "cachePolicy", "phase2CLeafResult"],
+      "properties": {
+        "taskKey": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])" },
+        "gateInvocationId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])" },
+        "requiredCheck": { "const": "phase-3b-ci-gates" },
+        "provider": { "const": "github-actions" },
+        "workflowRefs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repositoryPath" } },
+        "nativeAdapterInstallation": { "$ref": "#/$defs/statusReason" },
+        "durableEvidence": { "$ref": "#/$defs/durableEvidence" },
+        "remoteRunner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "completionBlocking", "reasonCode"],
+          "properties": { "status": { "enum": ["PASS", "NOT_CONFIGURED", "BLOCKED"] }, "completionBlocking": { "type": "boolean" }, "reasonCode": { "$ref": "#/$defs/identifier" } }
+        },
+        "nativeAdapterLeaf": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nativeAdapterCheckId", "currentHostResult"],
+          "properties": {
+            "nativeAdapterCheckId": { "const": "native-runtime-adapter" },
+            "currentHostResult": { "enum": ["PASS", "BLOCKED", "NOT_CONFIGURED", "UNSUPPORTED"] },
+            "phase2CUnsupportedLeaf": { "enum": ["NOT_APPLICABLE", "BLOCKED"] },
+            "ciGateLeaf": { "enum": ["PASS", "BLOCKED", "NOT_APPLICABLE"] }
+          }
+        },
+        "cachePolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reuse", "handoff"],
+          "properties": { "reuse": { "const": "FORBIDDEN_WITHOUT_MATCHING_RUN_ID" }, "handoff": { "const": "SUMMARY_ONLY" }, "retentionDays": { "type": "integer", "minimum": 90 } }
+        },
+        "phase2CLeafResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_APPLICABLE"] }
+      }
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "result": { "const": "PASS" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "PASS" }, "reason": { "type": "null" } } } },
+    { "if": { "properties": { "result": { "const": "NOT_CONFIGURED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "BLOCKED" } } } }
+  ],
+  "$defs": {
+    "identifier": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+    "repositoryPath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "statusReason": { "type": "object", "additionalProperties": false, "required": ["status", "reasonCode"], "properties": { "status": { "enum": ["INSTALLED", "SUPPORTED", "UNSUPPORTED", "NOT_CONFIGURED", "BLOCKED"] }, "reasonCode": { "$ref": "#/$defs/identifier" } } },
+    "durableEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reasonCode", "retentionDays", "artifactRefs", "requiredBindings", "retainedRun"],
+      "properties": {
+        "status": { "enum": ["AVAILABLE", "NOT_CONFIGURED", "BLOCKED"] },
+        "reasonCode": { "$ref": "#/$defs/identifier" },
+        "retentionDays": { "type": "integer", "minimum": 90, "maximum": 400 },
+        "artifactRefs": { "type": "array", "items": { "$ref": "#/$defs/repositoryPath" } },
+        "requiredBindings": { "type": "array", "minItems": 10, "maxItems": 10, "uniqueItems": true, "items": { "type": "string" } },
+        "retainedRun": { "type": ["object", "null"] }
+      }
+    }
+  }
+}
