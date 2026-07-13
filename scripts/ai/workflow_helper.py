@@ -6632,7 +6632,18 @@ def resolve_external_host_trust_path(repository_root, path, *, directory):
         raise ValueError("host trust path is unavailable") from error
 
 
-def secure_host_ledger_path(ledger_root, filename):
+def native_safe_ledger_backend_supported():
+    return (
+        os.name == "posix"
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "geteuid")
+        and os.open in os.supports_dir_fd
+        and os.unlink in os.supports_dir_fd
+    )
+
+
+def secure_host_ledger_directory(ledger_root, filename):
     if not isinstance(filename, str) or re.fullmatch(r"[a-f0-9]{64}\.json", filename) is None:
         raise ValueError("host ledger record name is invalid")
     candidate = Path(os.path.abspath(os.fspath(ledger_root)))
@@ -6642,14 +6653,60 @@ def secure_host_ledger_path(ledger_root, filename):
         resolved_root = candidate.resolve(strict=True)
         if not resolved_root.is_dir():
             raise ValueError("host ledger root must be a directory")
-        if os.name != "nt" and stat.S_IMODE(resolved_root.stat().st_mode) & 0o077:
-            raise PermissionError("host ledger root permissions are too broad")
+        metadata = resolved_root.stat()
+        if os.name != "nt":
+            if metadata.st_uid != os.geteuid():
+                raise PermissionError("host ledger root must be owned by the evaluator user")
+            if stat.S_IMODE(metadata.st_mode) != 0o700:
+                raise PermissionError("host ledger root permissions must be owner-only")
     except OSError as error:
         raise ValueError("host ledger root is unavailable") from error
-    destination = resolved_root / filename
-    if destination.parent != resolved_root or destination.is_symlink():
-        raise ValueError("host ledger destination is unsafe")
-    return destination
+    return resolved_root, metadata
+
+
+def validate_pinned_native_ledger_directory(metadata, expected):
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_dev != expected.st_dev
+        or metadata.st_ino != expected.st_ino
+    ):
+        raise OSError("host ledger directory identity changed while it was being pinned")
+    if os.name != "nt":
+        if metadata.st_uid != os.geteuid():
+            raise PermissionError("pinned host ledger directory owner is invalid")
+        if stat.S_IMODE(metadata.st_mode) != 0o700:
+            raise PermissionError("pinned host ledger directory permissions are invalid")
+
+
+def validate_native_ledger_record(metadata):
+    if not stat.S_ISREG(metadata.st_mode):
+        raise OSError("native attestation ledger record is not a regular file")
+    if os.name != "nt":
+        if metadata.st_uid != os.geteuid():
+            raise PermissionError("native attestation ledger record owner is invalid")
+        if stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise PermissionError("native attestation ledger record permissions are invalid")
+
+
+def cleanup_native_attestation_record(directory_descriptor, filename, record_descriptor):
+    cleanup_errors = []
+    if record_descriptor is not None:
+        try:
+            os.close(record_descriptor)
+        except OSError as error:
+            cleanup_errors.append(error)
+    try:
+        os.unlink(filename, dir_fd=directory_descriptor)
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        cleanup_errors.append(error)
+    try:
+        os.fsync(directory_descriptor)
+    except OSError as error:
+        cleanup_errors.append(error)
+    if cleanup_errors:
+        raise OSError("native attestation ledger cleanup is uncertain") from cleanup_errors[0]
 
 
 def consume_native_attestation(ledger_root: Path, identity: dict) -> None:
@@ -6676,35 +6733,57 @@ def consume_native_attestation(ledger_root: Path, identity: dict) -> None:
         raise ValueError("native attestation ledger identity is invalid")
     canonical = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
     key = hashlib.sha256(canonical).hexdigest()
-    destination = secure_host_ledger_path(ledger_root, f"{key}.json")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    flags |= getattr(os, "O_BINARY", 0)
-    flags |= getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NOINHERIT", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
+    filename = f"{key}.json"
+    if not native_safe_ledger_backend_supported():
+        raise OSError(errno.ENOTSUP, "safe handle-relative host ledger backend is unavailable")
+    directory, expected_metadata = secure_host_ledger_directory(ledger_root, filename)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    directory_descriptor = os.open(str(directory), directory_flags)
+    record_descriptor = None
+    created = False
     try:
-        descriptor = os.open(str(destination), flags, 0o600)
-    except FileExistsError as error:
-        raise NativeReplayError("NATIVE_ADAPTER_CHALLENGE_REPLAYED") from error
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise OSError("native attestation ledger record is not a regular file")
-        if os.name != "nt" and stat.S_IMODE(metadata.st_mode) != 0o600:
-            raise PermissionError("native attestation ledger record permissions are invalid")
-        with os.fdopen(descriptor, "wb", closefd=True) as handle:
-            descriptor = -1
-            handle.write(canonical)
-            handle.flush()
-            os.fsync(handle.fileno())
-    except Exception as error:
-        if descriptor >= 0:
-            os.close(descriptor)
+        validate_pinned_native_ledger_directory(
+            os.fstat(directory_descriptor), expected_metadata,
+        )
+        record_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        record_flags |= getattr(os, "O_CLOEXEC", 0)
         try:
-            destination.unlink(missing_ok=True)
-        except OSError as cleanup_error:
-            raise OSError("native attestation ledger cleanup is uncertain") from cleanup_error
-        raise error
+            record_descriptor = os.open(
+                filename,
+                record_flags,
+                0o600,
+                dir_fd=directory_descriptor,
+            )
+        except FileExistsError as error:
+            raise NativeReplayError("NATIVE_ADAPTER_CHALLENGE_REPLAYED") from error
+        created = True
+        try:
+            validate_native_ledger_record(os.fstat(record_descriptor))
+            remaining = memoryview(canonical)
+            while remaining:
+                written = os.write(record_descriptor, remaining)
+                if written <= 0:
+                    raise OSError("native attestation ledger write made no progress")
+                remaining = remaining[written:]
+            os.fsync(record_descriptor)
+            os.close(record_descriptor)
+            record_descriptor = None
+            os.fsync(directory_descriptor)
+        except Exception:
+            cleanup_native_attestation_record(
+                directory_descriptor, filename, record_descriptor,
+            )
+            record_descriptor = None
+            created = False
+            raise
+    finally:
+        try:
+            os.close(directory_descriptor)
+        except OSError:
+            if created:
+                raise OSError("native attestation ledger directory close is uncertain")
+            raise
 
 
 def load_host_native_trust(repository_root, descriptor_path, probe_path, ledger_root) -> HostNativeTrust:

@@ -7602,9 +7602,170 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.addCleanup(commit_probe.stop)
         if hasattr(self.helper, "NATIVE_CONSUMED_CHALLENGES"):
             self.helper.NATIVE_CONSUMED_CHALLENGES.clear()
+        self.test_native_ledger_records = set()
+        self.native_ledger_stub_patcher = None
+        backend_supported = getattr(
+            self.helper, "native_safe_ledger_backend_supported", lambda: True,
+        )
+        if not backend_supported():
+            def consume_test_attestation(_ledger_root, identity):
+                canonical = json.dumps(
+                    identity, sort_keys=True, separators=(",", ":"),
+                ).encode("utf-8")
+                key = hashlib.sha256(canonical).hexdigest()
+                if key in self.test_native_ledger_records:
+                    raise self.helper.NativeReplayError(
+                        "NATIVE_ADAPTER_CHALLENGE_REPLAYED",
+                    )
+                self.test_native_ledger_records.add(key)
+
+            self.native_ledger_stub_patcher = mock.patch.object(
+                self.helper,
+                "consume_native_attestation",
+                side_effect=consume_test_attestation,
+            )
+            self.native_ledger_stub_patcher.start()
+            self.addCleanup(self.native_ledger_stub_patcher.stop)
 
     def tearDown(self):
         self.temporary_directory.cleanup()
+
+    def stop_test_native_ledger_stub(self):
+        if self.native_ledger_stub_patcher is not None:
+            self.native_ledger_stub_patcher.stop()
+            self.native_ledger_stub_patcher = None
+
+    @staticmethod
+    def native_ledger_identity(gate_invocation_id="gate-ledger-unit"):
+        return {
+            "repositorySha256": "a" * 64,
+            "producerId": "example.native.adapter",
+            "taskKey": "issue-10",
+            "gateInvocationId": gate_invocation_id,
+            "attestationId": "ai/native-runtime-snapshot.json",
+            "nonce": gate_invocation_id,
+            "eventSetSha256": "b" * 64,
+        }
+
+    @contextlib.contextmanager
+    def mocked_safe_native_ledger(self, ledger_root, *, fault=None,
+                                  directory_identity_mismatch=False):
+        self.stop_test_native_ledger_stub()
+        faults = set() if fault is None else set(fault.split("+"))
+        expected = ledger_root.stat()
+        state = SimpleNamespace(
+            directory_fds=set(),
+            file_fds=set(),
+            next_fd=100,
+            record_exists=False,
+            record_bytes=bytearray(),
+            open_calls=[],
+            fsync_calls=[],
+            close_calls=[],
+            unlink_calls=[],
+            lock=threading.Lock(),
+            directory_sync_failures=0,
+            file_close_failures=0,
+        )
+
+        def allocate_fd(collection):
+            with state.lock:
+                descriptor = state.next_fd
+                state.next_fd += 1
+                collection.add(descriptor)
+                return descriptor
+
+        def fake_open(path, flags, mode=0o777, *, dir_fd=None):
+            state.open_calls.append((os.fspath(path), flags, mode, dir_fd))
+            if dir_fd is None:
+                if Path(path) != ledger_root:
+                    raise AssertionError("ledger directory must be opened before its record")
+                return allocate_fd(state.directory_fds)
+            if dir_fd not in state.directory_fds:
+                raise AssertionError("record creation must use the pinned ledger descriptor")
+            if Path(path).name != os.fspath(path) or not str(path).endswith(".json"):
+                raise AssertionError("record creation must use a digest filename only")
+            with state.lock:
+                if state.record_exists:
+                    raise FileExistsError(path)
+                state.record_exists = True
+            return allocate_fd(state.file_fds)
+
+        def fake_fstat(descriptor):
+            if descriptor in state.directory_fds:
+                return SimpleNamespace(
+                    st_mode=stat.S_IFDIR | 0o700,
+                    st_dev=expected.st_dev + (1 if directory_identity_mismatch else 0),
+                    st_ino=expected.st_ino,
+                    st_uid=getattr(expected, "st_uid", 0),
+                )
+            if descriptor in state.file_fds:
+                return SimpleNamespace(
+                    st_mode=stat.S_IFREG | 0o600,
+                    st_dev=expected.st_dev,
+                    st_ino=expected.st_ino + 1,
+                    st_uid=getattr(expected, "st_uid", 0),
+                )
+            raise OSError("unknown ledger descriptor")
+
+        def fake_write(descriptor, value):
+            if descriptor not in state.file_fds:
+                raise OSError("write did not target the ledger record")
+            if "write" in faults:
+                raise OSError("injected ledger write failure")
+            state.record_bytes.extend(bytes(value))
+            return len(value)
+
+        def fake_fsync(descriptor):
+            state.fsync_calls.append(descriptor)
+            if descriptor in state.file_fds and "file-fsync" in faults:
+                raise OSError("injected record fsync failure")
+            if descriptor in state.directory_fds:
+                if "directory-fsync" in faults and state.directory_sync_failures == 0:
+                    state.directory_sync_failures += 1
+                    raise OSError("injected publication directory fsync failure")
+                if "cleanup-fsync" in faults:
+                    raise OSError("injected cleanup directory fsync failure")
+
+        def fake_close(descriptor):
+            state.close_calls.append(descriptor)
+            if descriptor in state.file_fds and "file-close" in faults and state.file_close_failures == 0:
+                state.file_close_failures += 1
+                raise OSError("injected record close failure")
+            if descriptor in state.directory_fds and "directory-close" in faults:
+                raise OSError("injected directory close failure")
+
+        def fake_unlink(path, *, dir_fd=None):
+            state.unlink_calls.append((os.fspath(path), dir_fd))
+            if dir_fd not in state.directory_fds:
+                raise AssertionError("cleanup must use the pinned ledger descriptor")
+            if "cleanup-unlink" in faults:
+                raise OSError("injected relative cleanup failure")
+            with state.lock:
+                if not state.record_exists:
+                    raise FileNotFoundError(path)
+                state.record_exists = False
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(
+                self.helper,
+                "native_safe_ledger_backend_supported",
+                return_value=True,
+                create=True,
+            ))
+            for name, value in (
+                ("O_DIRECTORY", 0x10000),
+                ("O_NOFOLLOW", 0x20000),
+                ("O_CLOEXEC", 0x40000),
+            ):
+                stack.enter_context(mock.patch.object(self.helper.os, name, value, create=True))
+            stack.enter_context(mock.patch.object(self.helper.os, "open", side_effect=fake_open))
+            stack.enter_context(mock.patch.object(self.helper.os, "fstat", side_effect=fake_fstat))
+            stack.enter_context(mock.patch.object(self.helper.os, "write", side_effect=fake_write))
+            stack.enter_context(mock.patch.object(self.helper.os, "fsync", side_effect=fake_fsync))
+            stack.enter_context(mock.patch.object(self.helper.os, "close", side_effect=fake_close))
+            stack.enter_context(mock.patch.object(self.helper.os, "unlink", side_effect=fake_unlink))
+            yield state
 
     def write_fixture(self, name, value):
         path = self.root / "ai" / "fixtures" / name
@@ -8749,6 +8910,11 @@ print(json.dumps({"result": result, "status": status}))
         self.assert_trusted_not_enforced(unavailable)
 
     def test_signed_attestation_replay_is_blocked_across_processes(self):
+        backend_supported = getattr(
+            self.helper, "native_safe_ledger_backend_supported", lambda: True,
+        )
+        if not backend_supported():
+            self.skipTest("real handle-relative ledger backend is unavailable")
         gate_invocation_id = "gate-cross-process"
         snapshot, fingerprint, _ = self.signed_snapshot(
             gate_invocation_id=gate_invocation_id,
@@ -8804,42 +8970,156 @@ print(json.dumps({"result": result, "status": status}))
         if os.name != "nt":
             self.assertEqual(stat.S_IMODE(records[0].stat().st_mode), 0o600)
 
-    def test_ledger_creation_and_durability_faults_fail_closed_without_records(self):
-        for fault_name in ("create", "fsync"):
-            with self.subTest(fault=fault_name):
-                gate_invocation_id = f"gate-ledger-{fault_name}"
-                snapshot, fingerprint, _ = self.signed_snapshot(
-                    gate_invocation_id=gate_invocation_id,
-                )
-                host_trust = self.external_host_trust(fingerprint)
-                if fault_name == "create":
-                    patcher = mock.patch.object(
-                        self.helper.os,
-                        "open",
-                        side_effect=PermissionError("ledger unavailable"),
-                    )
-                else:
-                    patcher = mock.patch.object(
-                        self.helper.os,
-                        "fsync",
-                        side_effect=OSError("ledger durability uncertain"),
-                    )
-                with patcher:
-                    result, status = self.helper.native_adapter_gate(
+    def test_safe_ledger_backend_is_required_for_supported_host_pass(self):
+        backend_supported = getattr(
+            self.helper, "native_safe_ledger_backend_supported", None,
+        )
+        self.assertIsNotNone(backend_supported)
+        if backend_supported is None:
+            return
+        self.stop_test_native_ledger_stub()
+        gate_invocation_id = "gate-ledger-backend-unavailable"
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id=gate_invocation_id,
+        )
+        host_trust = self.external_host_trust(fingerprint)
+        with mock.patch.object(
+            self.helper, "native_safe_ledger_backend_supported", return_value=False,
+        ):
+            result, status = self.helper.native_adapter_gate(
+                self.root,
+                "issue-10",
+                gate_invocation_id,
+                runtime_snapshot_ref=self.write_fixture(
+                    "runtime-ledger-backend-unavailable.json", snapshot,
+                ),
+                host_trust=host_trust,
+            )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
+        ))
+        self.assert_trusted_not_enforced(result)
+        self.assertEqual(list(host_trust.ledger_root.iterdir()), [])
+
+    def test_safe_ledger_pins_directory_and_fsyncs_published_entry(self):
+        _descriptor, _probe, ledger_root = self.write_external_host_documents()
+        identity = self.native_ledger_identity()
+        with self.mocked_safe_native_ledger(ledger_root) as state:
+            self.helper.consume_native_attestation(ledger_root, identity)
+
+        self.assertEqual(len(state.open_calls), 2)
+        self.assertEqual(Path(state.open_calls[0][0]), ledger_root)
+        self.assertIsNone(state.open_calls[0][3])
+        self.assertEqual(Path(state.open_calls[1][0]).name, state.open_calls[1][0])
+        self.assertIn(state.open_calls[1][3], state.directory_fds)
+        self.assertEqual(len(state.fsync_calls), 2)
+        self.assertIn(state.fsync_calls[0], state.file_fds)
+        self.assertIn(state.fsync_calls[1], state.directory_fds)
+        self.assertTrue(state.record_exists)
+        self.assertEqual(
+            bytes(state.record_bytes),
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        )
+
+    def test_simultaneous_safe_ledger_contenders_yield_one_pass_and_one_replay(self):
+        gate_invocation_id = "gate-ledger-simultaneous"
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id=gate_invocation_id,
+        )
+        snapshot_ref = self.write_fixture("runtime-ledger-simultaneous.json", snapshot)
+        host_trust = self.external_host_trust(fingerprint)
+        with self.mocked_safe_native_ledger(host_trust.ledger_root):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(
+                        self.helper.native_adapter_gate,
                         self.root,
                         "issue-10",
                         gate_invocation_id,
-                        runtime_snapshot_ref=self.write_fixture(
-                            f"runtime-ledger-{fault_name}.json", snapshot,
-                        ),
-                        host_trust=host_trust,
+                        snapshot_ref,
+                        None,
+                        "ai/native-runtime-adapters.json",
+                        host_trust,
                     )
+                    for _ in range(2)
+                ]
+                outcomes = [future.result() for future in futures]
 
-                self.assertEqual((result["result"], result["reason"], status), (
-                    "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
-                ))
-                self.assert_trusted_not_enforced(result)
-                self.assertEqual(list(host_trust.ledger_root.iterdir()), [])
+        actual = sorted(
+            (result["result"], result["reason"], status)
+            for result, status in outcomes
+        )
+        self.assertEqual(actual, sorted([
+            ("PASS", None, 0),
+            ("BLOCKED", "NATIVE_ADAPTER_CHALLENGE_REPLAYED", 2),
+        ]))
+
+    def test_safe_ledger_publication_and_cleanup_faults_never_return_success(self):
+        cases = (
+            "write",
+            "file-fsync",
+            "file-close",
+            "directory-fsync",
+            "directory-close",
+            "write+cleanup-unlink",
+            "write+cleanup-fsync",
+        )
+        for fault_name in cases:
+            with self.subTest(fault=fault_name):
+                _descriptor, _probe, ledger_root = self.write_external_host_documents()
+                identity = self.native_ledger_identity(f"gate-{fault_name.replace('+', '-')}")
+                with self.mocked_safe_native_ledger(
+                    ledger_root, fault=fault_name,
+                ) as state:
+                    with self.assertRaises(OSError):
+                        self.helper.consume_native_attestation(ledger_root, identity)
+                if fault_name == "directory-fsync":
+                    directory_syncs = [
+                        descriptor for descriptor in state.fsync_calls
+                        if descriptor in state.directory_fds
+                    ]
+                    self.assertEqual(len(directory_syncs), 2)
+                    self.assertFalse(state.record_exists)
+                if fault_name not in (
+                    "directory-close", "write+cleanup-unlink",
+                ):
+                    self.assertFalse(state.record_exists)
+
+    def test_safe_ledger_rejects_validation_to_open_directory_swap(self):
+        _descriptor, _probe, ledger_root = self.write_external_host_documents()
+        identity = self.native_ledger_identity("gate-ledger-swap-race")
+        if self.helper.native_safe_ledger_backend_supported():
+            self.stop_test_native_ledger_stub()
+            original_root = ledger_root.with_name("ledger-before-swap")
+            real_open = os.open
+            swapped = False
+
+            def swap_before_directory_open(path, flags, mode=0o777, *, dir_fd=None):
+                nonlocal swapped
+                if dir_fd is None and not swapped:
+                    ledger_root.rename(original_root)
+                    ledger_root.mkdir(mode=0o700)
+                    swapped = True
+                if dir_fd is None:
+                    return real_open(path, flags, mode)
+                return real_open(path, flags, mode, dir_fd=dir_fd)
+
+            with mock.patch.object(self.helper.os, "open", side_effect=swap_before_directory_open):
+                with self.assertRaises(OSError):
+                    self.helper.consume_native_attestation(ledger_root, identity)
+            self.assertTrue(swapped)
+            self.assertEqual(list(ledger_root.iterdir()), [])
+            return
+
+        with self.mocked_safe_native_ledger(
+                ledger_root, directory_identity_mismatch=True,
+        ) as state:
+            with self.assertRaises(OSError):
+                self.helper.consume_native_attestation(ledger_root, identity)
+
+        self.assertEqual(len(state.open_calls), 1)
+        self.assertFalse(state.record_exists)
 
     def test_stale_and_future_attestations_never_touch_durable_ledger(self):
         now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
@@ -8875,6 +9155,7 @@ print(json.dumps({"result": result, "status": status}))
                 self.assertEqual(list(host_trust.ledger_root.iterdir()), [])
 
     def test_ledger_root_symlink_swap_is_blocked_without_repository_write(self):
+        self.stop_test_native_ledger_stub()
         gate_invocation_id = "gate-ledger-symlink-swap"
         snapshot, fingerprint, _ = self.signed_snapshot(
             gate_invocation_id=gate_invocation_id,
