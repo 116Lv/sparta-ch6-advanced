@@ -5672,7 +5672,7 @@ NATIVE_SECRET_BEARING_SUMMARY = re.compile(
     r"\b(?:password|passwd|secret|token|api[-_]?key|credential)\s*(?:=|:)\s*\S+|"
     r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])|"
     r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|"
-    r"\b(?:request\s+body|raw\s+(?:credentials?|payload|query|argv|env(?:ironment)?)))",
+    r"\b(?:request\s+body|raw\s+(?:auth(?:orization)?|cookies?|bod(?:y|ies)|credentials?|payload|query|argv|env(?:ironment)?)))",
     re.IGNORECASE,
 )
 NATIVE_BASIC_CREDENTIAL = re.compile(r"\bbasic[ \t]+\S+", re.IGNORECASE)
