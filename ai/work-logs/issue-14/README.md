@@ -2,12 +2,12 @@
 issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 tracking_status: issue_backed
-status: in_progress
+status: in_review
 owning_feature: "none"
-current_owner: implementation-agent
+current_owner: reviewer
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T04:13:43+09:00
+last_updated: 2026-07-14T04:42:33+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -77,7 +77,7 @@ Issue #14 tracks the isolated implementation and review of the four approved tru
 
 ## Current State
 
-All three Phase 1B-3 tasks are independently approved after the durable-CAS recovery fix. Phase 2 verification-leaf hardening is next.
+Phase 1B-3 is approved. Phase 2 digest-bound leaf implementation is committed and under independent review.
 
 ## Decisions
 
@@ -96,12 +96,12 @@ All three Phase 1B-3 tasks are independently approved after the durable-CAS reco
 
 ## Next Handoff
 
-- Next role: implementation-agent
+- Next role: reviewer
 - Required reading:
   - [Trust-boundary design](../../docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md)
   - [Phase 1B-3 execution plan](../../docs/superpowers/plans/2026-07-14-phase-1b3-evidence-integrity-hardening.md)
 - Context links:
   - [Implementation role log](implementation-agent.md)
   - [Reviewer role log](reviewer.md)
-- Remaining work: Implement global Task 4 / Phase 2 local Task 1.
-- Evidence required: TDD RED/GREEN for evidence-free and mismatched leaf inputs, commit range, and independent review.
+- Remaining work: Review global Task 4 / Phase 2 local Task 1.
+- Evidence required: Schema, canonical mapping, binding/freshness/digest, native-forgery precedence findings and both verdicts.
