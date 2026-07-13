@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T07:41:33+09:00
+last_updated: 2026-07-14T08:42:35+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -1094,3 +1094,102 @@ precedence/binding focus exited `0`; 4 tests passed in `1.649s`.
   wrapper, canonical policy, handoff, or reusable-context file changed. No
   prohibited command, enforcement claim, Issue closure, or unqualified
   completion claim was made. Independent rereview remains with the parent.
+
+## Task 10 Update - Phase 3B Task 1 (2026-07-14)
+
+### Routing And Handoff
+
+- `tracking_status: issue_backed`; GitHub Issue #14.
+- `owning_feature: none`; this is repo-wide Phase 3B repository-contract and
+  native-enforcement status separation routed through `AGENTS.md`,
+  `ai/document-routing.md`, the approved trust-boundary design, the Phase 3B
+  provenance-hardening plan, and the exact Task 10 brief.
+- Implementation `skill_ids`: `verification-runner`, `failure-triage`, and
+  `docs-sync`; `handoff_state_ref`: `ai/agent-handoff.json`; reusable context:
+  `ai/workflow-cache.json`, `ai/verification-policy.json`, and
+  `ai/native-runtime-adapters.json`; GitHub reconciliation remains
+  `issue_backed`.
+
+### Changed Files And Decisions
+
+- `.github/workflows/phase-3b-ci-gates.yml`: the workflow, job ID, and job name
+  are now `phase-3b-repository-contract`. It runs only helper/static contract
+  checks, captures two diagnostic text files with pipeline failure propagation,
+  and uploads only those diagnostics. The CI evidence gate and its accepted
+  exit-3 path were removed; no `phase-3b-native-enforcement` job is emitted.
+- `ai/schemas/ci-capability-status.schema.json` and
+  `ai/ci-capability-status.json`: replaced ambiguous `requiredCheck`,
+  `workflowRefs`, and `nativeAdapterInstallation` canonical fields with closed
+  `repositoryContract` and `nativeEnforcement` objects. Canonical native
+  enforcement is `NOT_CONFIGURED`, `requiredCheckConfigured: false`, and
+  `GITHUB_REQUIRED_CHECK_AND_NATIVE_ADAPTER_NOT_CONFIGURED`; durable evidence
+  and remote runner remain completion-blocking.
+- `ai/project-state.json` and `ai/project-state.md`: the CI environment is
+  `CONFIGURED_UNVERIFIED` because the repository contract workflow exists,
+  while the same canonical note says native enforcement remains
+  `NOT_CONFIGURED`. LOCAL environment and helper-runtime claims are unchanged.
+- `scripts/ai/tests/test_workflow_helper.py`: added/updated workflow, canonical
+  status, project-state, diagnostic artifact, and required-check identity
+  regressions.
+- `scripts/ai/workflow_helper.py` and
+  `ai/schemas/ci-gate-result.schema.json`: minimal compatibility updates derive
+  the legacy gate-result projection from `nativeEnforcement`, name the required
+  check `phase-3b-native-enforcement`, and keep canonical missing evidence as
+  `NOT_CONFIGURED` / Phase 2C `BLOCKED` / exit `3`. These two files are necessary
+  because removing `currentCi.requiredCheck` without updating the reader would
+  raise `KeyError` and the old result schema would continue to name the green
+  repository job as enforcement. No Task 11 GitHub provenance path was added.
+
+### Exact TDD And Verification Evidence
+
+- First RED attempt (sandboxed):
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v`
+  exited `1`; 7 tests ran with 5 intended semantic failures and 2
+  `PermissionError` errors because the externally located isolated worktree was
+  read-only to that sandbox profile when tests created temporary status JSON.
+- RED rerun with the worktree write permission available used the same command
+  and exited `1`; 7 tests ran with 6 failures, 0 errors, and 1 pass. Failures
+  precisely showed the old `phase-3b-ci-gates` required check, missing split
+  objects, evidence-gate/exit-3 workflow path, missing diagnostics, and project
+  state claiming no workflow exists.
+- Initial GREEN used the same Phase 3B command and exited `0`; 7 tests passed in
+  `0.554s`.
+- Expanded preservation command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v`
+  exited `0`; 138 tests passed in `54.873s`, with 2 pre-existing explicit
+  Windows capability skips (directory symlink creation and the real
+  handle-relative cross-process ledger backend).
+- Final Phase 3B rerun after the explicit no-enforcement-job assertion exited
+  `0`; 7 tests passed in `0.484s`.
+- A static Python validation command loaded canonical CI status and project
+  state through approved schemas, proved the Markdown summary equals
+  `summary_for(...)`, validated the emitted CI gate result against
+  `ci-gate-result.schema.json`, and asserted
+  `NOT_CONFIGURED / BLOCKED / exit 3 / phase-3b-native-enforcement`; exit `0`
+  with `schemas/summary/gate: PASS`.
+- `git diff --check` and staged diff check exited `0`; only expected Git
+  LF-to-CRLF warnings appeared before staging. Repository `.ai-runs` and
+  recursive `__pycache__` remained absent.
+
+### Commit, Concerns, And Recovery State
+
+- Implementation/schema/tests/state commit: `a89e07e`
+  (`fix(ai): separate ci contract and enforcement`). This Task 10 evidence
+  append is committed separately; the detailed ignored report is
+  `.superpowers/sdd/task-10-phase3b-report.md`.
+- A green repository contract workflow is not enforcement success. The actual
+  GitHub required check and native adapter remain externally unconfigured, and
+  the repository contract remains `CONFIGURED_UNVERIFIED` because no Action was
+  executed in this task.
+- Task 11 still owns authenticated GitHub run/job/workflow/artifact provenance;
+  Task 12 still owns the complete helper-suite contract entry point. No part of
+  either later task was implemented here.
+- Phase 3A remains `hostVersion: null` / `UNPROBED` / `UNSUPPORTED` with the
+  repository-qualified Phase 2C `NOT_APPLICABLE` leaf. Phase 1B-3 remains
+  `INTEGRITY_ONLY`; Phase 2 result mapping and handoff/skill references are
+  unchanged.
+- Gradle, build/product tests, server, Docker, HTTP/API, database, migration,
+  seed, deploy, infrastructure, real `.ai-runs`, GitHub Actions, push, PR,
+  merge, branch-protection, and Issue mutation were NOT RUN. No registry
+  `VERIFIED`, native/CI enforcement, Issue closure, or unqualified completion
+  claim is made. Independent review remains with the parent.
