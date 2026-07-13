@@ -6819,6 +6819,22 @@ class Phase2CVerificationGateTests(unittest.TestCase):
             self.root, synthesized_result, "ai/schemas/verification-gate-result.schema.json",
         )
 
+        for mapped_result in ("PASS", "FAIL"):
+            with self.subTest(mapped_result=mapped_result):
+                invalid_mapped = json.loads(json.dumps(synthesized_result))
+                invalid_mapped_check = next(
+                    check for check in invalid_mapped["data"]["checks"]
+                    if check["checkId"] == "review-gate"
+                )
+                self.assertEqual(invalid_mapped_check["rawResult"], "NOT_CONFIGURED")
+                invalid_mapped_check["mappedResult"] = mapped_result
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        self.root,
+                        invalid_mapped,
+                        "ai/schemas/verification-gate-result.schema.json",
+                    )
+
         invalid_synthesized = json.loads(json.dumps(synthesized_result))
         invalid_synthesized_check = next(
             check for check in invalid_synthesized["data"]["checks"]

@@ -32,7 +32,7 @@ Verification completeness means every required check for the selected change typ
 
 `NOT_APPLICABLE` may be displayed as `N/A` in Markdown summaries, but executable JSON stores `NOT_APPLICABLE`.
 
-Every check output carries the same five leaf-identity keys in one of two closed shapes. A verified external or native check requires all five to be non-null. A missing, synthesized, or policy-derived check requires all five to be null and cannot report raw `PASS` or `FAIL`; it therefore cannot validate as verified evidence. For an external leaf, `leafResultSha256` is derived from the exact bounded bytes that the loader parsed and accepted, without reopening the leaf path, and `evidenceRef` points to the bound evidence artifact when present. The internal native leaf records `ai/native-adapter-result.json`, the SHA-256 of that canonical in-process result, the canonical producer, checked-out commit, and canonical policy digest.
+Every check output carries the same five leaf-identity keys in one of two closed shapes. A verified external or native check requires all five to be non-null. A missing, synthesized, or policy-derived check requires all five to be null and cannot report raw or mapped `PASS` or `FAIL`; it therefore cannot validate as verified evidence. For an external leaf, `leafResultSha256` is derived from the exact bounded bytes that the loader parsed and accepted, without reopening the leaf path, and `evidenceRef` points to the bound evidence artifact when present. The internal native leaf records `ai/native-adapter-result.json`, the SHA-256 of that canonical in-process result, the canonical producer, checked-out commit, and canonical policy digest.
 
 ## Native Runtime Adapter Leaf
 

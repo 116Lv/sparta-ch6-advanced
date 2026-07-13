@@ -82,6 +82,7 @@
               {
                 "properties": {
                   "rawResult": { "enum": ["BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"] },
+                  "mappedResult": { "enum": ["BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"] },
                   "leafResultRef": { "type": "null" },
                   "leafResultSha256": { "type": "null" },
                   "producerId": { "type": "null" },
