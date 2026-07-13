@@ -5867,13 +5867,13 @@ def repository_commit_sha(root):
     return matched.group(1)
 
 
-def read_verification_leaf_evidence(path):
+def read_bounded_verification_json(path, max_bytes, too_large_code, too_large_message):
     with path.open("rb") as handle:
-        encoded = handle.read(MAX_VERIFICATION_LEAF_EVIDENCE_BYTES + 1)
-    if len(encoded) > MAX_VERIFICATION_LEAF_EVIDENCE_BYTES:
+        encoded = handle.read(max_bytes + 1)
+    if len(encoded) > max_bytes:
         raise InvalidStateError([validation_error(
-            "VERIFICATION_LEAF_EVIDENCE_TOO_LARGE",
-            message="verification leaf evidence exceeds the bounded read limit",
+            too_large_code,
+            message=too_large_message,
         )])
     try:
         value = json.loads(
@@ -5896,6 +5896,24 @@ def read_verification_leaf_evidence(path):
             "MALFORMED_JSON", message="input is not valid UTF-8 JSON",
         )]) from error
     return encoded, value
+
+
+def read_verification_leaf_evidence(path):
+    return read_bounded_verification_json(
+        path,
+        MAX_VERIFICATION_LEAF_EVIDENCE_BYTES,
+        "VERIFICATION_LEAF_EVIDENCE_TOO_LARGE",
+        "verification leaf evidence exceeds the bounded read limit",
+    )
+
+
+def read_verification_leaf_result(path):
+    return read_bounded_verification_json(
+        path,
+        MAX_VERIFICATION_LEAF_EVIDENCE_BYTES,
+        "VERIFICATION_LEAF_RESULT_TOO_LARGE",
+        "verification leaf result exceeds the bounded read limit",
+    )
 
 
 def verification_leaf_references(root, refs_file):
@@ -5929,19 +5947,26 @@ def verification_leaf_references(root, refs_file):
             ):
                 raise ValueError("invalid leaf result reference")
 
-        unverified_leaves = [
-            read_json(resolve_repository_file(root, reference))
-            for reference in references
-        ]
+        loaded_leaves = []
+        for reference in references:
+            encoded, leaf = read_verification_leaf_result(
+                resolve_repository_file(root, reference),
+            )
+            loaded_leaves.append({
+                "reference": Path(reference).as_posix(),
+                "encoded": encoded,
+                "leaf": leaf,
+            })
         if any(
-            isinstance(leaf, dict) and leaf.get("checkId") == NATIVE_ADAPTER_CHECK_ID
-            for leaf in unverified_leaves
+            isinstance(item["leaf"], dict)
+            and item["leaf"].get("checkId") == NATIVE_ADAPTER_CHECK_ID
+            for item in loaded_leaves
         ):
             raise InvalidStateError([validation_error(
                 "NATIVE_ADAPTER_LEAF_FORGED",
                 message="native runtime adapter leaf results are internal-only",
             )])
-        return references
+        return loaded_leaves
     except InvalidStateError:
         raise
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
@@ -5951,9 +5976,10 @@ def verification_leaf_references(root, refs_file):
         )]) from error
 
 
-def verified_leaf_result(root, reference, expected, policy_sha256):
-    path = resolve_repository_file(root, reference)
-    leaf = read_json(path)
+def verified_leaf_result(root, loaded_leaf, expected, policy_sha256):
+    reference = loaded_leaf["reference"]
+    encoded = loaded_leaf["encoded"]
+    leaf = loaded_leaf["leaf"]
     validate(root, leaf, "ai/schemas/verification-leaf-result.schema.json")
     if leaf["checkId"] == NATIVE_ADAPTER_CHECK_ID:
         raise InvalidStateError([validation_error(
@@ -6012,16 +6038,18 @@ def verified_leaf_result(root, reference, expected, policy_sha256):
                 "VERIFICATION_LEAF_DIGEST_MISMATCH",
                 message="verification leaf evidence digest does not match",
             )])
-    return leaf
+    verified = dict(leaf)
+    verified["leafResultRef"] = reference
+    verified["leafResultSha256"] = hashlib.sha256(encoded).hexdigest()
+    return verified
 
 
-def load_verified_leaf_results(root, refs_file, task_key, gate_invocation_id, commit_sha, policy):
-    references = verification_leaf_references(root, refs_file)
+def load_verified_leaf_results(root, loaded_leaves, task_key, gate_invocation_id, commit_sha, policy):
     policy_checks = {check["id"]: check for check in policy["checks"]}
     policy_sha256 = digest(resolve_repository_file(root, "ai/verification-policy.json"))
     by_id = {}
-    for reference in references:
-        leaf = read_json(resolve_repository_file(root, reference))
+    for loaded_leaf in loaded_leaves:
+        leaf = loaded_leaf["leaf"]
         check_id = leaf.get("checkId") if isinstance(leaf, dict) else None
         policy_check = policy_checks.get(check_id)
         if policy_check is None or check_id in by_id:
@@ -6037,10 +6065,9 @@ def load_verified_leaf_results(root, refs_file, task_key, gate_invocation_id, co
             "producerId": policy_check["producerId"],
             "evidenceSchema": policy_check["evidenceSchema"],
         }
-        verified = verified_leaf_result(root, reference, expected, policy_sha256)
-        verified["leafResultRef"] = Path(reference).as_posix()
-        verified["leafResultSha256"] = digest(resolve_repository_file(root, reference))
-        by_id[check_id] = verified
+        by_id[check_id] = verified_leaf_result(
+            root, loaded_leaf, expected, policy_sha256,
+        )
     return by_id
 
 
@@ -6926,14 +6953,14 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
             ), 4)
         change = change_types[change_type]
         if leaf_results_ref is not None:
-            verification_leaf_references(root, leaf_results_ref)
+            loaded_leaves = verification_leaf_references(root, leaf_results_ref)
         commit_sha = repository_commit_sha(root)
         if leaf_results_ref is None:
             leaf_results = {}
         else:
             leaf_results = load_verified_leaf_results(
                 root,
-                leaf_results_ref,
+                loaded_leaves,
                 task_key,
                 gate_invocation_id,
                 commit_sha,

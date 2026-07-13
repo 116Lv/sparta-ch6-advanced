@@ -6747,15 +6747,16 @@ class Phase2CVerificationGateTests(unittest.TestCase):
 
     def test_verified_leaf_and_native_identity_are_exposed(self):
         leaf_ref = self.write_bound_leaf("review-gate", name="identity-review")
+        accepted_leaf_bytes = (self.root / leaf_ref).read_bytes()
         result, status = self.run_gate_with_refs("documentation-only", "review", [leaf_ref])
 
         self.assertEqual((result["result"], status), ("PASS", 0))
         checks = {check["checkId"]: check for check in result["data"]["checks"]}
         review = checks["review-gate"]
-        leaf = json.loads((self.root / leaf_ref).read_text(encoding="utf-8"))
+        leaf = json.loads(accepted_leaf_bytes.decode("utf-8"))
         self.assertEqual(review["leafResultRef"], leaf_ref)
         self.assertEqual(
-            review["leafResultSha256"], hashlib.sha256((self.root / leaf_ref).read_bytes()).hexdigest(),
+            review["leafResultSha256"], hashlib.sha256(accepted_leaf_bytes).hexdigest(),
         )
         for field in ("producerId", "commitSha", "policySha256"):
             self.assertEqual(review[field], leaf[field])
@@ -6771,9 +6772,121 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         )
         self.helper.validate(self.root, result, "ai/schemas/verification-gate-result.schema.json")
 
+    def test_gate_result_schema_distinguishes_verified_and_synthesized_checks(self):
+        leaf_ref = self.write_bound_leaf("review-gate", name="identity-shape-review")
+        result, status = self.run_gate_with_refs("documentation-only", "review", [leaf_ref])
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        self.helper.validate(self.root, result, "ai/schemas/verification-gate-result.schema.json")
+
+        checks = {check["checkId"]: check for check in result["data"]["checks"]}
+        identity_fields = (
+            "leafResultRef", "leafResultSha256", "producerId", "commitSha", "policySha256",
+        )
+        for check_id in ("review-gate", "native-runtime-adapter"):
+            for field in identity_fields:
+                for mutation in ("null", "missing"):
+                    with self.subTest(check_id=check_id, field=field, mutation=mutation):
+                        invalid = json.loads(json.dumps(result))
+                        invalid_check = next(
+                            check for check in invalid["data"]["checks"]
+                            if check["checkId"] == check_id
+                        )
+                        if mutation == "null":
+                            invalid_check[field] = None
+                        else:
+                            invalid_check.pop(field)
+                        with self.assertRaises(self.helper.InvalidStateError):
+                            self.helper.validate(
+                                self.root,
+                                invalid,
+                                "ai/schemas/verification-gate-result.schema.json",
+                            )
+
+        synthesized_result, synthesized_status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+        self.assertEqual((synthesized_result["result"], synthesized_status), ("BLOCKED", 2))
+        synthesized = next(
+            check for check in synthesized_result["data"]["checks"]
+            if check["checkId"] == "review-gate"
+        )
+        self.assertEqual({synthesized[field] for field in identity_fields}, {None})
+        self.helper.validate(
+            self.root, synthesized_result, "ai/schemas/verification-gate-result.schema.json",
+        )
+
+        invalid_synthesized = json.loads(json.dumps(synthesized_result))
+        invalid_synthesized_check = next(
+            check for check in invalid_synthesized["data"]["checks"]
+            if check["checkId"] == "review-gate"
+        )
+        invalid_synthesized_check["rawResult"] = "PASS"
+        invalid_synthesized_check["mappedResult"] = "PASS"
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                self.root,
+                invalid_synthesized,
+                "ai/schemas/verification-gate-result.schema.json",
+            )
+
+    def test_gate_uses_single_read_leaf_identity_after_replacement(self):
+        leaf_ref = self.write_bound_leaf("review-gate", name="single-read-leaf")
+        done_ref = self.write_bound_leaf("done-claim-gate", name="single-read-done")
+        refs = self.write_leaf_result_refs(
+            [leaf_ref, done_ref], name="single-read-leaf-refs.json",
+        )
+        leaf_path = self.root / leaf_ref
+        accepted_bytes = leaf_path.read_bytes()
+        accepted_leaf = json.loads(accepted_bytes.decode("utf-8"))
+        replacement_leaf = json.loads(json.dumps(accepted_leaf))
+        replacement_leaf["result"] = "FAIL"
+        replacement_leaf["reason"] = "replacement leaf must not be observed"
+        replacement_bytes = json.dumps(replacement_leaf, sort_keys=True).encode("utf-8")
+        original_open = Path.open
+        leaf_open_count = 0
+
+        def race_open(path, *args, **kwargs):
+            nonlocal leaf_open_count
+            if Path(path) == leaf_path:
+                leaf_open_count += 1
+                payload = accepted_bytes if leaf_open_count == 1 else replacement_bytes
+                return io.BytesIO(payload)
+            return original_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.helper.Path, "open", autospec=True, side_effect=race_open):
+            result, status = self.helper.verification_gate(
+                self.root,
+                "documentation-only",
+                "review",
+                refs,
+                task_key="issue-10",
+                gate_invocation_id="gate-review",
+            )
+
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        review = next(
+            check for check in result["data"]["checks"]
+            if check["checkId"] == "review-gate"
+        )
+        self.assertEqual(leaf_open_count, 1)
+        self.assertEqual(review["rawResult"], accepted_leaf["result"])
+        self.assertEqual(review["reason"], accepted_leaf["reason"])
+        self.assertEqual(review["leafResultRef"], leaf_ref)
+        self.assertEqual(
+            review["leafResultSha256"], hashlib.sha256(accepted_bytes).hexdigest(),
+        )
+        for field in ("producerId", "commitSha", "policySha256"):
+            self.assertEqual(review[field], accepted_leaf[field])
+
     def test_leaf_evidence_is_opened_once_and_verified_from_the_same_bytes(self):
         leaf_ref = self.write_bound_leaf(name="single-read-evidence")
-        leaf = json.loads((self.root / leaf_ref).read_text(encoding="utf-8"))
+        leaf_bytes = (self.root / leaf_ref).read_bytes()
+        leaf = json.loads(leaf_bytes.decode("utf-8"))
+        loaded_leaf = {"reference": leaf_ref, "encoded": leaf_bytes, "leaf": leaf}
         evidence_path = self.root / leaf["evidence"]["ref"]
         evidence_bytes = evidence_path.read_bytes()
         replacement_bytes = json.dumps(
@@ -6801,7 +6914,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
 
         with mock.patch.object(self.helper.Path, "open", autospec=True, side_effect=race_open):
             verified = self.helper.verified_leaf_result(
-                self.root, leaf_ref, expected, leaf["policySha256"],
+                self.root, loaded_leaf, expected, leaf["policySha256"],
             )
 
         self.assertEqual(verified["checkId"], "review-gate")
