@@ -7738,6 +7738,55 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             check=False,
         )
 
+    def run_external_native_evaluator_subprocess(
+            self, descriptor_path, probe_path, ledger_root, snapshot_ref,
+            gate_invocation_id):
+        script = """
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+helper_path, root, descriptor, probe, ledger, snapshot_ref, gate = sys.argv[1:]
+specification = importlib.util.spec_from_file_location(
+    "workflow_helper_cross_process", helper_path,
+)
+helper = importlib.util.module_from_spec(specification)
+specification.loader.exec_module(helper)
+host_trust = helper.load_host_native_trust(
+    Path(root), Path(descriptor), Path(probe), Path(ledger),
+)
+result, status = helper.native_adapter_gate(
+    Path(root),
+    "issue-10",
+    gate,
+    runtime_snapshot_ref=snapshot_ref,
+    host_trust=host_trust,
+)
+print(json.dumps({"result": result, "status": status}))
+"""
+        return subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(HELPER_PATH),
+                str(self.root),
+                str(descriptor_path),
+                str(probe_path),
+                str(ledger_root),
+                snapshot_ref,
+                gate_invocation_id,
+            ],
+            cwd=str(REPOSITORY_ROOT),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
     def test_native_adapter_cli_missing_required_argument_returns_structured_result(self):
         completed = self.run_native_adapter_cli_subprocess(
             "--task-key", "issue-10",
@@ -8041,7 +8090,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         ledger_root = root / "ledger"
         descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
         probe_path.write_text(json.dumps(probe), encoding="utf-8")
-        ledger_root.mkdir()
+        ledger_root.mkdir(mode=0o700)
         return descriptor_path, probe_path, ledger_root
 
     def test_repository_supported_host_and_temporary_key_cannot_promote_public_cli(self):
@@ -8698,6 +8747,163 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "BLOCKED", "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE", 2,
         ))
         self.assert_trusted_not_enforced(unavailable)
+
+    def test_signed_attestation_replay_is_blocked_across_processes(self):
+        gate_invocation_id = "gate-cross-process"
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id=gate_invocation_id,
+        )
+        snapshot_ref = self.write_fixture("runtime-cross-process.json", snapshot)
+        descriptor = self.host_trust_descriptor(fingerprint)
+        descriptor_path, probe_path, ledger_root = self.write_external_host_documents(
+            descriptor=descriptor,
+        )
+
+        first = self.run_external_native_evaluator_subprocess(
+            descriptor_path, probe_path, ledger_root, snapshot_ref, gate_invocation_id,
+        )
+        second = self.run_external_native_evaluator_subprocess(
+            descriptor_path, probe_path, ledger_root, snapshot_ref, gate_invocation_id,
+        )
+
+        self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
+        first_payload = json.loads(first.stdout)
+        self.assertEqual(
+            (first_payload["result"]["result"], first_payload["status"]),
+            ("PASS", 0),
+        )
+        self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
+        second_payload = json.loads(second.stdout)
+        self.assertEqual((
+            second_payload["result"]["result"],
+            second_payload["result"]["reason"],
+            second_payload["status"],
+        ), ("BLOCKED", "NATIVE_ADAPTER_CHALLENGE_REPLAYED", 2))
+
+        records = list(ledger_root.iterdir())
+        self.assertEqual(len(records), 1)
+        self.assertTrue(records[0].is_file())
+        self.assertFalse(records[0].is_symlink())
+        identity = json.loads(records[0].read_text(encoding="utf-8"))
+        self.assertEqual(set(identity), {
+            "repositorySha256",
+            "producerId",
+            "taskKey",
+            "gateInvocationId",
+            "attestationId",
+            "nonce",
+            "eventSetSha256",
+        })
+        self.assertEqual(identity["producerId"], snapshot["producerId"])
+        self.assertEqual(identity["taskKey"], snapshot["taskKey"])
+        self.assertEqual(identity["gateInvocationId"], gate_invocation_id)
+        self.assertEqual(identity["attestationId"], snapshot["$id"])
+        self.assertEqual(identity["nonce"], gate_invocation_id)
+        self.assertEqual(identity["eventSetSha256"], snapshot["bypassEventSetSha256"])
+        self.assertRegex(identity["repositorySha256"], r"^[a-f0-9]{64}$")
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(records[0].stat().st_mode), 0o600)
+
+    def test_ledger_creation_and_durability_faults_fail_closed_without_records(self):
+        for fault_name in ("create", "fsync"):
+            with self.subTest(fault=fault_name):
+                gate_invocation_id = f"gate-ledger-{fault_name}"
+                snapshot, fingerprint, _ = self.signed_snapshot(
+                    gate_invocation_id=gate_invocation_id,
+                )
+                host_trust = self.external_host_trust(fingerprint)
+                if fault_name == "create":
+                    patcher = mock.patch.object(
+                        self.helper.os,
+                        "open",
+                        side_effect=PermissionError("ledger unavailable"),
+                    )
+                else:
+                    patcher = mock.patch.object(
+                        self.helper.os,
+                        "fsync",
+                        side_effect=OSError("ledger durability uncertain"),
+                    )
+                with patcher:
+                    result, status = self.helper.native_adapter_gate(
+                        self.root,
+                        "issue-10",
+                        gate_invocation_id,
+                        runtime_snapshot_ref=self.write_fixture(
+                            f"runtime-ledger-{fault_name}.json", snapshot,
+                        ),
+                        host_trust=host_trust,
+                    )
+
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
+                ))
+                self.assert_trusted_not_enforced(result)
+                self.assertEqual(list(host_trust.ledger_root.iterdir()), [])
+
+    def test_stale_and_future_attestations_never_touch_durable_ledger(self):
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        cases = (
+            (
+                "stale",
+                now - dt.timedelta(seconds=self.helper.NATIVE_SNAPSHOT_MAX_AGE_SECONDS + 1),
+                "NATIVE_ADAPTER_SNAPSHOT_STALE",
+            ),
+            ("future", now + dt.timedelta(minutes=1), "NATIVE_ADAPTER_SNAPSHOT_FUTURE"),
+        )
+        for name, observed_at, expected_reason in cases:
+            with self.subTest(name=name):
+                gate_invocation_id = f"gate-ledger-{name}"
+                snapshot, fingerprint, _ = self.signed_snapshot(
+                    gate_invocation_id=gate_invocation_id,
+                    observed_at=observed_at.isoformat().replace("+00:00", "Z"),
+                )
+                host_trust = self.external_host_trust(fingerprint)
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    gate_invocation_id,
+                    runtime_snapshot_ref=self.write_fixture(
+                        f"runtime-ledger-{name}.json", snapshot,
+                    ),
+                    host_trust=host_trust,
+                )
+
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", expected_reason, 2,
+                ))
+                self.assertEqual(list(host_trust.ledger_root.iterdir()), [])
+
+    def test_ledger_root_symlink_swap_is_blocked_without_repository_write(self):
+        gate_invocation_id = "gate-ledger-symlink-swap"
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id=gate_invocation_id,
+        )
+        host_trust = self.external_host_trust(fingerprint)
+        ledger_root = host_trust.ledger_root
+        original_root = ledger_root.with_name("ledger-original")
+        ledger_root.rename(original_root)
+        forbidden_target = self.root / "forbidden-ledger"
+        forbidden_target.mkdir()
+        try:
+            ledger_root.symlink_to(forbidden_target, target_is_directory=True)
+        except OSError:
+            original_root.rename(ledger_root)
+            self.skipTest("directory symlink creation is unavailable")
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            gate_invocation_id,
+            runtime_snapshot_ref=self.write_fixture("runtime-ledger-symlink.json", snapshot),
+            host_trust=host_trust,
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
+        ))
+        self.assertEqual(list(forbidden_target.iterdir()), [])
+        self.assertFalse((self.root / ".ai-runs").exists())
 
     def test_version_provenance_conditionals_and_supported_matching_require_probe(self):
         canonical = json.loads(

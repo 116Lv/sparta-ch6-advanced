@@ -6382,6 +6382,10 @@ class NativeBypassReferenceError(ValueError):
     pass
 
 
+class NativeReplayError(ValueError):
+    pass
+
+
 def native_summary_has_secret(value):
     if (
         NATIVE_SECRET_BEARING_SUMMARY.search(value)
@@ -6626,6 +6630,81 @@ def resolve_external_host_trust_path(repository_root, path, *, directory):
         return resolved
     except OSError as error:
         raise ValueError("host trust path is unavailable") from error
+
+
+def secure_host_ledger_path(ledger_root, filename):
+    if not isinstance(filename, str) or re.fullmatch(r"[a-f0-9]{64}\.json", filename) is None:
+        raise ValueError("host ledger record name is invalid")
+    candidate = Path(os.path.abspath(os.fspath(ledger_root)))
+    try:
+        if any(item.is_symlink() for item in (candidate, *candidate.parents)):
+            raise ValueError("host ledger paths cannot contain symlinks")
+        resolved_root = candidate.resolve(strict=True)
+        if not resolved_root.is_dir():
+            raise ValueError("host ledger root must be a directory")
+        if os.name != "nt" and stat.S_IMODE(resolved_root.stat().st_mode) & 0o077:
+            raise PermissionError("host ledger root permissions are too broad")
+    except OSError as error:
+        raise ValueError("host ledger root is unavailable") from error
+    destination = resolved_root / filename
+    if destination.parent != resolved_root or destination.is_symlink():
+        raise ValueError("host ledger destination is unsafe")
+    return destination
+
+
+def consume_native_attestation(ledger_root: Path, identity: dict) -> None:
+    required = {
+        "repositorySha256",
+        "producerId",
+        "taskKey",
+        "gateInvocationId",
+        "attestationId",
+        "nonce",
+        "eventSetSha256",
+    }
+    if (
+        not isinstance(identity, dict)
+        or set(identity) != required
+        or any(not isinstance(value, str) or not value for value in identity.values())
+        or NATIVE_KEY_FINGERPRINT.fullmatch(identity["repositorySha256"]) is None
+        or NATIVE_KEY_FINGERPRINT.fullmatch(identity["eventSetSha256"]) is None
+        or any(
+            NATIVE_ADAPTER_IDENTIFIER.fullmatch(identity[field]) is None
+            for field in ("producerId", "taskKey", "gateInvocationId", "nonce")
+        )
+    ):
+        raise ValueError("native attestation ledger identity is invalid")
+    canonical = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    key = hashlib.sha256(canonical).hexdigest()
+    destination = secure_host_ledger_path(ledger_root, f"{key}.json")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOINHERIT", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(destination), flags, 0o600)
+    except FileExistsError as error:
+        raise NativeReplayError("NATIVE_ADAPTER_CHALLENGE_REPLAYED") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("native attestation ledger record is not a regular file")
+        if os.name != "nt" and stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise PermissionError("native attestation ledger record permissions are invalid")
+        with os.fdopen(descriptor, "wb", closefd=True) as handle:
+            descriptor = -1
+            handle.write(canonical)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception as error:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            destination.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            raise OSError("native attestation ledger cleanup is uncertain") from cleanup_error
+        raise error
 
 
 def load_host_native_trust(repository_root, descriptor_path, probe_path, ledger_root) -> HostNativeTrust:
@@ -6895,7 +6974,8 @@ def native_snapshot_freshness_reason(observed_at):
     return None
 
 
-def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, task_key, gate_invocation_id):
+def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, task_key,
+                                  gate_invocation_id, ledger_root):
     baseline_surfaces = native_host_baseline_surfaces(supported_host)
     try:
         validate(root, snapshot, "ai/schemas/native-runtime-snapshot.schema.json")
@@ -6964,6 +7044,23 @@ def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, 
         task_key,
         gate_invocation_id,
     )
+    resolved_ledger_root = resolve_external_host_trust_path(
+        root, ledger_root, directory=True,
+    )
+    repository_identity = os.path.normcase(str(Path(root).resolve(strict=True))).encode("utf-8")
+    identity = {
+        "repositorySha256": hashlib.sha256(repository_identity).hexdigest(),
+        "producerId": snapshot["producerId"],
+        "taskKey": snapshot["taskKey"],
+        "gateInvocationId": snapshot["gateInvocationId"],
+        "attestationId": snapshot["$id"],
+        "nonce": snapshot["gateInvocationId"],
+        "eventSetSha256": snapshot["bypassEventSetSha256"],
+    }
+    try:
+        consume_native_attestation(resolved_ledger_root, identity)
+    except NativeReplayError:
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CHALLENGE_REPLAYED"
     if challenge_key in NATIVE_CONSUMED_CHALLENGES:
         return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CHALLENGE_REPLAYED"
     NATIVE_CONSUMED_CHALLENGES.add(challenge_key)
@@ -7075,6 +7172,7 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                     current_host,
                     task_key,
                     gate_invocation_id,
+                    host_trust.ledger_root,
                 )
                 snapshot_data = native_adapter_data(
                     current_host,
