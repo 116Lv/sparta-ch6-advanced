@@ -346,3 +346,33 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: Final static re-review confirms pinned handle-relative publication, durable directory synchronization, fail-closed cleanup, precise replay mapping, and transparent platform-skip evidence. No issues remain for Task 8.
+
+## Task 9 Final Re-review (2026-07-14)
+
+### Spec Compliance
+
+- Verdict: Spec compliant.
+- `DETECTED` records require null original-detection binding fields, while `RESOLVED` records require non-null detection event, original gate invocation, and canonical detection digest bindings.
+- Canonical detection hashing excludes only the five lifecycle resolution-binding fields specified by the task.
+- Each current resolution must match exactly one earlier detection by event ID, task, original gate, deduplication key, digest, and strict observation ordering before signed resolution event IDs are compared.
+- Unmatched detections remain unresolved, duplicate event delivery retains its idempotent/conflict contract, and durable replay, external host trust, public unsupported behavior, and documentation boundaries remain preserved.
+- A full delivered-event pre-scan now gives current-gate detections deterministic `NATIVE_BYPASS_UNRESOLVED` precedence before per-group invalid-resolution evaluation, independent of deduplication-group insertion order.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+- None. The prior cross-group current-gate detection precedence finding is closed.
+
+#### Minor (Nice to Have)
+
+- None.
+
+### Assessment
+
+- Task quality: Approved.
+- Reasoning: Final re-review confirms exact original-detection binding, canonical digest construction, deterministic lifecycle precedence, fail-closed signed-resolution ordering, and preserved native trust boundaries. No issues remain for Task 9.
