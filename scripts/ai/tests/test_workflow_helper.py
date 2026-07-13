@@ -6543,6 +6543,19 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         summary = (REPOSITORY_ROOT / "ai/work-logs/issue-10/README.md").read_text(encoding="utf-8")
         self.assertIn("https://github.com/116Lv/sparta-ch6-advanced/issues/10", summary)
 
+    def test_current_host_is_explicitly_unsupported_on_all_native_surfaces(self):
+        policy_path = REPOSITORY_ROOT / "ai/native-runtime-adapters.json"
+        self.assertTrue(policy_path.is_file())
+        policy = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/native-runtime-adapters.json")
+
+        self.assertEqual(policy["supportedHosts"], [])
+        self.assertEqual(policy["currentHost"]["hostId"], "codex-desktop")
+        self.assertEqual(
+            {surface["surface"] for surface in policy["currentHost"]["surfaces"]},
+            {"COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL"},
+        )
+        self.assertEqual({surface["status"] for surface in policy["currentHost"]["surfaces"]}, {"UNSUPPORTED"})
+
     def test_closed_native_adapter_schemas_accept_complete_supported_host_vectors(self):
         self.assert_valid("native-runtime-adapters", self.supported_host_policy())
         self.assert_valid("native-bypass-attempt", self.bypass_attempt())
