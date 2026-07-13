@@ -530,3 +530,88 @@ line-ending warnings were emitted.
   product, infrastructure, and GitHub Issue state were not edited. Prohibited
   commands and real `.ai-runs` remained NOT RUN; no phase-state or closure
   claim is made.
+
+## Task 6 Update - Phase 2 Task 3 (2026-07-14)
+
+### Routing And Handoff
+
+- `tracking_status: issue_backed`; Issue #14:
+  `https://github.com/116Lv/sparta-ch6-advanced/issues/14`.
+- `owning_feature: none`; this is repo-wide Phase 2 cache and skill/handoff
+  integrity work routed through `AGENTS.md`, `ai/document-routing.md`, the
+  Phase 2A cache policies, Phase 2B catalog/handoff contracts, and the exact
+  Task 6 brief.
+- Implementation `skill_ids`: `verification-runner`, `failure-triage`, and
+  `docs-sync`; `handoff_state_ref`: `ai/agent-handoff.json`; reusable context:
+  `ai/workflow-cache.json`, `ai/verification-policy.json`, and
+  `ai/native-runtime-adapters.json`; `github_reconciliation_status` is
+  `issue_backed`.
+
+### Changed Files And Decisions
+
+- `scripts/ai/workflow_helper.py`: added complete cache-entry identity,
+  fail-closed verification-decision invalidation, exact catalog semantics, and
+  exact handoff-to-catalog validation during repo intake.
+- `scripts/ai/tests/test_workflow_helper.py`: added schema, cache-staleness,
+  duplicate-skill, and missing-distinct-handoff-skill regressions.
+- `ai/schemas/workflow-cache.schema.json`: added the distinct closed
+  `VERIFICATION_DECISION` key branch while retaining path keys for legacy and
+  handoff cache entries.
+- `ai/schemas/skill-catalog.schema.json` and
+  `ai/schemas/agent-handoff.schema.json`: added `uniqueItems` defense in depth.
+- `ai/workflow-cache.json`: documented the complete identity contract without
+  materializing a self-referential or short-lived cached PASS decision.
+- `ai/cache-policy.md`, `ai/skills/README.md`, and `ai/agent-handoff.md`:
+  documented stale/uncertain mapping and exact-set semantics.
+- Verification-decision identity covers task key, gate invocation ID, commit,
+  change type, entry point, verification-policy digest, sorted exact producer
+  IDs, sorted evidence path/digest pairs, environment fingerprint, and expiry.
+  Current commit and policy are derived internally. Producers are the exact
+  required/optional policy checks whose canonical entry point matches the
+  selected change type and entry point; `documentation-only` plus `review`
+  therefore yields only `review-gate`.
+- Missing or unmapped task/gate/classification/policy/commit/environment state
+  is `UNCERTAIN`; commit, policy, producer, evidence mismatch or expiry is
+  `STALE`. Task/gate values remain required cache identity but repo intake does
+  not falsely claim external authority for them. A non-null environment
+  fingerprint remains `UNCERTAIN` until an authoritative current mapping exists.
+
+### Exact TDD And Verification Evidence
+
+- Exact RED command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2AContextCacheTests scripts.ai.tests.test_workflow_helper.Phase2ARepoIntakeTests scripts.ai.tests.test_workflow_helper.Phase2BSkillsHandoffTests -v`
+- Exact RED result: expected exit `1`; 17 tests ran in `5.538s`, with 12
+  assertion failures and 5 missing-interface/schema errors. The baseline
+  reported every policy/commit/task/gate/producer/change/entry/environment/
+  expiry/evidence mutation as `FRESH`, accepted both malformed skill sets, and
+  lacked all three required interfaces.
+- Focused GREEN command: the same Phase 2A/2B command after the minimum
+  implementation.
+- Focused GREEN result: exit `0`; 17 tests passed in `6.007s`.
+- Required surrounding command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2AContextCacheTests scripts.ai.tests.test_workflow_helper.Phase2ARepoIntakeTests scripts.ai.tests.test_workflow_helper.Phase2BSkillsHandoffTests scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v`
+- Surrounding result: exit `0`; 128 tests passed in `52.476s`. No leaf,
+  aggregation, forged-native precedence, or Phase 3A compatibility adjustment
+  was needed.
+- Phase 1B-3 integrity command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase1B3DoneClaimGateTests -v`
+- Phase 1B-3 result: exit `0`; 17 tests passed in `23.777s`.
+- `git diff --check` and staged `git diff --cached --check` exited `0`; only
+  line-ending conversion warnings were emitted. Repository `.ai-runs` and
+  recursive `__pycache__` remained absent.
+
+### Commit And Recovery State
+
+- Implementation/schema/tests/docs commit: `6a3a9dc`
+  (`fix(ai): bind phase 2 cache and handoff state`).
+- The current intentional boundary is that repo intake cannot authenticate an
+  external task/gate assertion or non-null environment fingerprint; those
+  inputs remain identity-only or `UNCERTAIN`, never reusable authority.
+- This dated evidence append is committed separately. Independent review and
+  orchestration remain with the parent; no summary, index, reviewer log, or
+  GitHub Issue state was changed.
+- Gradle, build/product tests, server, Docker, HTTP/API, database, migration,
+  seed, deploy, infrastructure, real `.ai-runs`, push, PR, merge, and GitHub
+  Issue mutation/closure were NOT RUN. No registry `VERIFIED`, phase-state,
+  native/CI enforcement, closure, or unqualified overall completion claim is
+  made.
