@@ -7,21 +7,39 @@ status: done
 owning_feature: none
 current_owner: reviewer
 started_at: 2026-07-13T11:11:49+09:00
-ended_at: 2026-07-13T19:35:05+09:00
-last_updated: 2026-07-13T19:48:48+09:00
+ended_at: 2026-07-13T20:52:21+09:00
+last_updated: 2026-07-13T20:52:21+09:00
 branch: codex/phase-3a-native-runtime-adapters
 related_files:
   - .superpowers/sdd/task-1-brief.md
   - .superpowers/sdd/task-1-report.md
   - ai/schemas/native-runtime-adapters.schema.json
+  - ai/schemas/native-runtime-snapshot.schema.json
   - ai/schemas/native-bypass-attempt.schema.json
   - ai/schemas/native-adapter-result.schema.json
+  - ai/native-runtime-adapters.json
+  - ai/native-runtime-adapters.md
+  - ai/agent-handoff.json
+  - ai/workflow-cache.json
+  - scripts/ai/native-adapter-gate.sh
   - scripts/ai/workflow_helper.py
   - scripts/ai/tests/test_workflow_helper.py
 changed_files:
+  - AGENTS.md
+  - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
+  - docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md
   - ai/schemas/native-runtime-adapters.schema.json
+  - ai/schemas/native-runtime-snapshot.schema.json
   - ai/schemas/native-bypass-attempt.schema.json
   - ai/schemas/native-adapter-result.schema.json
+  - ai/native-runtime-adapters.json
+  - ai/native-runtime-adapters.md
+  - ai/agent-handoff.json
+  - ai/agent-handoff.md
+  - ai/cache-policy.md
+  - ai/verification-gates.md
+  - ai/workflow-cache.json
+  - ai/workflow-cache.md
   - ai/work-logs/index.md
   - ai/work-logs/issue-10/README.md
   - ai/work-logs/issue-10/plan-reviewer.md
@@ -29,6 +47,7 @@ changed_files:
   - ai/work-logs/issue-10/reviewer.md
   - scripts/ai/workflow_helper.py
   - scripts/ai/tests/test_workflow_helper.py
+  - scripts/ai/native-adapter-gate.sh
 commands_run:
   - "Historical Task 1 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v"
   - "Historical Task 1 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v"
@@ -52,6 +71,11 @@ commands_run:
   - "Phase 3A minor closeout (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v"
   - "Phase 3A minor closeout (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v"
   - "Phase 3A minor closeout (exit 0): git diff --check"
+  - "Final branch review RED (exit 1 as expected): 7 focused signed-snapshot/provenance tests exposed 12 missing trust-path failures."
+  - "Final branch review (exit 0): python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v [78 tests]"
+  - "Final branch review (exit 0): python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v [85 tests]"
+  - "Final branch review (exit 0): 3 targeted schema, workflow-cache, and agent-handoff validation tests."
+  - "Final branch review (exit 0): bash -n native-adapter-gate.sh; artifact absence; command-registry diff; git diff --check."
 tests_run:
   - "Historical Task 1 GREEN (exit 0): focused allowlist and issue-backed work-log test passed (1 test)."
   - "Historical Task 1 GREEN (exit 0): Phase3ANativeRuntimeAdapterTests passed (4 tests)."
@@ -62,6 +86,10 @@ tests_run:
   - "Task 5 (exit 1; expected non-PASS): native adapter gate returned UNSUPPORTED/HOST_UNSUPPORTED with phase2CLeafResult NOT_APPLICABLE."
   - "Phase 3A minor closeout (exit 0): Phase2CVerificationGateTests plus Phase3ANativeRuntimeAdapterTests passed (76 tests)."
   - "Phase 3A minor closeout (exit 0): focused issue-backed work-log/static test passed (1 test)."
+  - "Final branch review GREEN (exit 0): Phase3ANativeRuntimeAdapterTests passed 78 tests."
+  - "Final branch review GREEN (exit 0): Phase2CVerificationGateTests plus Phase3ANativeRuntimeAdapterTests passed 85 tests."
+  - "Final branch review GREEN (exit 0): targeted schema/cache/handoff set passed 3 tests."
+  - "Full helper suite was not rerun in this fix wave; the prior disclosed 319-test result with one CRLF fixture failure and 17 skips remains historical evidence until the main agent reruns it."
 blockers: []
 skill_ids:
   - review-gate
@@ -95,7 +123,7 @@ Historical Task 1 scoped self-review, followed by the Task 5 independent final r
 - Confirmed the policy schema accepts complete supported-host declarations and requires four closed current-host `UNSUPPORTED` surfaces.
 - Confirmed the bypass schema is closed, bounds summaries, rejects raw secret-bearing fields, and enforces lifecycle/correlation requirements.
 - Confirmed the result schema exposes only the required adapter and Phase 2C leaf result enums.
-- Confirmed only the three requested schema names were added to the helper allowlist.
+- Confirmed historical Task 1 added its three requested schema names; the final review wave separately adds and validates the closed runtime-snapshot schema.
 
 # Current State
 
@@ -141,3 +169,13 @@ Findings: Critical none. Important none. The queued Minor is resolved: `load_ver
 Minor-closeout verification: the Phase 2C plus Phase 3A focused suite passed 76 tests; the focused issue-backed work-log/static check passed; and `git diff --check` exited `0` with no whitespace errors.
 
 The direct full unittest and `run-helper-tests.sh` are **not PASS**: each exited 1 after 319 tests with one failure and 17 skips. The exact failure is `PosixLaunchTests.test_fake_gradlew_is_exact_posix_builtin_fixture`, which expects LF while this Windows checkout has CRLF. The clean-filtered working-tree hash (`git hash-object`) matches the index and `origin/main` blob (`59c3111f32a22ddac701cf212b148160df516850`); the raw checkout hash (`git hash-object --no-filters`) is `3d9c04428a49e35002a85aadd1feaa895d0c5dea`. This is an environmental CRLF diagnosis, not a Phase 3A branch regression. No code was changed.
+
+## Final Branch Review (2026-07-13)
+
+Reviewed the supported-host evaluator, all four closed schemas, canonical policy, shell fallbacks, Phase 2C mapping, native adapter documentation, cache/handoff state, and the new regressions. Real Ed25519 verification is fail-closed when `cryptography.hazmat` is unavailable; the signed payload excludes only `signature`, uses the documented restricted canonical subset, pins the raw public-key fingerprint, binds the producer, probed host/version, 300-second freshness, one-use challenge, and signed callback proofs for all four surfaces.
+
+Claimed status and trusted status are separate throughout. Missing, malformed, rejected, or untrusted snapshots cannot promote trusted `ENFORCED` surfaces, and repository supported-host declarations are baseline-only. Only the fully verified temporary signed vector reaches PASS. Canonical policy remains empty-supported-host `UNSUPPORTED` with `hostVersion: null`, `versionProvenance: UNPROBED`, and a repository-qualified Phase 2C `NOT_APPLICABLE` leaf.
+
+Fresh evidence: Phase 3A passed 78 tests; Phase 2C plus Phase 3A passed 85 tests; targeted schema/cache/handoff validation passed 3 tests; shell syntax, artifact absence, command-registry non-promotion, and `git diff --check` exited 0.
+
+Findings: Critical none. Important none. Residual boundary: challenge replay memory is process-local and intentionally non-durable; Phase 3B owns cross-process installation and durable enforcement. The full helper suite was not rerun, so the prior disclosed 319-test CRLF checkout-fixture failure with 17 skips remains historical evidence pending the main agent rerun. No prohibited command or durable evidence generation ran.

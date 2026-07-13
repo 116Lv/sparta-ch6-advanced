@@ -34,6 +34,13 @@ try:
 except ImportError:
     jsonschema = None
 
+try:
+    from cryptography.exceptions import InvalidSignature as Ed25519InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+except ImportError:
+    Ed25519InvalidSignature = None
+    Ed25519PublicKey = None
+
 
 TRANSACTION_MAX_RECENT_SECONDS = 300
 RUN_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -105,6 +112,7 @@ SCHEMA_NAMES = (
     "native-adapter-result",
     "native-bypass-attempt",
     "native-runtime-adapters",
+    "native-runtime-snapshot",
     "policy-violation",
     "project-state",
     "process-attempt",
@@ -5693,6 +5701,9 @@ def aggregate_verification_gate(mapped_checks):
 
 NATIVE_ADAPTER_SURFACES = ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
 NATIVE_SUMMARY_MAX_BYTES = 512
+NATIVE_SNAPSHOT_MAX_AGE_SECONDS = 300
+NATIVE_JSON_SAFE_INTEGER = 9007199254740991
+NATIVE_CONSUMED_CHALLENGES = set()
 NATIVE_ADAPTER_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 NATIVE_SEMVER = re.compile(
     r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
@@ -5780,24 +5791,32 @@ def native_adapter_gate_result(result, reason, data):
     }
 
 
-def native_adapter_data(host, surfaces, bypass_attempt_refs):
+def native_adapter_data(host, claimed_surfaces, trusted_surfaces, bypass_attempt_refs,
+                        repository_only_qualification):
     return {
         "hostId": host["hostId"],
         "hostVersion": host["hostVersion"],
-        "surfaces": surfaces,
+        "versionProvenance": host["versionProvenance"],
+        "claimedSurfaces": claimed_surfaces,
+        "trustedSurfaces": trusted_surfaces,
         "bypassAttemptRefs": bypass_attempt_refs,
-        "repositoryOnlyQualification": True,
+        "repositoryOnlyQualification": repository_only_qualification,
     }
 
 
 def native_adapter_fallback_data():
     return native_adapter_data(
-        {"hostId": "unknown-host", "hostVersion": "0.0.0"},
+        {"hostId": "unknown-host", "hostVersion": None, "versionProvenance": "UNPROBED"},
+        [
+            {"surface": surface, "status": "NOT_CONFIGURED", "reasonCode": "NATIVE_ADAPTER_EVALUATION_FAILED"}
+            for surface in NATIVE_ADAPTER_SURFACES
+        ],
         [
             {"surface": surface, "status": "NOT_CONFIGURED", "reasonCode": "NATIVE_ADAPTER_EVALUATION_FAILED"}
             for surface in NATIVE_ADAPTER_SURFACES
         ],
         [],
+        True,
     )
 
 
@@ -5833,6 +5852,8 @@ def native_adapter_fixture_path(root, reference, *, canonical=False):
 
 def native_adapter_supported_host(policy):
     current_host = policy["currentHost"]
+    if current_host["versionProvenance"] != "PROBED" or current_host["hostVersion"] is None:
+        return None
     current_version = native_semver_key(current_host["hostVersion"])
     for supported_host in policy["supportedHosts"]:
         minimum_version = native_semver_key(supported_host["minimumHostVersion"])
@@ -5952,38 +5973,148 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
     return "RESOLVED_TRANSITION" if resolved_transition else None
 
 
-def native_snapshot_surfaces(snapshot, fallback_surfaces):
-    surfaces = snapshot.get("surfaces")
-    if not isinstance(surfaces, list) or len(surfaces) != len(NATIVE_ADAPTER_SURFACES):
-        return fallback_surfaces, False
-    normalized = []
-    names = set()
-    for surface in surfaces:
-        if not isinstance(surface, dict) or set(surface) != {"surface", "status", "reasonCode"}:
-            return fallback_surfaces, False
-        if surface["surface"] not in NATIVE_ADAPTER_SURFACES or surface["status"] not in (
-            "ENFORCED", "AUDIT_ONLY", "NOT_CONFIGURED", "UNSUPPORTED",
-        ) or not isinstance(surface["reasonCode"], str) or not surface["reasonCode"]:
-            return fallback_surfaces, False
-        names.add(surface["surface"])
-        normalized.append(surface)
-    if names != set(NATIVE_ADAPTER_SURFACES):
-        return fallback_surfaces, False
-    return normalized, True
+def validate_native_canonical_value(value):
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, int):
+        if abs(value) > NATIVE_JSON_SAFE_INTEGER:
+            raise ValueError("native signed integer exceeds the RFC 8785 restricted subset")
+        return
+    if isinstance(value, float):
+        raise ValueError("native signed floats are not supported")
+    if isinstance(value, str):
+        try:
+            value.encode("ascii")
+        except UnicodeEncodeError as error:
+            raise ValueError("native signed strings must be ASCII") from error
+        return
+    if isinstance(value, list):
+        for item in value:
+            validate_native_canonical_value(item)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("native signed object keys must be strings")
+            validate_native_canonical_value(key)
+            validate_native_canonical_value(item)
+        return
+    raise ValueError("native signed data contains an unsupported JSON type")
 
 
-def native_runtime_snapshot_contract(snapshot, fallback_surfaces):
-    required_fields = {"fresh", "signatureValid", "callbackStatus", "surfaces"}
-    if not isinstance(snapshot, dict) or set(snapshot) != required_fields:
-        return fallback_surfaces, "NATIVE_ADAPTER_SNAPSHOT_INVALID"
-    if not isinstance(snapshot["fresh"], bool) or not isinstance(snapshot["signatureValid"], bool):
-        return fallback_surfaces, "NATIVE_ADAPTER_SNAPSHOT_INVALID"
-    if snapshot["callbackStatus"] not in ("OK", "FAILED"):
-        return fallback_surfaces, "NATIVE_ADAPTER_SNAPSHOT_INVALID"
-    surfaces, valid_surfaces = native_snapshot_surfaces(snapshot, fallback_surfaces)
-    if not valid_surfaces:
-        return fallback_surfaces, "NATIVE_ADAPTER_SNAPSHOT_INVALID"
-    return surfaces, None
+def native_snapshot_canonical_bytes(snapshot):
+    if not isinstance(snapshot, dict) or "signature" not in snapshot:
+        raise ValueError("native runtime snapshot signature is required")
+    payload = {key: value for key, value in snapshot.items() if key != "signature"}
+    validate_native_canonical_value(payload)
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def native_snapshot_claimed_surfaces(snapshot):
+    return [
+        {
+            "surface": surface["surface"],
+            "status": surface["status"],
+            "reasonCode": surface["reasonCode"],
+        }
+        for surface in snapshot["surfaces"]
+    ]
+
+
+def native_adapter_version_allowed(version_range, version):
+    match = re.fullmatch(r">=(\S+) <(\S+)", version_range)
+    if match is None:
+        return False
+    minimum, maximum = (native_semver_key(item) for item in match.groups())
+    candidate = native_semver_key(version)
+    return minimum <= candidate < maximum
+
+
+def native_snapshot_freshness_reason(observed_at):
+    observed, fractional_seconds = parse_rfc3339_timestamp(observed_at)
+    now = dt.datetime.now(dt.timezone.utc)
+    age_seconds = Decimal(str((now - observed).total_seconds())) - fractional_seconds
+    if age_seconds < 0:
+        return "NATIVE_ADAPTER_SNAPSHOT_FUTURE"
+    if age_seconds > NATIVE_SNAPSHOT_MAX_AGE_SECONDS:
+        return "NATIVE_ADAPTER_SNAPSHOT_STALE"
+    return None
+
+
+def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, gate_invocation_id):
+    baseline_surfaces = supported_host["surfaces"]
+    try:
+        validate(root, snapshot, "ai/schemas/native-runtime-snapshot.schema.json")
+        native_snapshot_canonical_bytes(snapshot)
+    except (InvalidStateError, TypeError, ValueError, KeyError):
+        return baseline_surfaces, baseline_surfaces, "NATIVE_ADAPTER_SNAPSHOT_INVALID"
+
+    claimed_surfaces = native_snapshot_claimed_surfaces(snapshot)
+    if snapshot["producerId"] != supported_host["producerId"]:
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_PRODUCER_UNTRUSTED"
+    if (
+        snapshot["hostId"] != supported_host["hostId"]
+        or snapshot["hostId"] != current_host["hostId"]
+        or snapshot["hostVersion"] != current_host["hostVersion"]
+    ):
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_HOST_MISMATCH"
+    if not native_adapter_version_allowed(supported_host["adapterVersionRange"], snapshot["adapterVersion"]):
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_VERSION_UNTRUSTED"
+    if snapshot["gateInvocationId"] != gate_invocation_id:
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CHALLENGE_MISMATCH"
+
+    freshness_reason = native_snapshot_freshness_reason(snapshot["observedAt"])
+    if freshness_reason is not None:
+        return claimed_surfaces, baseline_surfaces, freshness_reason
+
+    try:
+        public_key_bytes = base64.b64decode(snapshot["publicKey"]["value"], validate=True)
+        signature_bytes = base64.b64decode(snapshot["signature"]["value"], validate=True)
+    except (ValueError, TypeError) as error:
+        raise ValueError("native Ed25519 material is not valid base64") from error
+    actual_fingerprint = hashlib.sha256(public_key_bytes).hexdigest()
+    if (
+        len(public_key_bytes) != 32
+        or actual_fingerprint != snapshot["publicKey"]["fingerprintSha256"]
+        or actual_fingerprint != supported_host["ed25519PublicKeyFingerprint"]
+    ):
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_KEY_UNTRUSTED"
+    if Ed25519PublicKey is None:
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE"
+    try:
+        Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(
+            signature_bytes,
+            native_snapshot_canonical_bytes(snapshot),
+        )
+    except (Ed25519InvalidSignature, ValueError, TypeError):
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_SIGNATURE_UNTRUSTED"
+
+    if any(
+        surface["status"] == "ENFORCED"
+        and (
+            surface["callbackProof"]["gateInvocationId"] != gate_invocation_id
+            or surface["callbackProof"]["observedBeforeOperation"] is not True
+            or surface["callbackProof"]["challengeResult"] != "BLOCKED"
+        )
+        for surface in snapshot["surfaces"]
+    ):
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CALLBACK_FAILED"
+
+    challenge_key = (
+        str(Path(root).resolve()),
+        supported_host["producerId"],
+        gate_invocation_id,
+    )
+    if challenge_key in NATIVE_CONSUMED_CHALLENGES:
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CHALLENGE_REPLAYED"
+    NATIVE_CONSUMED_CHALLENGES.add(challenge_key)
+    return claimed_surfaces, claimed_surfaces, None
 
 
 def native_unsupported_runtime_snapshot_contract(snapshot):
@@ -6005,9 +6136,26 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
         policy_path = native_adapter_fixture_path(root, policy_ref, canonical=True)
         policy = validate_repository_instance(root, policy_path)
         current_host = policy["currentHost"]
-        fallback_data = native_adapter_data(current_host, current_host["surfaces"], [])
+        supported_host = native_adapter_supported_host(policy)
+        repository_only_qualification = supported_host is None
+        baseline_surfaces = (
+            current_host["surfaces"] if supported_host is None else supported_host["surfaces"]
+        )
+        fallback_data = native_adapter_data(
+            current_host,
+            baseline_surfaces,
+            baseline_surfaces,
+            [],
+            repository_only_qualification,
+        )
         attempts, attempt_refs = load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invocation_id)
-        data = native_adapter_data(current_host, current_host["surfaces"], attempt_refs)
+        data = native_adapter_data(
+            current_host,
+            baseline_surfaces,
+            baseline_surfaces,
+            attempt_refs,
+            repository_only_qualification,
+        )
         if any(
             attempt["statusAtObservation"] == "ENFORCED" and attempt["decision"] == "ALLOWED_AUDIT_ONLY"
             for attempt in attempts
@@ -6020,31 +6168,32 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                 root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_REDACTION_UNCERTAIN", data), 2,
             )
 
-        supported_host = native_adapter_supported_host(policy)
         snapshot = None
-        snapshot_surfaces = None
+        snapshot_claimed_surfaces = baseline_surfaces
+        snapshot_trusted_surfaces = baseline_surfaces
+        snapshot_data = data
         if runtime_snapshot_ref is not None:
             snapshot = read_json(native_adapter_fixture_path(root, runtime_snapshot_ref))
             if not isinstance(snapshot, dict):
                 raise ValueError("native runtime snapshot must be a JSON object")
             if supported_host is not None:
-                snapshot_surfaces, snapshot_error = native_runtime_snapshot_contract(snapshot, current_host["surfaces"])
-                snapshot_data = native_adapter_data(current_host, snapshot_surfaces, attempt_refs)
+                snapshot_claimed_surfaces, snapshot_trusted_surfaces, snapshot_error = native_runtime_snapshot_trust(
+                    root,
+                    snapshot,
+                    supported_host,
+                    current_host,
+                    gate_invocation_id,
+                )
+                snapshot_data = native_adapter_data(
+                    current_host,
+                    snapshot_claimed_surfaces,
+                    snapshot_trusted_surfaces,
+                    attempt_refs,
+                    False,
+                )
                 if snapshot_error is not None:
                     return publish_native_adapter_gate_result(
                         root, native_adapter_gate_result("BLOCKED", snapshot_error, snapshot_data), 2,
-                    )
-                if snapshot["fresh"] is not True:
-                    return publish_native_adapter_gate_result(
-                        root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SNAPSHOT_STALE", snapshot_data), 2,
-                    )
-                if snapshot["signatureValid"] is not True:
-                    return publish_native_adapter_gate_result(
-                        root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SIGNATURE_UNTRUSTED", snapshot_data), 2,
-                    )
-                if snapshot["callbackStatus"] != "OK":
-                    return publish_native_adapter_gate_result(
-                        root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_CALLBACK_FAILED", snapshot_data), 2,
                     )
             else:
                 snapshot_error = native_unsupported_runtime_snapshot_contract(snapshot)
@@ -6082,18 +6231,16 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                 root, native_adapter_gate_result("UNSUPPORTED", "HOST_UNSUPPORTED", data), 6,
             )
         if runtime_snapshot_ref is None:
-            supported_data = native_adapter_data(current_host, supported_host["surfaces"], attempt_refs)
             return publish_native_adapter_gate_result(
-                root, native_adapter_gate_result("NOT_CONFIGURED", "NATIVE_ADAPTER_NOT_CONFIGURED", supported_data), 3,
+                root, native_adapter_gate_result("NOT_CONFIGURED", "NATIVE_ADAPTER_NOT_CONFIGURED", data), 3,
             )
 
-        snapshot_data = native_adapter_data(current_host, snapshot_surfaces, attempt_refs)
-        if any(surface["status"] != "ENFORCED" for surface in snapshot_surfaces):
+        if any(surface["status"] != "ENFORCED" for surface in snapshot_trusted_surfaces):
             return publish_native_adapter_gate_result(
                 root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_ENFORCEMENT_INCOMPLETE", snapshot_data), 2,
             )
         return publish_native_adapter_gate_result(
-            root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_FIXTURE_NOT_TRUSTED", snapshot_data), 2,
+            root, native_adapter_gate_result("PASS", None, snapshot_data), 0,
         )
     except NativeBypassContractError:
         return publish_native_adapter_gate_result(

@@ -17,28 +17,109 @@
     "data": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hostId", "hostVersion", "surfaces", "bypassAttemptRefs", "repositoryOnlyQualification", "phase2CLeafResult"],
+      "required": ["hostId", "hostVersion", "versionProvenance", "claimedSurfaces", "trustedSurfaces", "bypassAttemptRefs", "repositoryOnlyQualification", "phase2CLeafResult"],
       "properties": {
         "hostId": { "$ref": "#/$defs/identifier" },
-        "hostVersion": { "$ref": "#/$defs/version" },
-        "surfaces": { "$ref": "#/$defs/fourSurfaces" },
+        "hostVersion": {
+          "anyOf": [
+            { "$ref": "#/$defs/version" },
+            { "type": "null" }
+          ]
+        },
+        "versionProvenance": { "enum": ["UNPROBED", "PROBED"] },
+        "claimedSurfaces": { "$ref": "#/$defs/fourSurfaces" },
+        "trustedSurfaces": { "$ref": "#/$defs/fourSurfaces" },
         "bypassAttemptRefs": { "type": "array", "items": { "$ref": "#/$defs/repositoryPath" } },
         "repositoryOnlyQualification": { "type": "boolean" },
         "phase2CLeafResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE"] }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "versionProvenance": { "const": "UNPROBED" } }, "required": ["versionProvenance"] },
+          "then": { "properties": { "hostVersion": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "versionProvenance": { "const": "PROBED" } }, "required": ["versionProvenance"] },
+          "then": { "properties": { "hostVersion": { "$ref": "#/$defs/version" } } }
+        }
+      ]
     }
   },
   "allOf": [
-    { "if": { "properties": { "result": { "const": "PASS" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "PASS" }, "data": { "properties": { "phase2CLeafResult": { "const": "PASS" } } } } } },
-    { "if": { "properties": { "result": { "const": "FAIL" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "FAIL" }, "data": { "properties": { "phase2CLeafResult": { "const": "FAIL" } } } } } },
-    { "if": { "properties": { "result": { "const": "BLOCKED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "BLOCKED" }, "data": { "properties": { "phase2CLeafResult": { "const": "BLOCKED" } } } } } },
-    { "if": { "properties": { "result": { "const": "NOT_CONFIGURED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "NOT_CONFIGURED" }, "data": { "properties": { "phase2CLeafResult": { "const": "NOT_CONFIGURED" } } } } } },
-    { "if": { "properties": { "result": { "const": "UNSUPPORTED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "NOT_APPLICABLE" }, "data": { "properties": { "phase2CLeafResult": { "const": "NOT_APPLICABLE" } } } } } }
+    {
+      "if": { "properties": { "result": { "const": "PASS" } }, "required": ["result"] },
+      "then": {
+        "properties": {
+          "phase2cLeafResult": { "const": "PASS" },
+          "data": {
+            "properties": {
+              "trustedSurfaces": {
+                "items": { "properties": { "status": { "const": "ENFORCED" } } }
+              },
+              "repositoryOnlyQualification": { "const": false },
+              "phase2CLeafResult": { "const": "PASS" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "result": { "const": "FAIL" } }, "required": ["result"] },
+      "then": { "properties": { "phase2cLeafResult": { "const": "FAIL" }, "data": { "properties": { "phase2CLeafResult": { "const": "FAIL" } } } } }
+    },
+    {
+      "if": { "properties": { "result": { "const": "BLOCKED" } }, "required": ["result"] },
+      "then": { "properties": { "phase2cLeafResult": { "const": "BLOCKED" }, "data": { "properties": { "phase2CLeafResult": { "const": "BLOCKED" } } } } }
+    },
+    {
+      "if": { "properties": { "result": { "const": "NOT_CONFIGURED" } }, "required": ["result"] },
+      "then": {
+        "properties": {
+          "phase2cLeafResult": { "const": "NOT_CONFIGURED" },
+          "data": {
+            "properties": {
+              "trustedSurfaces": {
+                "items": { "properties": { "status": { "const": "NOT_CONFIGURED" } } }
+              },
+              "phase2CLeafResult": { "const": "NOT_CONFIGURED" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "result": { "const": "UNSUPPORTED" } }, "required": ["result"] },
+      "then": {
+        "properties": {
+          "phase2cLeafResult": { "const": "NOT_APPLICABLE" },
+          "data": {
+            "properties": {
+              "trustedSurfaces": {
+                "items": { "properties": { "status": { "const": "UNSUPPORTED" } } }
+              },
+              "repositoryOnlyQualification": { "const": true },
+              "phase2CLeafResult": { "const": "NOT_APPLICABLE" }
+            }
+          }
+        }
+      }
+    }
   ],
   "$defs": {
-    "identifier": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])" },
-    "version": { "type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?![\\s\\S])" },
-    "repositoryPath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|(?![\\s\\S]))).+(?![\\s\\S])" },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?![\\s\\S])"
+    },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|(?![\\s\\S]))).+(?![\\s\\S])"
+    },
     "surface": {
       "type": "object",
       "additionalProperties": false,

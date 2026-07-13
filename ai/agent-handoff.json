@@ -16,14 +16,17 @@
     "ai/skills/README.md",
     "ai/verification-gates.md",
     "ai/native-runtime-adapters.md",
-    "ai/native-runtime-adapters.json"
+    "ai/native-runtime-adapters.json",
+    "ai/schemas/native-runtime-snapshot.schema.json"
   ],
   "reusableContextRefs": [
     "ai/context-map.json",
     "ai/workflow-cache.json",
     "ai/work-logs/issue-5/README.md",
     "ai/verification-policy.json",
-    "ai/native-runtime-adapters.json"
+    "ai/native-runtime-adapters.json",
+    "ai/native-runtime-adapters.md",
+    "ai/schemas/native-runtime-snapshot.schema.json"
   ],
   "skillCatalogRef": "ai/skill-catalog.json",
   "skillIds": [
@@ -70,7 +73,9 @@
     "GitHub Issue #7 now backs the current Phase 2C handoff; the migration comment is recorded and the prior 403 remains historical evidence.",
     "Issue-backed tracking does not by itself close the Issue or authorize an unqualified overall DONE claim.",
     "Phase 2C static/helper gates define verification completeness and task/change applicability but do not execute product commands.",
-    "Phase 3A requires the internal native-runtime-adapter leaf for every change type; the current host is UNSUPPORTED and maps to repository-qualified NOT_APPLICABLE with HOST_UNSUPPORTED.",
+    "Phase 3A requires the internal native-runtime-adapter leaf for every change type; the current host version is null/UNPROBED, so the host is UNSUPPORTED and maps to repository-qualified NOT_APPLICABLE with HOST_UNSUPPORTED.",
+    "Supported-host matching requires a PROBED version; only a fresh one-use challenge-bound Ed25519 snapshot with signed callback proof can promote trusted surfaces to ENFORCED, and unavailable crypto blocks.",
+    "Runtime keys, signatures, challenge state, bypass attempts, and native evidence remain ephemeral in Phase 3A and are not reusable cache evidence.",
     "scripts/ai/command-runner.sh remains the only supported product-command path; native adapters do not execute product commands.",
     "Phase 1B-3 remains INTEGRITY_ONLY and does not establish verification completeness, registry VERIFIED promotion, closure, or unqualified overall DONE.",
     "Phase 3B owns CI adapter installation, remote-runner guarantees, durable CI evidence, and cross-host parity."

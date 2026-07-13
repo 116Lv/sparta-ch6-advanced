@@ -30,9 +30,20 @@
       "format": "date-time",
       "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z(?![\\s\\S])"
     },
-    "identifier": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])" },
-    "version": { "type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?![\\s\\S])" },
-    "probeRef": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|(?![\\s\\S]))).+(?![\\s\\S])" },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?![\\s\\S])"
+    },
+    "probeRef": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|(?![\\s\\S]))).+(?![\\s\\S])"
+    },
     "surfaceName": { "enum": ["COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL"] },
     "supportedSurface": {
       "type": "object",
@@ -40,7 +51,7 @@
       "required": ["surface", "status", "reasonCode"],
       "properties": {
         "surface": { "$ref": "#/$defs/surfaceName" },
-        "status": { "enum": ["NOT_CONFIGURED", "AUDIT_ONLY", "ENFORCED"] },
+        "status": { "const": "NOT_CONFIGURED" },
         "reasonCode": { "$ref": "#/$defs/identifier" }
       }
     },
@@ -81,26 +92,54 @@
     "supportedHost": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hostId", "minimumHostVersion", "adapterVersionRange", "producerId", "ed25519KeyFingerprint", "surfaces"],
+      "required": ["hostId", "minimumHostVersion", "adapterVersionRange", "producerId", "ed25519PublicKeyFingerprint", "surfaces"],
       "properties": {
         "hostId": { "$ref": "#/$defs/identifier" },
         "minimumHostVersion": { "$ref": "#/$defs/version" },
-        "adapterVersionRange": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "adapterVersionRange": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^>=\\S+ <\\S+(?![\\s\\S])"
+        },
         "producerId": { "$ref": "#/$defs/identifier" },
-        "ed25519KeyFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}(?![\\s\\S])" },
+        "ed25519PublicKeyFingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
         "surfaces": { "$ref": "#/$defs/fourSupportedSurfaces" }
       }
     },
     "currentHost": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hostId", "hostVersion", "probeRefs", "surfaces"],
+      "required": ["hostId", "hostVersion", "versionProvenance", "probeRefs", "surfaces"],
       "properties": {
         "hostId": { "$ref": "#/$defs/identifier" },
-        "hostVersion": { "$ref": "#/$defs/version" },
-        "probeRefs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/probeRef" } },
+        "hostVersion": {
+          "anyOf": [
+            { "$ref": "#/$defs/version" },
+            { "type": "null" }
+          ]
+        },
+        "versionProvenance": { "enum": ["UNPROBED", "PROBED"] },
+        "probeRefs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/probeRef" }
+        },
         "surfaces": { "$ref": "#/$defs/fourUnsupportedSurfaces" }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "versionProvenance": { "const": "UNPROBED" } }, "required": ["versionProvenance"] },
+          "then": { "properties": { "hostVersion": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "versionProvenance": { "const": "PROBED" } }, "required": ["versionProvenance"] },
+          "then": { "properties": { "hostVersion": { "$ref": "#/$defs/version" } } }
+        }
+      ]
     }
   }
 }

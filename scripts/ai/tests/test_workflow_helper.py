@@ -1,6 +1,8 @@
 import ast
+import base64
 import contextlib
 from concurrent.futures import ThreadPoolExecutor
+import datetime as dt
 import hashlib
 import importlib.util
 import io
@@ -23,6 +25,14 @@ from unittest import mock
 import uuid as uuid_module
 
 from jsonschema import Draft202012Validator, FormatChecker
+
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+except ImportError:
+    Ed25519PrivateKey = None
+    Encoding = None
+    PublicFormat = None
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -331,7 +341,14 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
         self.assertTrue(phase_2b.issubset(self.helper.SCHEMA_NAMES))
         phase_2c = {"verification-policy", "verification-gate-result"}
         self.assertTrue(phase_2c.issubset(self.helper.SCHEMA_NAMES))
-        self.assertEqual(len(self.helper.SCHEMA_NAMES), 22)
+        phase_3a = {
+            "native-adapter-result",
+            "native-bypass-attempt",
+            "native-runtime-adapters",
+            "native-runtime-snapshot",
+        }
+        self.assertTrue(phase_3a.issubset(self.helper.SCHEMA_NAMES))
+        self.assertEqual(len(self.helper.SCHEMA_NAMES), 23)
         self.assertEqual(
             {name for name in self.helper.SCHEMA_NAMES if name in additions},
             additions,
@@ -6470,6 +6487,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     SCHEMA_PATHS = {
         "native-runtime-adapters": "ai/schemas/native-runtime-adapters.schema.json",
         "native-bypass-attempt": "ai/schemas/native-bypass-attempt.schema.json",
+        "native-runtime-snapshot": "ai/schemas/native-runtime-snapshot.schema.json",
         "native-adapter-result": "ai/schemas/native-adapter-result.schema.json",
     }
 
@@ -6490,6 +6508,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             self.root / "ai" / "verification-policy.json",
         )
         (self.root / "ai" / "fixtures").mkdir()
+        if hasattr(self.helper, "NATIVE_CONSUMED_CHALLENGES"):
+            self.helper.NATIVE_CONSUMED_CHALLENGES.clear()
 
     def tearDown(self):
         self.temporary_directory.cleanup()
@@ -6522,11 +6542,12 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     def write_attempts(self, attempts):
         return self.write_fixture("bypass-attempts.json", {"attempts": attempts})
 
-    def write_supported_policy(self):
+    def write_supported_policy(self, public_key_fingerprint="a" * 64):
         policy = self.supported_host_policy()
         policy["supportedHosts"][0].update({
             "hostId": "codex-desktop",
             "minimumHostVersion": "1.0.0",
+            "ed25519PublicKeyFingerprint": public_key_fingerprint,
         })
         return self.write_fixture("supported-native-runtime-adapters.json", policy)
 
@@ -6632,12 +6653,13 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 "minimumHostVersion": "1.2.3",
                 "adapterVersionRange": ">=1.0.0 <2.0.0",
                 "producerId": "example.native.adapter",
-                "ed25519KeyFingerprint": "a" * 64,
+                "ed25519PublicKeyFingerprint": "a" * 64,
                 "surfaces": self.supported_surfaces(),
             }],
             "currentHost": {
                 "hostId": "codex-desktop",
                 "hostVersion": "1.0.0",
+                "versionProvenance": "PROBED",
                 "probeRefs": ["ai/native-runtime-adapters.md"],
                 "surfaces": self.unsupported_surfaces(),
             },
@@ -6714,13 +6736,278 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "reason": "The current host has no supported native adapter.",
             "data": {
                 "hostId": "codex-desktop",
-                "hostVersion": "1.0.0",
-                "surfaces": Phase3ANativeRuntimeAdapterTests.unsupported_surfaces(),
+                "hostVersion": None,
+                "versionProvenance": "UNPROBED",
+                "claimedSurfaces": Phase3ANativeRuntimeAdapterTests.unsupported_surfaces(),
+                "trustedSurfaces": Phase3ANativeRuntimeAdapterTests.unsupported_surfaces(),
                 "bypassAttemptRefs": [],
                 "repositoryOnlyQualification": True,
                 "phase2CLeafResult": "NOT_APPLICABLE",
             },
         }
+
+    @staticmethod
+    def canonical_snapshot_bytes(snapshot):
+        payload = {key: value for key, value in snapshot.items() if key != "signature"}
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    def signed_snapshot(self, gate_invocation_id="gate-signed", observed_at=None,
+                        producer_id="example.native.adapter", host_id="codex-desktop",
+                        host_version="1.0.0", callback_result="BLOCKED"):
+        if Ed25519PrivateKey is None:
+            self.skipTest("cryptography is unavailable for the valid Ed25519 vector")
+        private_key = Ed25519PrivateKey.generate()
+        public_key_bytes = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        fingerprint = hashlib.sha256(public_key_bytes).hexdigest()
+        if observed_at is None:
+            observed_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        snapshot = {
+            "$schema": "ai/schemas/native-runtime-snapshot.schema.json",
+            "$id": "ai/native-runtime-snapshot.json",
+            "schemaVersion": 1,
+            "producerId": producer_id,
+            "hostId": host_id,
+            "hostVersion": host_version,
+            "adapterVersion": "1.0.0",
+            "observedAt": observed_at,
+            "gateInvocationId": gate_invocation_id,
+            "surfaces": [
+                {
+                    "surface": surface,
+                    "status": "ENFORCED",
+                    "reasonCode": "SIGNED_CALLBACK_PROOF",
+                    "callbackProof": {
+                        "gateInvocationId": gate_invocation_id,
+                        "observedBeforeOperation": True,
+                        "challengeResult": callback_result,
+                    },
+                }
+                for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+            ],
+            "publicKey": {
+                "algorithm": "Ed25519",
+                "encoding": "RAW_BASE64",
+                "fingerprintSha256": fingerprint,
+                "value": base64.b64encode(public_key_bytes).decode("ascii"),
+            },
+            "signature": {
+                "algorithm": "Ed25519",
+                "encoding": "BASE64",
+                "value": "",
+            },
+        }
+        snapshot["signature"]["value"] = base64.b64encode(
+            private_key.sign(self.canonical_snapshot_bytes(snapshot))
+        ).decode("ascii")
+        return snapshot, fingerprint, private_key
+
+    def resign_snapshot(self, snapshot, private_key):
+        snapshot["signature"]["value"] = base64.b64encode(
+            private_key.sign(self.canonical_snapshot_bytes(snapshot))
+        ).decode("ascii")
+        return snapshot
+
+    def assert_trusted_not_enforced(self, result):
+        self.assertEqual(
+            {surface["status"] for surface in result["data"]["trustedSurfaces"]},
+            {"NOT_CONFIGURED"},
+        )
+
+    def supported_policy_with_fingerprint(self, fingerprint):
+        policy = self.supported_host_policy()
+        policy["supportedHosts"][0].update({
+            "hostId": "codex-desktop",
+            "minimumHostVersion": "1.0.0",
+            "ed25519PublicKeyFingerprint": fingerprint,
+        })
+        return policy
+
+    def test_runtime_snapshot_schema_and_canonicalizer_are_available(self):
+        self.assertIn("native-runtime-snapshot", self.helper.SCHEMA_NAMES)
+        self.assertTrue((REPOSITORY_ROOT / self.SCHEMA_PATHS["native-runtime-snapshot"]).is_file())
+        snapshot, _, _ = self.signed_snapshot()
+        self.assert_valid("native-runtime-snapshot", snapshot)
+
+    def test_native_snapshot_canonical_bytes_match_restricted_rfc8785_vector(self):
+        canonicalizer = getattr(self.helper, "native_snapshot_canonical_bytes", None)
+        self.assertIsNotNone(canonicalizer)
+        vector = {
+            "z": ["ASCII", True, None, 7],
+            "signature": {"algorithm": "Ed25519", "encoding": "BASE64", "value": "excluded"},
+            "a": {"k": "v"},
+        }
+        self.assertEqual(canonicalizer(vector), b'{"a":{"k":"v"},"z":["ASCII",true,null,7]}')
+        for invalid in (
+            {"value": 1.5, "signature": {}},
+            {"value": "non-ascii-\u00e9", "signature": {}},
+            {"non-ascii-\u00e9": "value", "signature": {}},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    canonicalizer(invalid)
+
+    def test_temporary_supported_policy_accepts_real_signed_enforced_snapshot(self):
+        snapshot, fingerprint, _ = self.signed_snapshot()
+        policy_ref = self.write_supported_policy(fingerprint)
+        missing, missing_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-missing",
+            policy_ref=policy_ref,
+        )
+        self.assertEqual((missing["result"], missing_status), ("NOT_CONFIGURED", 3))
+        self.assert_trusted_not_enforced(missing)
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-signed",
+            runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
+            policy_ref=policy_ref,
+        )
+        self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
+        self.assertEqual({surface["status"] for surface in result["data"]["claimedSurfaces"]}, {"ENFORCED"})
+        self.assertEqual({surface["status"] for surface in result["data"]["trustedSurfaces"]}, {"ENFORCED"})
+        self.assertFalse(result["data"]["repositoryOnlyQualification"])
+        self.assertFalse((self.root / ".ai-runs").exists())
+
+    def test_untrusted_snapshot_claims_never_promote_trusted_surfaces(self):
+        stale_time = (
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=301)
+        ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        cases = {}
+
+        snapshot, fingerprint, private_key = self.signed_snapshot(gate_invocation_id="gate-bad-producer")
+        snapshot["producerId"] = "untrusted.producer"
+        cases["producer"] = (
+            self.resign_snapshot(snapshot, private_key), fingerprint, "gate-bad-producer",
+            "NATIVE_ADAPTER_PRODUCER_UNTRUSTED",
+        )
+
+        snapshot, fingerprint, _ = self.signed_snapshot(gate_invocation_id="gate-bad-key")
+        cases["key"] = (snapshot, "f" * 64, "gate-bad-key", "NATIVE_ADAPTER_KEY_UNTRUSTED")
+
+        snapshot, fingerprint, _ = self.signed_snapshot(gate_invocation_id="gate-bad-signature")
+        signature = bytearray(base64.b64decode(snapshot["signature"]["value"]))
+        signature[0] ^= 1
+        snapshot["signature"]["value"] = base64.b64encode(bytes(signature)).decode("ascii")
+        cases["signature"] = (
+            snapshot, fingerprint, "gate-bad-signature", "NATIVE_ADAPTER_SIGNATURE_UNTRUSTED",
+        )
+
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id="gate-stale", observed_at=stale_time,
+        )
+        cases["stale"] = (snapshot, fingerprint, "gate-stale", "NATIVE_ADAPTER_SNAPSHOT_STALE")
+
+        snapshot, fingerprint, _ = self.signed_snapshot(gate_invocation_id="signed-other-gate")
+        cases["challenge"] = (
+            snapshot, fingerprint, "gate-challenge", "NATIVE_ADAPTER_CHALLENGE_MISMATCH",
+        )
+
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id="gate-callback", callback_result="FAILED",
+        )
+        cases["callback"] = (
+            snapshot, fingerprint, "gate-callback", "NATIVE_ADAPTER_CALLBACK_FAILED",
+        )
+
+        snapshot, fingerprint, private_key = self.signed_snapshot(gate_invocation_id="gate-host")
+        snapshot["hostVersion"] = "1.0.1"
+        cases["host-version"] = (
+            self.resign_snapshot(snapshot, private_key), fingerprint, "gate-host",
+            "NATIVE_ADAPTER_HOST_MISMATCH",
+        )
+
+        for name, (snapshot, policy_fingerprint, gate_invocation_id, expected_reason) in cases.items():
+            with self.subTest(name=name):
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    gate_invocation_id,
+                    runtime_snapshot_ref=self.write_fixture(f"runtime-{name}.json", snapshot),
+                    policy_ref=self.write_fixture(
+                        f"policy-{name}.json",
+                        self.supported_policy_with_fingerprint(policy_fingerprint),
+                    ),
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", expected_reason, 2,
+                ))
+                self.assertEqual(
+                    {surface["status"] for surface in result["data"]["claimedSurfaces"]},
+                    {"ENFORCED"},
+                )
+                self.assert_trusted_not_enforced(result)
+
+    def test_replayed_challenge_and_missing_crypto_block_without_trusted_enforcement(self):
+        snapshot, fingerprint, _ = self.signed_snapshot(gate_invocation_id="gate-one-use")
+        snapshot_ref = self.write_temp_snapshot(snapshot)
+        policy_ref = self.write_supported_policy(fingerprint)
+        first, first_status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-one-use", snapshot_ref, policy_ref=policy_ref,
+        )
+        self.assertEqual((first["result"], first_status), ("PASS", 0))
+
+        replay, replay_status = self.helper.native_adapter_gate(
+            self.root, "issue-10", "gate-one-use", snapshot_ref, policy_ref=policy_ref,
+        )
+        self.assertEqual((replay["result"], replay["reason"], replay_status), (
+            "BLOCKED", "NATIVE_ADAPTER_CHALLENGE_REPLAYED", 2,
+        ))
+        self.assert_trusted_not_enforced(replay)
+
+        crypto_snapshot, crypto_fingerprint, _ = self.signed_snapshot(gate_invocation_id="gate-no-crypto")
+        with mock.patch.object(self.helper, "Ed25519PublicKey", None, create=True):
+            unavailable, unavailable_status = self.helper.native_adapter_gate(
+                self.root,
+                "issue-10",
+                "gate-no-crypto",
+                runtime_snapshot_ref=self.write_fixture("runtime-no-crypto.json", crypto_snapshot),
+                policy_ref=self.write_fixture(
+                    "policy-no-crypto.json", self.supported_policy_with_fingerprint(crypto_fingerprint),
+                ),
+            )
+        self.assertEqual((unavailable["result"], unavailable["reason"], unavailable_status), (
+            "BLOCKED", "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE", 2,
+        ))
+        self.assert_trusted_not_enforced(unavailable)
+
+    def test_version_provenance_conditionals_and_supported_matching_require_probe(self):
+        canonical = json.loads(
+            (REPOSITORY_ROOT / "ai/native-runtime-adapters.json").read_text(encoding="utf-8")
+        )
+        self.assertIsNone(canonical["currentHost"]["hostVersion"])
+        self.assertEqual(canonical["currentHost"]["versionProvenance"], "UNPROBED")
+        self.assert_valid("native-runtime-adapters", canonical)
+
+        for provenance, version in (("UNPROBED", "1.0.0"), ("PROBED", None)):
+            with self.subTest(provenance=provenance, version=version):
+                policy = self.supported_host_policy()
+                policy["currentHost"].update({"versionProvenance": provenance, "hostVersion": version})
+                self.assert_invalid("native-runtime-adapters", policy)
+
+        result = self.adapter_result()
+        result["data"].update({"versionProvenance": "PROBED", "hostVersion": None})
+        self.assert_invalid("native-adapter-result", result)
+
+        unprobed = self.supported_policy_with_fingerprint("a" * 64)
+        unprobed["currentHost"].update({"versionProvenance": "UNPROBED", "hostVersion": None})
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-unprobed",
+            policy_ref=self.write_fixture("policy-unprobed.json", unprobed),
+        )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "UNSUPPORTED", "HOST_UNSUPPORTED", 6,
+        ))
+
+    def test_repository_supported_host_policy_cannot_declare_runtime_enforcement(self):
+        policy = self.supported_host_policy()
+        self.assert_valid("native-runtime-adapters", policy)
+        policy["supportedHosts"][0]["surfaces"][0]["status"] = "ENFORCED"
+        self.assert_invalid("native-runtime-adapters", policy)
 
     def test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed(self):
         self.assertIn("native-runtime-adapters", self.helper.SCHEMA_NAMES)
@@ -6851,6 +7138,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         for schema_name, factory, path in vectors:
             with self.subTest(schema_name=schema_name, path=path, version=valid_version):
                 instance = factory()
+                if schema_name == "native-adapter-result" and path == ("data", "hostVersion"):
+                    instance["data"]["versionProvenance"] = "PROBED"
                 target = instance
                 for segment in path[:-1]:
                     target = target[segment]
@@ -6859,6 +7148,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             for invalid_version in invalid_versions:
                 with self.subTest(schema_name=schema_name, path=path, version=invalid_version):
                     instance = factory()
+                    if schema_name == "native-adapter-result" and path == ("data", "hostVersion"):
+                        instance["data"]["versionProvenance"] = "PROBED"
                     target = instance
                     for segment in path[:-1]:
                         target = target[segment]
@@ -6869,7 +7160,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         vectors = (
             ("native-runtime-adapters", self.supported_host_policy, ("updatedAt",), "2026-07-13T01:00:00Z"),
             ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "producerId"), "example.native.adapter"),
-            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "ed25519KeyFingerprint"), "a" * 64),
+            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "ed25519PublicKeyFingerprint"), "a" * 64),
             ("native-runtime-adapters", self.supported_host_policy, ("currentHost", "probeRefs", 0), "ai/native-runtime-adapters.md"),
             ("native-bypass-attempt", self.bypass_attempt, ("eventId",), "event-1"),
             ("native-bypass-attempt", self.bypass_attempt, ("observedAt",), "2026-07-13T01:00:00Z"),
@@ -6880,6 +7171,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         for schema_name, factory, path, value in vectors:
             with self.subTest(schema_name=schema_name, path=path, value="valid"):
                 instance = factory()
+                if schema_name == "native-adapter-result" and path == ("data", "hostVersion"):
+                    instance["data"]["versionProvenance"] = "PROBED"
                 target = instance
                 for segment in path[:-1]:
                     target = target[segment]
@@ -6887,6 +7180,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 self.assert_valid(schema_name, instance)
             with self.subTest(schema_name=schema_name, path=path, value="terminal-newline"):
                 instance = factory()
+                if schema_name == "native-adapter-result" and path == ("data", "hostVersion"):
+                    instance["data"]["versionProvenance"] = "PROBED"
                 target = instance
                 for segment in path[:-1]:
                     target = target[segment]
@@ -7406,6 +7701,27 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
+
+    def test_native_policy_docs_define_signed_trust_and_bypass_lifecycle(self):
+        document = (REPOSITORY_ROOT / "ai/native-runtime-adapters.md").read_text(encoding="utf-8")
+        for phrase in (
+            "hostVersion: null",
+            "versionProvenance: UNPROBED",
+            "Claimed And Trusted Status",
+            "ai/schemas/native-runtime-snapshot.schema.json",
+            "RFC 8785-compatible restricted subset",
+            '{"a":{"k":"v"},"z":["ASCII",true,null,7]}',
+            "cryptography.hazmat",
+            "300 seconds",
+            "gateInvocationId",
+            "DETECTED",
+            "RESOLVED",
+            "scripts/ai/command-runner.sh",
+            "ai/verification-gates.md",
+            "Phase 3B",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, document)
 
     def test_unsupported_host_maps_to_explicit_not_applicable_leaf(self):
         result, status = self.helper.native_adapter_gate(self.root, "issue-10", "gate-1")
@@ -8026,6 +8342,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual((result["operation"], result["result"]), ("NATIVE_ADAPTER_GATE", "UNSUPPORTED"))
         self.assertFalse((REPOSITORY_ROOT / ".ai-runs").exists())
+
+    def test_native_adapter_shell_fallback_envelopes_match_result_schema(self):
+        shell = (REPOSITORY_ROOT / "scripts/ai/native-adapter-gate.sh").read_text(encoding="utf-8")
+        payloads = re.findall(r"^\s*printf '%s\\n' '(\{.*\})'$", shell, flags=re.MULTILINE)
+        self.assertEqual(len(payloads), 2)
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                self.assert_valid("native-adapter-result", json.loads(payload))
 
     def test_native_adapter_shell_wrapper_anchors_repository_from_another_directory(self):
         shell = REPOSITORY_ROOT / "scripts" / "ai" / "native-adapter-gate.sh"

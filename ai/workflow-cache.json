@@ -2,7 +2,7 @@
   "$schema": "./schemas/workflow-cache.schema.json",
   "$id": "ai/workflow-cache.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-12T00:00:00Z",
+  "updatedAt": "2026-07-13T11:47:29Z",
   "entries": [
     {
       "id": "phase-2b-handoff-context",
@@ -12,12 +12,12 @@
         "paths": [
           {
             "path": "ai/agent-handoff.json",
-            "sha256": "95a119a55849c82ebd384cdd5345d63d4cbed36d15c64f799e5dbe28b62a6996"
+            "sha256": "37a14453e7efb1f1d2316546d452d92f61462aaf5dc2db358c91695324601de4"
           }
         ],
         "environmentFingerprint": null
       },
-      "summary": "Phase 2B and Phase 2C reusable handoff context linking skill contracts, verification gates, Phase 2A context-cache recovery, and Issue-backed work logs.",
+      "summary": "Phase 2B through Phase 3A reusable handoff context linking skill contracts, verification gates, signed native snapshot policy, Phase 2A context-cache recovery, and Issue-backed work logs.",
       "evidenceRefs": [
         "ai/agent-handoff.json",
         "ai/work-logs/issue-5/README.md",
@@ -25,7 +25,11 @@
         "ai/verification-gates.md",
         "ai/verification-policy.json",
         "scripts/ai/verification-gate.sh",
-        "ai/work-logs/issue-7/README.md"
+        "ai/work-logs/issue-7/README.md",
+        "ai/native-runtime-adapters.json",
+        "ai/native-runtime-adapters.md",
+        "ai/schemas/native-runtime-snapshot.schema.json",
+        "ai/work-logs/issue-10/README.md"
       ],
       "createdAt": "2026-07-13T00:00:00Z"
     }
@@ -40,6 +44,11 @@
       "id": "phase-2c-verification-gates",
       "summary": "Use ai/verification-gates.md, ai/verification-policy.json, and scripts/ai/verification-gate.sh for Phase 2C verification completeness and task/change applicability mapping.",
       "createdAt": "2026-07-13T00:00:00Z"
+    },
+    {
+      "id": "phase-3a-native-snapshot-trust",
+      "summary": "Use ai/native-runtime-adapters.json, ai/native-runtime-adapters.md, and the native runtime snapshot schema for Phase 3A claimed/trusted status and ephemeral Ed25519 verification; runtime snapshots are not reusable cache evidence.",
+      "createdAt": "2026-07-13T11:47:29Z"
     }
   ],
   "invalidationEvents": []

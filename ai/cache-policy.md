@@ -24,6 +24,6 @@ Repository scripts cannot intercept every host file read, search, or external to
 
 ## Phase 3A Native Boundary
 
-The current host-native adapter state is `UNSUPPORTED`. Native runtime snapshots and bypass-attempt references are per-invocation inputs correlated by task and gate ID; they are not reusable cached PASS results. A cached, repository-authored, digest-mismatched, correlation-mismatched, or otherwise precomputed `native-runtime-adapter` leaf cannot satisfy verification.
+The current host-native adapter state is `UNSUPPORTED` with `hostVersion: null` and `versionProvenance: UNPROBED`. Native runtime snapshots and bypass-attempt references are per-invocation inputs correlated by task and gate ID; they are not reusable cached PASS results. A cached, repository-authored, digest-mismatched, correlation-mismatched, or otherwise precomputed `native-runtime-adapter` leaf cannot satisfy verification. A supported-host snapshot must be fresh, Ed25519-verified, and bound to a one-use gate challenge; in-process replay state is ephemeral and Phase 3B owns cross-process challenge durability.
 
 `scripts/ai/command-runner.sh` remains the only supported product-command path. Native adapters do not gain command execution authority through cache reuse. Unsupported-host verification may pass only with an explicit repository-only qualification, while supported-host faults remain completion-blocking. Phase 3B owns durable CI evidence, remote-runner cache parity, and CI adapter availability.

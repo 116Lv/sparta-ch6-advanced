@@ -4,9 +4,9 @@
 
 **Goal:** Add machine-readable native adapter capability and bypass-attempt contracts, current-host `UNSUPPORTED` evaluation, and completion-blocking integration without product-command execution.
 
-**Architecture:** Repository JSON declares supported hosts and baseline capability policy but cannot self-promote runtime enforcement. A static Python helper validates policy, evaluates ephemeral runtime snapshots and bypass-attempt fixtures, and emits a Phase 2C-compatible leaf result. The supported-host registry is empty in Phase 3A, so the current Codex desktop host is explicitly `UNSUPPORTED`; no runtime snapshot can become trusted evidence.
+**Architecture:** Repository JSON declares supported hosts and baseline capability policy but cannot self-promote runtime enforcement. A static Python helper validates policy, verifies closed ephemeral Ed25519-signed runtime snapshots, evaluates bypass-attempt fixtures, separates claimed from trusted surfaces, and emits a Phase 2C-compatible leaf result. The supported-host registry is empty in canonical Phase 3A, so the current unprobed Codex desktop host remains explicitly `UNSUPPORTED`; temporary policies and keys exercise the complete supported-host trust path without creating durable evidence.
 
-**Tech Stack:** Markdown, JSON Schema Draft 2020-12, Python 3 with `jsonschema`, Bash thin wrappers, Python `unittest`, temporary fixtures.
+**Tech Stack:** Markdown, JSON Schema Draft 2020-12, Python 3 with `jsonschema` and optional `cryptography.hazmat` Ed25519 verification, Bash thin wrappers, Python `unittest`, temporary fixtures.
 
 ## Global Constraints
 
@@ -14,7 +14,7 @@
 - Phase 1B-3 remains `completenessEvaluated: false` and `scope: INTEGRITY_ONLY`.
 - `scripts/ai/command-runner.sh` remains the only supported product-command path.
 - Phase 3A has no supported host-native adapter and no minimum supported host version.
-- Current Codex desktop command, file-read, search, and tool-call surfaces are `UNSUPPORTED`.
+- Current Codex desktop version is `null`/`UNPROBED`; command, file-read, search, and tool-call surfaces are `UNSUPPORTED`.
 - Do not execute Gradle, build, product/unit project tests, application server, Docker Compose, HTTP/curl/API, database, migration, seed, deployment, or infrastructure commands.
 - Do not create repository `.ai-runs`, non-fixture `artifact-manifest.json`, or finalized non-fixture `run.json`.
 - Do not promote any command registry entry to `VERIFIED`, close Issue #10 automatically, or claim unqualified overall `DONE`.
@@ -26,6 +26,7 @@
 
 - Create `ai/native-runtime-adapters.json`: repository-authored supported-host registry and current-host baseline.
 - Create `ai/schemas/native-runtime-adapters.schema.json`: closed adapter policy schema.
+- Create `ai/schemas/native-runtime-snapshot.schema.json`: closed signed runtime snapshot schema.
 - Create `ai/schemas/native-bypass-attempt.schema.json`: closed redacted bypass record schema.
 - Create `ai/schemas/native-adapter-result.schema.json`: closed helper result and Phase 2C leaf contract.
 - Create `ai/native-runtime-adapters.md`: human-readable discovery, status, redaction, and boundary policy.
@@ -50,7 +51,7 @@
 - Modify: `scripts/ai/tests/test_workflow_helper.py`
 
 **Interfaces:**
-- Produces schema names `native-runtime-adapters`, `native-bypass-attempt`, and `native-adapter-result`.
+- Produces schema names `native-runtime-adapters`, `native-runtime-snapshot`, `native-bypass-attempt`, and `native-adapter-result`.
 - Produces Issue #10 work-log state without Issue closure.
 
 - [ ] **Step 1: Write failing schema and work-log tests**
@@ -60,6 +61,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     def test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed(self):
         helper = load_helper()
         self.assertIn("native-runtime-adapters", helper.SCHEMA_NAMES)
+        self.assertIn("native-runtime-snapshot", helper.SCHEMA_NAMES)
         self.assertIn("native-bypass-attempt", helper.SCHEMA_NAMES)
         self.assertIn("native-adapter-result", helper.SCHEMA_NAMES)
         summary = (REPOSITORY_ROOT / "ai/work-logs/issue-10/README.md").read_text(encoding="utf-8")
@@ -73,7 +75,7 @@ Expected: FAIL because schemas and work logs do not exist.
 
 - [ ] **Step 3: Add closed schemas, schema allowlist entries, and work logs**
 
-The adapter policy schema must allow complete supported-host declarations with minimum version, producer identifier, pinned Ed25519 key fingerprint, and four closed surfaces; the canonical Phase 3A instance alone has an empty `supportedHosts` array. It must also require current host identity, four closed surfaces, and `UNSUPPORTED` statuses. The bypass schema must require correlation, lifecycle, decision, bounded redacted summaries, and forbid secret-bearing raw fields. The result schema must expose adapter result `PASS|FAIL|BLOCKED|NOT_CONFIGURED|UNSUPPORTED` and Phase 2C leaf result `PASS|FAIL|BLOCKED|NOT_CONFIGURED|NOT_APPLICABLE`.
+The adapter policy schema must allow complete baseline-only supported-host declarations with minimum version, producer identifier, pinned Ed25519 public-key fingerprint, and four closed `NOT_CONFIGURED` surfaces; canonical Phase 3A has an empty `supportedHosts` array. It must require nullable current host version plus `UNPROBED|PROBED` provenance conditionals and four `UNSUPPORTED` current surfaces. The runtime snapshot schema binds producer, host/version, adapter version, freshness timestamp, one-use challenge, four callback surfaces, supplied public key/fingerprint, and detached signature. The bypass schema requires correlation, lifecycle, decision, bounded redacted summaries, and forbids secret-bearing raw fields. The result schema exposes claimed and trusted surfaces, adapter result `PASS|FAIL|BLOCKED|NOT_CONFIGURED|UNSUPPORTED`, and Phase 2C leaf result `PASS|FAIL|BLOCKED|NOT_CONFIGURED|NOT_APPLICABLE`.
 
 Add positive and negative schema vectors in the test body: validate one supported-host policy fixture; reject unknown properties, invalid enums, oversized summaries, raw `environment`/`payload`/`query`/`argv` fields, inconsistent `RESOLVED` timestamps, and missing correlation fields.
 
@@ -102,6 +104,8 @@ def test_current_host_is_explicitly_unsupported_on_all_native_surfaces(self):
     policy = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/native-runtime-adapters.json")
     self.assertEqual(policy["supportedHosts"], [])
     self.assertEqual(policy["currentHost"]["hostId"], "codex-desktop")
+    self.assertIsNone(policy["currentHost"]["hostVersion"])
+    self.assertEqual(policy["currentHost"]["versionProvenance"], "UNPROBED")
     self.assertEqual({s["status"] for s in policy["currentHost"]["surfaces"]}, {"UNSUPPORTED"})
 ```
 
@@ -151,7 +155,7 @@ Expected: FAIL because evaluator and wrapper do not exist.
 
 - [ ] **Step 3: Implement minimal read-only evaluation**
 
-Validate the canonical policy first. Reject repository-authored runtime snapshots as untrusted. Because canonical `supportedHosts` is empty, return `UNSUPPORTED` before any signature promotion path. With temporary supported-host policy fixtures, prove `NOT_CONFIGURED`, stale, bad signature metadata, callback failure, and `AUDIT_ONLY` are completion-blocking; fixture `ENFORCED` is contract-only and cannot become real trusted evidence.
+Validate the canonical policy first. Repository policy is baseline-only and cannot self-promote runtime enforcement. Because canonical `supportedHosts` is empty, current-host evaluation returns `UNSUPPORTED`. With temporary supported-host policies and temporary Ed25519 keys, prove one valid signed all-`ENFORCED` snapshot reaches `PASS`; bad producer, host/version, adapter version, key, signature, freshness, challenge, replay, callback proof, or unavailable crypto remains `BLOCKED`. Missing or rejected snapshots retain trusted `NOT_CONFIGURED` surfaces even when their closed claimed surfaces say `ENFORCED`.
 
 Validate bypass-attempt fixtures against the closed schema. Add focused tests for mismatched `taskKey`, mismatched `gateInvocationId`, malformed records, redaction uncertainty, raw secret fields, summary byte/scalar bounds, repeated `eventId` idempotency, semantic `deduplicationKey` grouping without event deletion, `DETECTED`/`RESOLVED` transitions, unresolved completion blocking, and command-based file/search intent retaining `surface: COMMAND`. Do not execute or spawn any command.
 
