@@ -6427,6 +6427,27 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.assertIn("scripts/ai/verification-gate.sh", gate_entry_points["failure-triage"])
         self.assertIn("scripts/ai/verification-gate.sh", gate_entry_points["review-gate"])
 
+    def test_catalog_verification_gate_commands_include_required_wrapper_correlation_arguments(self):
+        catalog = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/skill-catalog.json")
+        entry_points = {entry["id"]: entry["allowedEntryPoint"] for entry in catalog["skills"]}
+        expected_entry_points = {
+            "verification-runner": "verification-level",
+            "api-smoke-verifier": "api-smoke",
+            "failure-triage": "failure-triage",
+            "review-gate": "review",
+        }
+
+        for skill_id, entry_point in expected_entry_points.items():
+            with self.subTest(skill_id=skill_id):
+                self.assertEqual(entry_points[skill_id].split(), [
+                    "scripts/ai/verification-gate.sh",
+                    "--change-type", "<type>",
+                    "--entry-point", entry_point,
+                    "--task-key", "<task-key>",
+                    "--gate-invocation-id", "<gate-invocation-id>",
+                    "--output", "-",
+                ])
+
     def test_phase_2c_repository_artifacts_and_registry_verified_remain_absent(self):
         self.assertFalse((REPOSITORY_ROOT / ".ai-runs").exists())
         bad = []
@@ -7245,6 +7266,64 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
         self.assertEqual(calls, [((snapshot_ref, bypass_ref), {})])
+
+    def test_verification_gate_evaluates_native_leaf_once_without_optional_inputs_before_inapplicability(self):
+        supported_root = self.copy_repository_fixture()
+        supported_policy = self.supported_host_policy()
+        supported_policy["supportedHosts"][0].update({
+            "hostId": "codex-desktop",
+            "minimumHostVersion": "1.0.0",
+        })
+        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(supported_policy), encoding="utf-8",
+        )
+        original_leaf = self.helper.native_adapter_phase2c_leaf
+        calls = []
+
+        def counted_leaf(*args, **kwargs):
+            calls.append((args[0], args[3:], kwargs))
+            return original_leaf(*args, **kwargs)
+
+        self.helper.native_adapter_phase2c_leaf = counted_leaf
+        self.addCleanup(setattr, self.helper, "native_adapter_phase2c_leaf", original_leaf)
+
+        ordinary_result, ordinary_status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "verification-level",
+            task_key="issue-10",
+            gate_invocation_id="gate-unconditional-normal",
+        )
+        self.assertEqual((ordinary_result["result"], ordinary_status), ("BLOCKED", 2))
+
+        unsupported_result, unsupported_status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "api-smoke",
+            task_key="issue-10",
+            gate_invocation_id="gate-unconditional-unsupported",
+        )
+        self.assertEqual((unsupported_result["result"], unsupported_result["reason"], unsupported_status), (
+            "NOT_APPLICABLE", "ENTRY_POINT_NOT_APPLICABLE", 6,
+        ))
+        self.assertEqual(self.native_check(unsupported_result)["reason"], "HOST_UNSUPPORTED")
+
+        blocked_result, blocked_status = self.helper.verification_gate(
+            supported_root,
+            "documentation-only",
+            "api-smoke",
+            task_key="issue-10",
+            gate_invocation_id="gate-unconditional-supported",
+        )
+        self.assertEqual((blocked_result["result"], blocked_result["reason"], blocked_status), (
+            "BLOCKED", "VERIFICATION_GATE_BLOCKED", 2,
+        ))
+        self.assertEqual(self.native_check(blocked_result)["reason"], "NATIVE_ADAPTER_NOT_CONFIGURED")
+        self.assertEqual(calls, [
+            (self.root, (None, None), {}),
+            (self.root, (None, None), {}),
+            (supported_root, (None, None), {}),
+        ])
 
     def test_native_adapter_phase2c_leaf_validates_correlation_fail_closed(self):
         invalid_vectors = ((None, "gate-1"), ("issue-10", None), ("", "gate-1"), ("issue-10", ""))

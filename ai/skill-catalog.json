@@ -26,7 +26,7 @@
       "id": "verification-runner",
       "document": "ai/skills/verification-runner.md",
       "routeId": "repo-wide-ai-workflow",
-      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point verification-level --output -",
+      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point verification-level --task-key <task-key> --gate-invocation-id <gate-invocation-id> --output -",
       "prohibitedOperations": ["verification completeness claim", "product command execution", "unqualified DONE claim"],
       "evidenceOutputs": ["ai/work-logs/issue-6/README.md"],
       "handoffFields": ["skillIds", "handoffStateRef", "reusableContextRefs", "notRunProjectCommands"]
@@ -35,7 +35,7 @@
       "id": "api-smoke-verifier",
       "document": "ai/skills/api-smoke-verifier.md",
       "routeId": "repo-wide-ai-workflow",
-      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point api-smoke --output -",
+      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point api-smoke --task-key <task-key> --gate-invocation-id <gate-invocation-id> --output -",
       "prohibitedOperations": ["HTTP/curl/API calls", "server start", "API verification complete claim"],
       "evidenceOutputs": ["ai/work-logs/issue-6/README.md"],
       "handoffFields": ["skillIds", "handoffStateRef", "reusableContextRefs", "notRunProjectCommands"]
@@ -44,7 +44,7 @@
       "id": "failure-triage",
       "document": "ai/skills/failure-triage.md",
       "routeId": "repo-wide-ai-workflow",
-      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point failure-triage --output -",
+      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point failure-triage --task-key <task-key> --gate-invocation-id <gate-invocation-id> --output -",
       "prohibitedOperations": ["rerun authorization", "failure hiding", "product command execution"],
       "evidenceOutputs": ["ai/work-logs/issue-6/README.md"],
       "handoffFields": ["skillIds", "handoffStateRef", "reusableContextRefs", "notRunProjectCommands"]
@@ -62,7 +62,7 @@
       "id": "review-gate",
       "document": "ai/skills/review-gate.md",
       "routeId": "repo-wide-ai-workflow",
-      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point review --output -",
+      "allowedEntryPoint": "scripts/ai/verification-gate.sh --change-type <type> --entry-point review --task-key <task-key> --gate-invocation-id <gate-invocation-id> --output -",
       "prohibitedOperations": ["issue-backed closure while pending_issue", "reconciliation-complete claim", "unqualified overall DONE"],
       "evidenceOutputs": ["ai/work-logs/issue-6/reviewer.md"],
       "handoffFields": ["skillIds", "handoffStateRef", "reusableContextRefs", "notRunProjectCommands", "githubReconciliationStatus"]
