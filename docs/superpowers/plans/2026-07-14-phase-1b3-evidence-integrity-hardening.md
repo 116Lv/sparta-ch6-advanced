@@ -80,8 +80,14 @@ Add before `done_claim_semantic_result`:
 
 ```python
 def validated_done_claim_evidence(root, session, claim):
-    session_refs = set(session["commandResultRefs"])
+    command_refs = set(session["commandResultRefs"])
+    session_refs = command_refs | set(session["gateResultRefs"])
     top_level_refs = set(claim.get("evidenceRefs", []))
+    check_refs = {
+        reference
+        for check in claim.get("checks", [])
+        for reference in check.get("evidenceRefs", [])
+    }
     resolved = {}
     for check in claim.get("checks", []):
         for reference in check.get("evidenceRefs", []):
@@ -90,14 +96,17 @@ def validated_done_claim_evidence(root, session, claim):
                     "DONE_CLAIM_CHECK_EVIDENCE_UNBOUND",
                     message="check evidence must be present in the claim and active session",
                 )])
-            _path, artifact = read_run_reference(
-                root, reference, "ai/schemas/command-result.schema.json",
+            schema_path = (
+                "ai/schemas/command-result.schema.json"
+                if reference in command_refs
+                else "ai/schemas/gateway-result.schema.json"
             )
+            _path, artifact = read_run_reference(root, reference, schema_path)
             resolved[reference] = artifact
-    if top_level_refs != session_refs:
+    if top_level_refs != check_refs or not command_refs.issubset(top_level_refs):
         raise InvalidStateError([validation_error(
             "DONE_CLAIM_EVIDENCE_CLOSURE_MISMATCH",
-            message="top-level evidence must equal active session command evidence",
+            message="top-level evidence must equal check evidence and include every command result",
         )])
     return resolved
 
@@ -240,7 +249,7 @@ Expected: FAIL because the baseline leaves `.state/run-session.json` in `FINALIZ
 - [ ] **Step 3: Implement bounded rollback**
 
 ```python
-def rollback_finalization(root, original_session, final_refs):
+def rollback_finalization(root, original_session, final_refs, acquired):
     root = Path(root).resolve(strict=True)
     run = root / ".ai-runs" / original_session["runId"]
     if (run / "run.json").exists():
@@ -257,12 +266,12 @@ def rollback_finalization(root, original_session, final_refs):
         root,
         run / ".state" / "run-session.json",
         original_session,
-        None,
-        allow_unlocked_finalization_rollback=True,
+        acquired,
+        expected_state="FINALIZING",
     )
 ```
 
-Capture the exact OPEN session before transition. On any validation/publication exception before `run.json` exists, invoke rollback while holding the run lock. If rollback itself fails, return `BLOCKED` with `FINALIZATION_RECOVERY_REQUIRED` and preserve the FINALIZING state for explicit recovery.
+Capture the exact OPEN session before transition. On any validation/publication exception before `run.json` exists, invoke rollback with the same validated `acquired` lock owner and require the current session state to be FINALIZING. Never add an unlocked rollback bypass. If rollback itself fails, return `BLOCKED` with `FINALIZATION_RECOVERY_REQUIRED` and preserve the FINALIZING state for explicit recovery.
 
 - [ ] **Step 4: Run rollback, precedence, and stale-summary tests**
 

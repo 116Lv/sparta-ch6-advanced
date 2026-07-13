@@ -123,7 +123,7 @@ def verified_leaf_result(root, reference, expected, policy_sha256):
     return leaf
 ```
 
-Register the schema in `SCHEMA_NAMES`. Add `producerId` and a closed `notApplicableFor` array to each policy check. Reject the native adapter ID before loading external leaf refs.
+Register the schema in `SCHEMA_NAMES`. Add `producerId`, `evidenceSchema`, and a closed `notApplicableFor` array to each policy check. Reject the native adapter ID before loading external leaf refs. `verified_leaf_result` must compare `leaf["evidence"]["schema"]` to the selected check's canonical `evidenceSchema` before validating the evidence file, so a leaf cannot choose a weaker allowlisted schema.
 
 Implement `repository_commit_sha` with `subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], shell=False, check=True, text=True, capture_output=True)` and strict 40-lowercase-hex validation. Missing or malformed Git state is `NOT_CONFIGURED`/BLOCKED for a required verification gate, never caller fallback.
 
