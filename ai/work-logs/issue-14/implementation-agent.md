@@ -232,3 +232,90 @@ Ready to begin global Task 1 (Phase 1B-3 local Task 1).
 - Reconciliation helper/test changes are committed as `e2f85d7` with message `fix(ai): reconcile phase 1b3 session replacements` and await independent rereview.
 - Gradle, build/product tests, server, Docker, HTTP/API, database, migration, seed, deploy, and infrastructure commands remain NOT RUN. No real repository `.ai-runs` was created.
 - No verification-completeness, registry `VERIFIED`, phase-completion, Issue closure, native/CI enforcement, or unqualified overall `DONE` claim is made.
+
+## Task 4 Update — Phase 2 Task 1 (2026-07-14)
+
+### Changed Files
+
+- `ai/schemas/verification-leaf-result.schema.json`: added the closed, strict
+  verification leaf artifact contract.
+- `ai/schemas/verification-policy.schema.json`: bound every check to a closed
+  producer, evidence schema, and change-type applicability array.
+- `ai/verification-policy.json`: recorded canonical producer, evidence-schema,
+  and `notApplicableFor` values for all nine checks.
+- `scripts/ai/workflow_helper.py`: replaced free-form leaf summaries with
+  reference loading, strict repository HEAD probing, and leaf/evidence binding
+  validation.
+- `scripts/ai/tests/test_workflow_helper.py`: added legacy evidence-free,
+  correlation/policy/producer/freshness/schema/digest, strict-path/commit, and
+  native-forgery regressions; migrated only positive surrounding fixtures.
+- `ai/work-logs/issue-14/implementation-agent.md`: appended this Task 4
+  implementation evidence.
+
+### Decisions And Schema Compatibility
+
+- Confirmed before implementation that `review-gate`, `done-claim-gate`,
+  `failure-triage`, and `verify.static` use
+  `ai/schemas/gateway-result.schema.json`; registry-backed unit, integration,
+  API-smoke, and E2E checks use `ai/schemas/command-result.schema.json`; the
+  internal native check uses `ai/schemas/native-adapter-result.schema.json` in
+  canonical policy only.
+- `done-claim-gate` binds the gateway evaluation artifact, not the done-claim
+  input document. `verify.api-smoke` binds registry-command evidence.
+- External native IDs are rejected before referenced evidence lookup, including
+  the new bound-ref form. Existing legacy forged-native precedence tests remain
+  unchanged and passing.
+- Production obtains the checked-out commit only through strict
+  `git -C <root> rev-parse HEAD`; there is no caller commit argument or fallback.
+  Missing or malformed Git state maps to BLOCKED with
+  `VERIFICATION_REPOSITORY_COMMIT_NOT_CONFIGURED`.
+- Preserved current aggregation/default behavior because fail-closed defaults,
+  optional FAIL visibility, and required NOT_APPLICABLE authority belong to
+  Phase 2 Task 2. Cache and skill/handoff exact-set behavior remains Phase 2
+  Task 3.
+
+### Exact TDD Evidence
+
+- Required RED command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests -v`
+- Required RED result: expected exit `1`; 11 tests ran in `9.599s` and all 11
+  failed for the intended missing-contract reasons. The evidence-free legacy
+  PASS reached aggregation; bound refs were not understood; mismatch-specific
+  and forged-native reason codes were absent.
+- Required focused GREEN command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_evidence_free_legacy_leaf_result_is_rejected scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_bound_leaf_mismatches_are_rejected_before_aggregation scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_valid_bound_leaf_reaches_aggregation scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests.test_external_native_bound_leaf_is_rejected_before_evidence_lookup -v`
+- Required focused GREEN result: exit `0`; 4 tests passed in `3.312s`.
+- Self-review Git-probe RED: the strict-probe test errored on non-string stdout
+  because `re.fullmatch` received `None`; after the minimal type guard the same
+  test passed in `0.666s`.
+- Self-review schema RED: one focused test produced five expected subtest
+  failures because JSON Schema `$` accepted terminal-newline suffixes; after
+  portable exact-end guards, the newline and strict-probe tests passed together
+  (2 tests in `1.344s`).
+
+### Final Verification Evidence
+
+- Schema allowlist focus:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase1B2Task1SchemaTests.test_phase_1b2_and_phase_2_schema_names_are_allowlisted -v`
+- Schema allowlist result: exit `0`; 1 test passed in `0.155s`.
+- Final surrounding command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v`
+- Final surrounding result: exit `0`; 101 tests passed in `37.180s` (13 Phase
+  2C and 88 Phase 3A).
+- First Phase 3A surrounding run: 87 passed and one positive legacy fixture
+  failed. It was migrated to bound refs; no production contract was weakened.
+- `git diff --check`: exit `0`; no whitespace errors, only Git line-ending
+  warnings.
+- Repository evidence checks: `.ai-runs` absent; `__pycache__` absent.
+
+### Commits And Recovery State
+
+- Implementation/schema/test commit: `0be7062` (`fix(ai): verify phase 2 leaf evidence`).
+- Detailed ignored report:
+  `.superpowers/sdd/task-4-phase2-report.md`.
+- This role-log append is committed separately so the worktree returns clean.
+- No Gradle, build/product tests, server, Docker, HTTP/API, database, migration,
+  seed, deploy, or infrastructure command was run. No real `.ai-runs` was
+  created. No push, PR, merge, Issue modification/closure, registry `VERIFIED`,
+  phase-complete, native/CI enforcement, or unqualified overall `DONE` claim is
+  made.
