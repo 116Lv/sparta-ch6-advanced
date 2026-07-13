@@ -5105,6 +5105,21 @@ def finalization_artifact_refs(run_id):
     )
 
 
+def expected_finalizing_session(original_session):
+    finalizing = json.loads(json.dumps(original_session))
+    finalizing["state"] = "FINALIZING"
+    return finalizing
+
+
+def read_locked_run_session(root, run_id, acquired):
+    validate_held_run_lock(root, run_id, acquired)
+    _session_path, session = read_exact_run_json(
+        root, run_id, (".state", "run-session.json"), "ai/schemas/run-session.schema.json",
+    )
+    validate_held_run_lock(root, run_id, acquired)
+    return session
+
+
 def rollback_finalization(root: Path, original_session: dict, final_refs: Sequence[str], acquired) -> None:
     root = Path(root).resolve(strict=True)
     validate(root, original_session, "ai/schemas/run-session.schema.json")
@@ -5130,11 +5145,8 @@ def rollback_finalization(root: Path, original_session: dict, final_refs: Sequen
             "FINALIZATION_ALREADY_PUBLISHED", message="published run.json cannot be rolled back",
         )])
 
-    expected_finalizing = json.loads(json.dumps(original_session))
-    expected_finalizing["state"] = "FINALIZING"
-    _session_path, current_session = read_exact_run_json(
-        root, run_id, (".state", "run-session.json"), "ai/schemas/run-session.schema.json",
-    )
+    expected_finalizing = expected_finalizing_session(original_session)
+    current_session = read_locked_run_session(root, run_id, acquired)
     if current_session != expected_finalizing:
         raise RegistryBlockedError([validation_error(
             "FINALIZING_SESSION_CHANGED", message="FINALIZING session changed before rollback",
@@ -5150,13 +5162,18 @@ def rollback_finalization(root: Path, original_session: dict, final_refs: Sequen
         path.unlink()
         fsync_directory(path.parent)
 
-    replace_run_session(
-        root,
-        run / ".state" / "run-session.json",
-        original_session,
-        acquired,
-        expected_session=expected_finalizing,
-    )
+    try:
+        replace_run_session(
+            root,
+            run / ".state" / "run-session.json",
+            original_session,
+            acquired,
+            expected_session=expected_finalizing,
+        )
+    except Exception:
+        if read_locked_run_session(root, run_id, acquired) == original_session:
+            return
+        raise
 
 
 def final_artifact_manifest(root, run_id):
@@ -5258,6 +5275,15 @@ def prepare_done_claim(root, run_id, claim_ref):
     original_session = None
     finalization_started = False
 
+    def recovery_required_result():
+        error = validation_error(
+            "FINALIZATION_RECOVERY_REQUIRED",
+            message="finalization state requires explicit recovery",
+        )
+        return publish_result(root, gateway_result(
+            "BLOCKED", error["code"], operation="PRE_DONE_CLAIM", errors=[error],
+        ), 2)
+
     def rollback_or_recovery_required():
         if not finalization_started:
             return None
@@ -5266,13 +5292,7 @@ def prepare_done_claim(root, run_id, claim_ref):
                 root, original_session, finalization_artifact_refs(run_id), acquired,
             )
         except Exception:
-            error = validation_error(
-                "FINALIZATION_RECOVERY_REQUIRED",
-                message="failed finalization requires explicit recovery while the session remains FINALIZING",
-            )
-            return publish_result(root, gateway_result(
-                "BLOCKED", error["code"], operation="PRE_DONE_CLAIM", errors=[error],
-            ), 2)
+            return recovery_required_result()
         return None
 
     try:
@@ -5284,11 +5304,21 @@ def prepare_done_claim(root, run_id, claim_ref):
         session = resume_immutable_publications(root, session, acquired)
         require_no_reserved_attempts(session)
         original_session = json.loads(json.dumps(session))
-        replacement = json.loads(json.dumps(original_session))
-        replacement["state"] = "FINALIZING"
-        replace_run_session(
-            root, root / replacement["$id"], replacement, acquired, expected_session=original_session,
-        )
+        replacement = expected_finalizing_session(original_session)
+        try:
+            replace_run_session(
+                root, root / replacement["$id"], replacement, acquired, expected_session=original_session,
+            )
+        except Exception:
+            try:
+                current_session = read_locked_run_session(root, run_id, acquired)
+            except Exception:
+                return recovery_required_result()
+            if current_session == replacement:
+                finalization_started = True
+            elif current_session != original_session:
+                return recovery_required_result()
+            raise
         finalization_started = True
         session = replacement
 

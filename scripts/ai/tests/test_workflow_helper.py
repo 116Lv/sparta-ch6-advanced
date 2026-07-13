@@ -5901,6 +5901,75 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         for path in self.partial_finalization_paths():
             self.assertTrue(path.exists(), path)
 
+    def test_transition_exception_after_finalizing_replace_rolls_back_exact_open_session(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        original_session = self.session()
+        original_fsync = self.helper.fsync_directory
+        injected = False
+
+        def fail_after_finalizing_replace(path):
+            nonlocal injected
+            if (
+                not injected
+                and Path(path) == self.session_path.parent
+                and self.session()["state"] == "FINALIZING"
+            ):
+                injected = True
+                raise OSError("injected failure after FINALIZING replacement")
+            return original_fsync(path)
+
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(self.helper, "fsync_directory", side_effect=fail_after_finalizing_replace),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "PRE_DONE_CLAIM_FAILED", 5,
+        ))
+        self.assertEqual(self.session(), original_session)
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        self.assert_partial_finalization_absent()
+
+    def test_restore_exception_after_open_replace_preserves_original_failure_and_snapshot(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        original_session = self.session()
+        failure = self.helper.InvalidStateError([self.helper.validation_error(
+            "INJECTED_FINALIZATION_FAILURE", message="injected finalization validation failure",
+        )])
+        original_fsync = self.helper.fsync_directory
+        finalizing_observed = False
+        injected = False
+
+        def fail_after_open_restore(path):
+            nonlocal finalizing_observed, injected
+            if Path(path) == self.session_path.parent:
+                state = self.session()["state"]
+                if state == "FINALIZING":
+                    finalizing_observed = True
+                elif finalizing_observed and state == "OPEN" and not injected:
+                    injected = True
+                    raise OSError("injected failure after OPEN replacement")
+            return original_fsync(path)
+
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(
+                self.helper,
+                "publish_done_gate_manifest_run",
+                side_effect=lambda *args: self.inject_partial_finalization_failure(failure),
+            ),
+            mock.patch.object(self.helper, "fsync_directory", side_effect=fail_after_open_restore),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "INJECTED_FINALIZATION_FAILURE", 5,
+        ))
+        self.assertEqual(self.session(), original_session)
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        self.assert_partial_finalization_absent()
+
 
 class Phase1B2Task7RepositoryBoundaryTests(unittest.TestCase):
     def read_repository_text(self, relative_path):
