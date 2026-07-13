@@ -7,12 +7,13 @@ status: done
 owning_feature: none
 current_owner: reviewer
 started_at: 2026-07-13T11:11:49+09:00
-ended_at: 2026-07-13T20:52:21+09:00
-last_updated: 2026-07-13T20:52:21+09:00
+ended_at: 2026-07-13T21:37:18+09:00
+last_updated: 2026-07-13T21:37:18+09:00
 branch: codex/phase-3a-native-runtime-adapters
 related_files:
-  - .superpowers/sdd/task-1-brief.md
-  - .superpowers/sdd/task-1-report.md
+  - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
+  - docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md
+  - ai/work-logs/issue-10/README.md
   - ai/schemas/native-runtime-adapters.schema.json
   - ai/schemas/native-runtime-snapshot.schema.json
   - ai/schemas/native-bypass-attempt.schema.json
@@ -37,7 +38,12 @@ changed_files:
   - ai/agent-handoff.json
   - ai/agent-handoff.md
   - ai/cache-policy.md
+  - ai/document-routing.md
   - ai/verification-gates.md
+  - ai/verification-policy.json
+  - ai/schemas/verification-policy.schema.json
+  - ai/skill-catalog.json
+  - ai/tool-call-policy.md
   - ai/workflow-cache.json
   - ai/workflow-cache.md
   - ai/work-logs/index.md
@@ -48,6 +54,7 @@ changed_files:
   - scripts/ai/workflow_helper.py
   - scripts/ai/tests/test_workflow_helper.py
   - scripts/ai/native-adapter-gate.sh
+  - scripts/ai/verification-gate.sh
 commands_run:
   - "Historical Task 1 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v"
   - "Historical Task 1 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v"
@@ -76,6 +83,12 @@ commands_run:
   - "Final branch review (exit 0): python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v [85 tests]"
   - "Final branch review (exit 0): 3 targeted schema, workflow-cache, and agent-handoff validation tests."
   - "Final branch review (exit 0): bash -n native-adapter-gate.sh; artifact absence; command-registry diff; git diff --check."
+  - "Final lifecycle finding RED (exit 1 as expected): 7 focused schema, signed-resolution, unresolved, and Issue10 metadata tests reported 14 expected failures."
+  - "Final lifecycle finding focused GREEN (exit 0): 6 signed-resolution and unresolved-detection tests."
+  - "Final lifecycle finding (exit 0): python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v [85 tests]"
+  - "Final lifecycle finding (exit 0): python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v [92 tests]"
+  - "Final lifecycle finding (exit 0): 4 targeted snapshot-schema, Issue10 metadata, workflow-cache, and agent-handoff tests."
+  - "Final lifecycle finding (exit 0): git diff --check; artifact absence; command-registry diff."
 tests_run:
   - "Historical Task 1 GREEN (exit 0): focused allowlist and issue-backed work-log test passed (1 test)."
   - "Historical Task 1 GREEN (exit 0): Phase3ANativeRuntimeAdapterTests passed (4 tests)."
@@ -90,6 +103,9 @@ tests_run:
   - "Final branch review GREEN (exit 0): Phase2CVerificationGateTests plus Phase3ANativeRuntimeAdapterTests passed 85 tests."
   - "Final branch review GREEN (exit 0): targeted schema/cache/handoff set passed 3 tests."
   - "Full helper suite was not rerun in this fix wave; the prior disclosed 319-test result with one CRLF fixture failure and 17 skips remains historical evidence until the main agent reruns it."
+  - "Final lifecycle finding RED: expected failures showed resolutionEventIds absent from the snapshot contract, unconditional RESOLVED_TRANSITION blocking, snapshot trust preceding ordinary unresolved blocking, and drifted Issue10 metadata."
+  - "Final lifecycle finding GREEN (exit 0): Phase3A passed 85 tests; Phase2C plus Phase3A passed 92 tests; targeted schema/handoff/cache and Issue10 metadata passed 4 tests."
+  - "Final lifecycle repository checks (exit 0): git diff --check; .ai-runs absent; non-fixture artifact-manifest.json count 0; non-fixture run.json count 0; command-registry diff empty."
 blockers: []
 skill_ids:
   - review-gate
@@ -179,3 +195,9 @@ Claimed status and trusted status are separate throughout. Missing, malformed, r
 Fresh evidence: Phase 3A passed 78 tests; Phase 2C plus Phase 3A passed 85 tests; targeted schema/cache/handoff validation passed 3 tests; shell syntax, artifact absence, command-registry non-promotion, and `git diff --check` exited 0.
 
 Findings: Critical none. Important none. Residual boundary: challenge replay memory is process-local and intentionally non-durable; Phase 3B owns cross-process installation and durable enforcement. The full helper suite was not rerun, so the prior disclosed 319-test CRLF checkout-fixture failure with 17 skips remains historical evidence pending the main agent rerun. No prohibited command or durable evidence generation ran.
+
+## Final Lifecycle Finding Review (2026-07-13)
+
+Reviewed the signed payload extension, lifecycle ordering, exact event binding, trust-failure precedence, ordinary unresolved behavior, documentation, and Issue10 metadata reconciliation. `resolutionEventIds` is required, unique, and bounded by schema and remains inside the canonical bytes verified by Ed25519. Valid current resolutions cannot clear until the host is supported and authoritatively probed, the snapshot is fresh and challenge-bound, every callback is trusted at `ENFORCED`, and the signed event set matches exactly. Missing, mismatched, extra, duplicate, oversized, stale, bad-signature, unsupported, unprobed, and absent-snapshot cases remain blocking through their documented reasons or the snapshot contract.
+
+Observed helper/static evidence before this record update: Phase3A passed 85 tests; Phase2C plus Phase3A passed 92 tests; the targeted snapshot-schema, Issue10 metadata, workflow-cache, and agent-handoff set passed 4 tests; `git diff --check`, artifact absence, and command-registry diff checks exited 0. The remaining boundary is unchanged: challenge consumption and resolution binding are process-local, while Phase 3B owns cross-process installation and durable enforcement. No product verification, registry `VERIFIED` transition, Issue closure, reconciliation-complete status, or unqualified overall `DONE` is claimed.

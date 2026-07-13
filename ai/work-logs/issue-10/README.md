@@ -6,8 +6,8 @@ status: done
 owning_feature: none
 current_owner: reviewer
 started_at: 2026-07-13T11:03:43+09:00
-ended_at: 2026-07-13T20:52:21+09:00
-last_updated: 2026-07-13T20:52:21+09:00
+ended_at: 2026-07-13T21:37:18+09:00
+last_updated: 2026-07-13T21:37:18+09:00
 branch: codex/phase-3a-native-runtime-adapters
 related_files:
   - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
@@ -25,7 +25,12 @@ changed_files:
   - ai/agent-handoff.json
   - ai/agent-handoff.md
   - ai/cache-policy.md
+  - ai/document-routing.md
   - ai/verification-gates.md
+  - ai/verification-policy.json
+  - ai/schemas/verification-policy.schema.json
+  - ai/skill-catalog.json
+  - ai/tool-call-policy.md
   - ai/workflow-cache.json
   - ai/workflow-cache.md
   - ai/work-logs/index.md
@@ -36,6 +41,7 @@ changed_files:
   - scripts/ai/workflow_helper.py
   - scripts/ai/tests/test_workflow_helper.py
   - scripts/ai/native-adapter-gate.sh
+  - scripts/ai/verification-gate.sh
 commands_run:
   - "Historical Task 1 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v"
   - "Historical Task 1 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v"
@@ -63,6 +69,12 @@ commands_run:
   - "Final branch review (exit 0): python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v [85 tests]"
   - "Final branch review (exit 0): 3 targeted schema, workflow-cache, and agent-handoff validation tests."
   - "Final branch review (exit 0): bash -n native-adapter-gate.sh; artifact absence; command-registry diff; git diff --check."
+  - "Final lifecycle finding RED (exit 1 as expected): 7 focused schema, signed-resolution, unresolved, and Issue10 metadata tests reported 14 expected failures."
+  - "Final lifecycle finding focused GREEN (exit 0): 6 signed-resolution and unresolved-detection tests."
+  - "Final lifecycle finding (exit 0): python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v [85 tests]"
+  - "Final lifecycle finding (exit 0): python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v [92 tests]"
+  - "Final lifecycle finding (exit 0): 4 targeted snapshot-schema, Issue10 metadata, workflow-cache, and agent-handoff tests."
+  - "Final lifecycle finding (exit 0): git diff --check; artifact absence; command-registry diff."
 tests_run:
   - "Historical Task 1 RED: expected allowlist assertion failure before implementation."
   - "Historical Task 1 GREEN (exit 0): focused allowlist and issue-backed work-log test passed (1 test)."
@@ -78,6 +90,9 @@ tests_run:
   - "Final branch review GREEN (exit 0): Phase2CVerificationGateTests plus Phase3ANativeRuntimeAdapterTests passed 85 tests."
   - "Final branch review GREEN (exit 0): targeted schema/cache/handoff set passed 3 tests."
   - "Full helper suite was not rerun in this fix wave; the prior disclosed 319-test result with one CRLF fixture failure and 17 skips remains historical evidence until the main agent reruns it."
+  - "Final lifecycle finding RED: expected failures showed resolutionEventIds absent from the snapshot contract, unconditional RESOLVED_TRANSITION blocking, snapshot trust preceding ordinary unresolved blocking, and drifted Issue10 metadata."
+  - "Final lifecycle finding GREEN (exit 0): Phase3A passed 85 tests; Phase2C plus Phase3A passed 92 tests; targeted schema/handoff/cache and Issue10 metadata passed 4 tests."
+  - "Final lifecycle repository checks (exit 0): git diff --check; .ai-runs absent; non-fixture artifact-manifest.json count 0; non-fixture run.json count 0; command-registry diff empty."
 blockers: []
 skill_ids:
   - review-gate
@@ -201,3 +216,11 @@ Implemented the primary supported-host trust path with a closed runtime snapshot
 Results now separate `claimedSurfaces` from `trustedSurfaces`; policy declarations are baseline-only and cannot emit runtime `ENFORCED`. Canonical `supportedHosts` remains empty, current host version is `null`/`UNPROBED`, all four current surfaces remain `UNSUPPORTED`, and the Phase 2C leaf remains repository-qualified `NOT_APPLICABLE` with `HOST_UNSUPPORTED`.
 
 Fresh evidence: Phase3A passed 78 tests; Phase2C plus Phase3A passed 85 tests; targeted schema/cache/handoff validation passed 3 tests; shell syntax, artifact absence, command-registry non-promotion, and `git diff --check` exited 0. The full helper suite was deliberately not rerun. Its earlier disclosed 319-test run with one CRLF checkout-fixture failure and 17 skips remains prior evidence until the main agent reruns it. No Gradle/product/server/Docker/HTTP/API/database/migration/seed/deploy command or durable evidence generation ran.
+
+## Final Lifecycle Finding Fix Wave (2026-07-13)
+
+This fix wave adds required bounded unique `resolutionEventIds` to the closed runtime snapshot and therefore to the canonical signed bytes. A valid later-gate `RESOLVED` transition proceeds through supported/probed host selection, freshness, Ed25519 signature, one-use challenge, signed callback proof, and all-`ENFORCED` trust before its current resolution event IDs are compared exactly with the signed array. Exact binding permits the otherwise valid temporary signed adapter vector to return `PASS`; missing, mismatched, or extra binding has a distinct `BLOCKED` reason, while duplicate or oversized binding is snapshot-contract invalid. Stale and bad-signature vectors remain blocked on the snapshot trust path, and ordinary unresolved detections block before trust evaluation.
+
+The four Issue #10 `changed_files` lists now match the 29 tracked files changed across the contiguous Phase3A commit range. Ignored SDD references were replaced by the tracked design, implementation plan, and Issue work-log links; this summary and the work-log index share the same update timestamp.
+
+Observed helper/static evidence before this record update: Phase3A passed 85 tests, Phase2C plus Phase3A passed 92 tests, and the targeted snapshot-schema, Issue10 metadata, workflow-cache, and agent-handoff set passed 4 tests. `git diff --check`, artifact absence, and command-registry diff checks exited 0. This evidence does not establish product verification, a registry `VERIFIED` transition, Issue closure, reconciliation completion, or an unqualified overall `DONE` claim. Canonical host state remains `null`/`UNPROBED` and `UNSUPPORTED`; no product command or durable evidence generation ran.

@@ -7,8 +7,8 @@ status: done
 owning_feature: none
 current_owner: implementation-agent
 started_at: 2026-07-13T11:03:43+09:00
-ended_at: 2026-07-13T20:52:21+09:00
-last_updated: 2026-07-13T20:52:21+09:00
+ended_at: 2026-07-13T21:37:18+09:00
+last_updated: 2026-07-13T21:37:18+09:00
 branch: codex/phase-3a-native-runtime-adapters
 related_files:
   - ai/schemas/native-runtime-adapters.schema.json
@@ -35,7 +35,12 @@ changed_files:
   - ai/agent-handoff.json
   - ai/agent-handoff.md
   - ai/cache-policy.md
+  - ai/document-routing.md
   - ai/verification-gates.md
+  - ai/verification-policy.json
+  - ai/schemas/verification-policy.schema.json
+  - ai/skill-catalog.json
+  - ai/tool-call-policy.md
   - ai/workflow-cache.json
   - ai/workflow-cache.md
   - ai/work-logs/index.md
@@ -46,6 +51,7 @@ changed_files:
   - scripts/ai/workflow_helper.py
   - scripts/ai/tests/test_workflow_helper.py
   - scripts/ai/native-adapter-gate.sh
+  - scripts/ai/verification-gate.sh
 commands_run:
   - "Historical Task 1 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v"
   - "Historical Task 1 (exit 0): python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v"
@@ -73,6 +79,12 @@ commands_run:
   - "Final branch review (exit 0): python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v [85 tests]"
   - "Final branch review (exit 0): 3 targeted schema, workflow-cache, and agent-handoff validation tests."
   - "Final branch review (exit 0): bash -n native-adapter-gate.sh; artifact absence; command-registry diff; git diff --check."
+  - "Final lifecycle finding RED (exit 1 as expected): 7 focused schema, signed-resolution, unresolved, and Issue10 metadata tests reported 14 expected failures."
+  - "Final lifecycle finding focused GREEN (exit 0): 6 signed-resolution and unresolved-detection tests."
+  - "Final lifecycle finding (exit 0): python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v [85 tests]"
+  - "Final lifecycle finding (exit 0): python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v [92 tests]"
+  - "Final lifecycle finding (exit 0): 4 targeted snapshot-schema, Issue10 metadata, workflow-cache, and agent-handoff tests."
+  - "Final lifecycle finding (exit 0): git diff --check; artifact absence; command-registry diff."
 tests_run:
   - "Historical Task 1 RED: expected schema-allowlist failure before implementation."
   - "Historical Task 1 GREEN (exit 0): focused allowlist and issue-backed work-log test passed (1 test)."
@@ -88,6 +100,9 @@ tests_run:
   - "Final branch review GREEN (exit 0): Phase2CVerificationGateTests plus Phase3ANativeRuntimeAdapterTests passed 85 tests."
   - "Final branch review GREEN (exit 0): targeted schema/cache/handoff set passed 3 tests."
   - "Full helper suite was not rerun in this fix wave; the prior disclosed 319-test result with one CRLF fixture failure and 17 skips remains historical evidence until the main agent reruns it."
+  - "Final lifecycle finding RED: expected failures showed resolutionEventIds absent from the snapshot contract, unconditional RESOLVED_TRANSITION blocking, snapshot trust preceding ordinary unresolved blocking, and drifted Issue10 metadata."
+  - "Final lifecycle finding GREEN (exit 0): Phase3A passed 85 tests; Phase2C plus Phase3A passed 92 tests; targeted schema/handoff/cache and Issue10 metadata passed 4 tests."
+  - "Final lifecycle repository checks (exit 0): git diff --check; .ai-runs absent; non-fixture artifact-manifest.json count 0; non-fixture run.json count 0; command-registry diff empty."
 blockers: []
 skill_ids: []
 handoff_state_ref: ai/agent-handoff.json
@@ -309,3 +324,18 @@ The repository was clean before and after the commands. `.ai-runs`, non-fixture 
 - Keys, snapshots, and evidence are not persisted. Replay challenges are consumed only in process; Phase 3B owns durable cross-process enforcement and runner installation.
 - No prohibited product, service, network, database, deployment, or durable-evidence command ran.
 - The full helper suite was not rerun. Its prior 319-test result with one disclosed CRLF checkout-fixture failure and 17 skips remains historical evidence until the main agent reruns it.
+
+## Final Lifecycle Finding Fix Wave (2026-07-13)
+
+### Strict TDD
+
+- RED: seven focused tests reported 14 expected failures because the snapshot schema rejected `resolutionEventIds`, every valid `RESOLVED_TRANSITION` remained unconditionally blocked, snapshot trust ran before ordinary unresolved blocking, and Issue10 metadata omitted tracked Phase3A files and retained ignored references.
+- GREEN: temporary Ed25519 vectors cover exact signed resolution binding `PASS`, missing/mismatched/extra binding `BLOCKED`, stale and bad-signature `BLOCKED`, unsupported/unprobed/no-snapshot resolution claims `BLOCKED`, and ordinary unresolved detection `BLOCKED` before challenge consumption.
+- GREEN: Phase3A passed 85 tests; Phase2C plus Phase3A passed 92 tests; targeted snapshot-schema, Issue10 metadata, workflow-cache, and agent-handoff checks passed 4 tests.
+
+### Scope And Boundaries
+
+- The closed snapshot requires at most 64 unique resolution event identifiers of at most 128 characters, and canonical signing excludes only `signature`.
+- Lifecycle evaluation retains every current valid later-gate resolution event ID. Exact comparison occurs only after full snapshot trust and all four trusted surfaces are `ENFORCED`.
+- Resolution reasons remain schema allowlisted. Missing/mismatched/extra binding uses precise reasons; duplicate/oversized binding remains snapshot-contract invalid.
+- Canonical current-host resolution claims remain blocking because the host is `null`/`UNPROBED` and `UNSUPPORTED`. No product command, registry promotion, Issue closure action, or durable evidence generation ran.

@@ -12,7 +12,7 @@
         "paths": [
           {
             "path": "ai/agent-handoff.json",
-            "sha256": "37a14453e7efb1f1d2316546d452d92f61462aaf5dc2db358c91695324601de4"
+            "sha256": "4c2a56647501ee46c5d7307c58a3185907ff20d710077f95a2507436c85da67f"
           }
         ],
         "environmentFingerprint": null
@@ -47,7 +47,7 @@
     },
     {
       "id": "phase-3a-native-snapshot-trust",
-      "summary": "Use ai/native-runtime-adapters.json, ai/native-runtime-adapters.md, and the native runtime snapshot schema for Phase 3A claimed/trusted status and ephemeral Ed25519 verification; runtime snapshots are not reusable cache evidence.",
+      "summary": "Use ai/native-runtime-adapters.json, ai/native-runtime-adapters.md, and the native runtime snapshot schema for Phase 3A claimed/trusted status, ephemeral Ed25519 verification, and signed resolutionEventIds binding; runtime snapshots are not reusable cache evidence.",
       "createdAt": "2026-07-13T11:47:29Z"
     }
   ],

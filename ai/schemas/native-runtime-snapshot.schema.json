@@ -5,7 +5,7 @@
   "title": "Native Runtime Snapshot",
   "type": "object",
   "additionalProperties": false,
-  "required": ["$schema", "$id", "schemaVersion", "producerId", "hostId", "hostVersion", "adapterVersion", "observedAt", "gateInvocationId", "surfaces", "publicKey", "signature"],
+  "required": ["$schema", "$id", "schemaVersion", "producerId", "hostId", "hostVersion", "adapterVersion", "observedAt", "gateInvocationId", "resolutionEventIds", "surfaces", "publicKey", "signature"],
   "properties": {
     "$schema": { "const": "ai/schemas/native-runtime-snapshot.schema.json" },
     "$id": { "const": "ai/native-runtime-snapshot.json" },
@@ -16,6 +16,13 @@
     "adapterVersion": { "$ref": "#/$defs/version" },
     "observedAt": { "$ref": "#/$defs/timestamp" },
     "gateInvocationId": { "$ref": "#/$defs/identifier" },
+    "resolutionEventIds": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/identifier", "maxLength": 128 }
+    },
     "surfaces": { "$ref": "#/$defs/fourSurfaces" },
     "publicKey": {
       "type": "object",

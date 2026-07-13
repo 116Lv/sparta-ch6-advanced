@@ -5934,6 +5934,7 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
         groups.setdefault(attempt["deduplicationKey"], []).append(attempt)
 
     resolved_transition = False
+    resolution_event_ids = []
     for attempts_in_group in groups.values():
         detections = [
             attempt for attempt in attempts_in_group
@@ -5943,7 +5944,7 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
             detection["gateInvocationId"] == gate_invocation_id
             for detection in detections
         ):
-            return "UNRESOLVED"
+            return "UNRESOLVED", []
         current_resolutions = [
             attempt for attempt in attempts_in_group
             if attempt["lifecycle"] == "RESOLVED" and attempt["gateInvocationId"] == gate_invocation_id
@@ -5958,19 +5959,36 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
                 )
                 for resolution in current_resolutions
             ):
-                return "INVALID_RESOLUTION"
+                return "INVALID_RESOLUTION", []
             if any(
                 parse_rfc3339_timestamp(detection["observedAt"])
                 >= parse_rfc3339_timestamp(resolution["observedAt"])
                 for detection in detections
                 for resolution in current_resolutions
             ):
-                return "UNRESOLVED"
+                return "UNRESOLVED", []
             resolved_transition = True
+            resolution_event_ids.extend(
+                resolution["eventId"] for resolution in current_resolutions
+            )
             continue
         if detections:
-            return "UNRESOLVED"
-    return "RESOLVED_TRANSITION" if resolved_transition else None
+            return "UNRESOLVED", []
+    return ("RESOLVED_TRANSITION" if resolved_transition else None), resolution_event_ids
+
+
+def native_resolution_binding_reason(signed_event_ids, current_resolution_event_ids):
+    signed = set(signed_event_ids)
+    current = set(current_resolution_event_ids)
+    missing = current - signed
+    extra = signed - current
+    if missing and extra:
+        return "NATIVE_BYPASS_RESOLUTION_BINDING_MISMATCH"
+    if missing:
+        return "NATIVE_BYPASS_RESOLUTION_BINDING_MISSING"
+    if extra:
+        return "NATIVE_BYPASS_RESOLUTION_BINDING_EXTRA"
+    return None
 
 
 def validate_native_canonical_value(value):
@@ -6168,6 +6186,40 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                 root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_REDACTION_UNCERTAIN", data), 2,
             )
 
+        contract_identifiers_valid = all(
+            isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
+            for value in (task_key, gate_invocation_id)
+        )
+
+        lifecycle_state, resolution_event_ids = native_bypass_lifecycle_state(
+            attempts, gate_invocation_id,
+        )
+        if lifecycle_state == "UNRESOLVED":
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_UNRESOLVED", data), 2,
+            )
+        if lifecycle_state == "INVALID_RESOLUTION":
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", data), 2,
+            )
+        if lifecycle_state == "RESOLVED_TRANSITION" and contract_identifiers_valid:
+            if supported_host is None:
+                return publish_native_adapter_gate_result(
+                    root,
+                    native_adapter_gate_result(
+                        "BLOCKED", "NATIVE_BYPASS_RESOLUTION_HOST_UNSUPPORTED", data,
+                    ),
+                    2,
+                )
+            if runtime_snapshot_ref is None:
+                return publish_native_adapter_gate_result(
+                    root,
+                    native_adapter_gate_result(
+                        "BLOCKED", "NATIVE_BYPASS_RESOLUTION_SNAPSHOT_REQUIRED", data,
+                    ),
+                    2,
+                )
+
         snapshot = None
         snapshot_claimed_surfaces = baseline_surfaces
         snapshot_trusted_surfaces = baseline_surfaces
@@ -6202,28 +6254,11 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                         root, native_adapter_gate_result("BLOCKED", snapshot_error, data), 2,
                     )
 
-        if not all(
-            isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
-            for value in (task_key, gate_invocation_id)
-        ):
+        if not contract_identifiers_valid:
             return publish_native_adapter_gate_result(
                 root,
                 native_adapter_gate_result("BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS", data),
                 2,
-            )
-
-        lifecycle_state = native_bypass_lifecycle_state(attempts, gate_invocation_id)
-        if lifecycle_state == "UNRESOLVED":
-            return publish_native_adapter_gate_result(
-                root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_UNRESOLVED", data), 2,
-            )
-        if lifecycle_state == "INVALID_RESOLUTION":
-            return publish_native_adapter_gate_result(
-                root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", data), 2,
-            )
-        if lifecycle_state == "RESOLVED_TRANSITION":
-            return publish_native_adapter_gate_result(
-                root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_RESOLUTION_UNTRUSTED", data), 2,
             )
 
         if supported_host is None:
@@ -6238,6 +6273,15 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
         if any(surface["status"] != "ENFORCED" for surface in snapshot_trusted_surfaces):
             return publish_native_adapter_gate_result(
                 root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_ENFORCEMENT_INCOMPLETE", snapshot_data), 2,
+            )
+        resolution_binding_reason = native_resolution_binding_reason(
+            snapshot["resolutionEventIds"], resolution_event_ids,
+        )
+        if resolution_binding_reason is not None:
+            return publish_native_adapter_gate_result(
+                root,
+                native_adapter_gate_result("BLOCKED", resolution_binding_reason, snapshot_data),
+                2,
             )
         return publish_native_adapter_gate_result(
             root, native_adapter_gate_result("PASS", None, snapshot_data), 0,

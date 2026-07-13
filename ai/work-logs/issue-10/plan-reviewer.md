@@ -8,12 +8,42 @@ owning_feature: none
 current_owner: plan-reviewer
 started_at: 2026-07-13T10:00:00+09:00
 ended_at: 2026-07-13T11:03:43+09:00
-last_updated: 2026-07-13T11:03:43+09:00
+last_updated: 2026-07-13T21:37:18+09:00
 branch: codex/phase-3a-native-runtime-adapters
 related_files:
-  - .superpowers/sdd/task-1-brief.md
-  - .superpowers/sdd/task-1-report.md
-changed_files: []
+  - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
+  - docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md
+  - ai/work-logs/issue-10/README.md
+changed_files:
+  - AGENTS.md
+  - ai/agent-handoff.json
+  - ai/agent-handoff.md
+  - ai/cache-policy.md
+  - ai/document-routing.md
+  - ai/native-runtime-adapters.json
+  - ai/native-runtime-adapters.md
+  - ai/schemas/native-adapter-result.schema.json
+  - ai/schemas/native-bypass-attempt.schema.json
+  - ai/schemas/native-runtime-adapters.schema.json
+  - ai/schemas/native-runtime-snapshot.schema.json
+  - ai/schemas/verification-policy.schema.json
+  - ai/skill-catalog.json
+  - ai/tool-call-policy.md
+  - ai/verification-gates.md
+  - ai/verification-policy.json
+  - ai/work-logs/index.md
+  - ai/work-logs/issue-10/README.md
+  - ai/work-logs/issue-10/implementation-agent.md
+  - ai/work-logs/issue-10/plan-reviewer.md
+  - ai/work-logs/issue-10/reviewer.md
+  - ai/workflow-cache.json
+  - ai/workflow-cache.md
+  - docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md
+  - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
+  - scripts/ai/native-adapter-gate.sh
+  - scripts/ai/tests/test_workflow_helper.py
+  - scripts/ai/verification-gate.sh
+  - scripts/ai/workflow_helper.py
 commands_run:
   - python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed -v
 tests_run:
@@ -67,7 +97,7 @@ Task 1 can proceed with schemas, work logs, test coverage, index update, and the
 - Next role: implementation-agent
 - Required reading:
   - [Issue summary](README.md)
-  - [Task 1 brief](../../../.superpowers/sdd/task-1-brief.md)
+  - [Phase 3A implementation plan](../../../docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md)
 - Context links:
   - [Issue summary](README.md)
 - Remaining work: implement the closed schemas and GREEN allowlist support.

@@ -74,7 +74,7 @@
     "Issue-backed tracking does not by itself close the Issue or authorize an unqualified overall DONE claim.",
     "Phase 2C static/helper gates define verification completeness and task/change applicability but do not execute product commands.",
     "Phase 3A requires the internal native-runtime-adapter leaf for every change type; the current host version is null/UNPROBED, so the host is UNSUPPORTED and maps to repository-qualified NOT_APPLICABLE with HOST_UNSUPPORTED.",
-    "Supported-host matching requires a PROBED version; only a fresh one-use challenge-bound Ed25519 snapshot with signed callback proof can promote trusted surfaces to ENFORCED, and unavailable crypto blocks.",
+    "Supported-host matching requires a PROBED version; only a fresh one-use challenge-bound Ed25519 snapshot with signed callback proof can promote trusted surfaces to ENFORCED, valid later-gate resolutions require exact signed resolutionEventIds binding, and unavailable crypto blocks.",
     "Runtime keys, signatures, challenge state, bypass attempts, and native evidence remain ephemeral in Phase 3A and are not reusable cache evidence.",
     "scripts/ai/command-runner.sh remains the only supported product-command path; native adapters do not execute product commands.",
     "Phase 1B-3 remains INTEGRITY_ONLY and does not establish verification completeness, registry VERIFIED promotion, closure, or unqualified overall DONE.",

@@ -49,8 +49,9 @@ claimed/trusted normalization, bypass lifecycle checks, and Phase 2C mapping.
 A supported-host snapshot is closed by
 `ai/schemas/native-runtime-snapshot.schema.json`. The signed payload binds the
 trusted `producerId`, `hostId`, `hostVersion`, adapter version, `observedAt`,
-the current `gateInvocationId`, all four surfaces, per-surface callback proof,
-the raw Ed25519 public key, and its SHA-256 fingerprint. The detached
+the current `gateInvocationId`, the bounded unique `resolutionEventIds` array,
+all four surfaces, per-surface callback proof, the raw Ed25519 public key, and
+its SHA-256 fingerprint. The detached
 `signature` member signs the snapshot with that member removed.
 
 Trust requires all of the following:
@@ -64,6 +65,8 @@ Trust requires all of the following:
 - `cryptography.hazmat` Ed25519 verification accepts the detached signature;
 - every `ENFORCED` surface has signed proof that its callback observed the
   operation before execution and returned `BLOCKED` for the same challenge;
+- the signed `resolutionEventIds` exactly equal the current valid later-gate
+  `RESOLVED` event IDs, including an empty array when no resolution is claimed;
 - the in-process one-use challenge has not already been consumed.
 
 The optional crypto dependency is fail-closed: unavailable Ed25519 support is
@@ -84,7 +87,8 @@ Supported-host policy surfaces are constrained to `NOT_CONFIGURED`; repository
 files cannot declare runtime `ENFORCED`. A signed snapshot can promote a
 surface to trusted `AUDIT_ONLY` or `ENFORCED`, but `PASS` requires all four
 trusted surfaces to be `ENFORCED` with valid signed callback proof and no
-unresolved bypass attempt.
+unresolved bypass attempt. Signed resolution IDs cannot be reused as proof for
+a missing, different, or additional current resolution event.
 
 ## Canonical Signature Bytes
 
@@ -120,10 +124,16 @@ external targets are forbidden. Redaction uncertainty is completion-blocking.
 Each observed event starts as `DETECTED`. Repeated delivery of the same
 `eventId` is idempotent; `deduplicationKey` groups events but never removes the
 original. A later `RESOLVED` event must use the same task, a later observation,
-a different gate invocation, and a closed resolution reason. A detection from
-the current gate remains unresolved even if a current-gate resolution follows
-it. Any unresolved attempt blocks completion, and Phase 3A does not persist or
-publish durable bypass evidence.
+a different gate invocation, and a closed allowlisted resolution reason. A
+detection from the current gate remains unresolved even if a current-gate
+resolution follows it. A valid later-gate transition can clear only on a
+supported, authoritatively probed host with a fresh trusted all-`ENFORCED`
+snapshot whose signed `resolutionEventIds` exactly match every current
+resolution event. Missing snapshots and missing, mismatched, duplicate,
+oversized, or extra bindings block; canonical unsupported-host resolution
+claims also block. Any ordinary unresolved attempt blocks before snapshot
+trust evaluation, and Phase 3A does not persist or publish durable bypass
+evidence.
 
 ## Phase 3B Ownership
 
