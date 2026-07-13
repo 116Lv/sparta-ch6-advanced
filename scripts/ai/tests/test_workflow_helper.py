@@ -6145,6 +6145,37 @@ class Phase2AContextCacheTests(unittest.TestCase):
         self.assertTrue(context["routes"])
         self.assertIsInstance(cache["entries"], list)
 
+    def test_verification_decision_cache_schema_requires_complete_identity(self):
+        cache = {
+            "$schema": "./schemas/workflow-cache.schema.json",
+            "$id": "ai/workflow-cache.json",
+            "schemaVersion": 1,
+            "updatedAt": "2026-07-14T00:00:00Z",
+            "entries": [{
+                "id": "review-decision",
+                "kind": "VERIFICATION_DECISION",
+                "status": "FRESH",
+                "key": {
+                    "taskKey": "issue-10",
+                    "gateInvocationId": "gate-review",
+                    "commitSha": "0123456789abcdef0123456789abcdef01234567",
+                    "changeType": "documentation-only",
+                    "entryPoint": "review",
+                    "policySha256": "a" * 64,
+                    "producerIds": ["review-gate"],
+                    "evidence": [{"path": "ai/agent-handoff.json", "sha256": "b" * 64}],
+                    "environmentFingerprint": None,
+                    "expiresAt": "2026-07-14T00:05:00Z",
+                },
+                "summary": "Bound review decision fixture.",
+                "evidenceRefs": ["ai/agent-handoff.json"],
+                "createdAt": "2026-07-14T00:00:00Z",
+            }],
+            "handoffNotes": [],
+            "invalidationEvents": [],
+        }
+        self.helper.validate(REPOSITORY_ROOT, cache, "ai/schemas/workflow-cache.schema.json")
+
     def test_phase_2a_policy_text_preserves_repository_boundary(self):
         combined = "\n".join(self.read_repository_text(path) for path in (
             "ai/context-map.md",
@@ -6237,6 +6268,111 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
         self.assertEqual(invalidation["read-agents"], "STALE")
         self.assertEqual(invalidation["unmapped"], "UNCERTAIN")
 
+    def verification_cache_entry(self):
+        evidence_path = self.root / "ai" / "cache-evidence.json"
+        evidence_path.write_text("{}\n", encoding="utf-8")
+        return {
+            "id": "review-decision",
+            "kind": "VERIFICATION_DECISION",
+            "status": "FRESH",
+            "key": {
+                "taskKey": "issue-10",
+                "gateInvocationId": "gate-review",
+                "commitSha": "0123456789abcdef0123456789abcdef01234567",
+                "changeType": "documentation-only",
+                "entryPoint": "review",
+                "policySha256": hashlib.sha256(
+                    (self.root / "ai" / "verification-policy.json").read_bytes()
+                ).hexdigest(),
+                "producerIds": ["review-gate"],
+                "evidence": [{
+                    "path": "ai/cache-evidence.json",
+                    "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+                }],
+                "environmentFingerprint": None,
+                "expiresAt": (
+                    dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=4)
+                ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            },
+            "summary": "Bound review decision fixture.",
+            "evidenceRefs": ["ai/cache-evidence.json"],
+            "createdAt": "2026-07-14T00:00:00Z",
+        }
+
+    def test_verification_cache_identity_covers_every_decision_input(self):
+        entry = self.verification_cache_entry()
+        baseline = self.helper.cache_entry_identity(entry)
+        mutations = {
+            "taskKey": "issue-11",
+            "gateInvocationId": "gate-other",
+            "commitSha": "fedcba9876543210fedcba9876543210fedcba98",
+            "changeType": "documentation-only-other",
+            "entryPoint": "done-claim",
+            "policySha256": "c" * 64,
+            "producerIds": ["done-claim-gate"],
+            "environmentFingerprint": "d" * 64,
+            "expiresAt": "2099-01-01T00:00:00Z",
+        }
+        for field, value in mutations.items():
+            candidate = json.loads(json.dumps(entry))
+            candidate["key"][field] = value
+            with self.subTest(field=field):
+                self.assertNotEqual(self.helper.cache_entry_identity(candidate), baseline)
+
+        evidence_candidate = json.loads(json.dumps(entry))
+        evidence_candidate["key"]["evidence"][0]["sha256"] = "e" * 64
+        self.assertNotEqual(self.helper.cache_entry_identity(evidence_candidate), baseline)
+
+    def test_verification_cache_report_fails_closed_for_stale_or_unmapped_identity(self):
+        entry = self.verification_cache_entry()
+        commit_sha = entry["key"]["commitSha"]
+        with mock.patch.object(self.helper, "repository_commit_sha", return_value=commit_sha):
+            report = self.helper.cache_invalidation_report(self.root, {"entries": [entry]})
+            self.assertEqual(report[0]["status"], "FRESH")
+
+            mutations = (
+                ("policy digest", "policySha256", "c" * 64, "STALE"),
+                ("commit", "commitSha", "fedcba9876543210fedcba9876543210fedcba98", "STALE"),
+                ("task key", "taskKey", "", "UNCERTAIN"),
+                ("gate ID", "gateInvocationId", "", "UNCERTAIN"),
+                ("producer", "producerIds", ["done-claim-gate"], "STALE"),
+                ("change type", "changeType", "unknown-change", "UNCERTAIN"),
+                ("entry point", "entryPoint", "api-smoke", "UNCERTAIN"),
+                ("environment", "environmentFingerprint", "d" * 64, "UNCERTAIN"),
+                ("expiry", "expiresAt", "2000-01-01T00:00:00Z", "STALE"),
+            )
+            for name, field, value, expected_status in mutations:
+                candidate = json.loads(json.dumps(entry))
+                candidate["key"][field] = value
+                with self.subTest(name=name):
+                    actual = self.helper.cache_invalidation_report(
+                        self.root, {"entries": [candidate]},
+                    )[0]
+                    self.assertEqual(actual["status"], expected_status)
+
+            candidate = json.loads(json.dumps(entry))
+            candidate["key"]["evidence"][0]["sha256"] = "e" * 64
+            actual = self.helper.cache_invalidation_report(
+                self.root, {"entries": [candidate]},
+            )[0]
+            self.assertEqual(actual["status"], "STALE")
+
+    def test_repo_intake_rejects_duplicate_skill_catalog_ids(self):
+        catalog_path = self.root / "ai" / "skill-catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        catalog["skills"][-1]["id"] = catalog["skills"][0]["id"]
+        catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+        result, status = self.helper.repo_intake(self.root)
+        self.assertEqual((result["result"], status), ("INVALID_STATE", 5))
+
+    def test_repo_intake_rejects_handoff_missing_a_distinct_required_skill(self):
+        handoff_path = self.root / "ai" / "agent-handoff.json"
+        handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        handoff["skillIds"][-1] = handoff["skillIds"][0]
+        handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+        result, status = self.helper.repo_intake(self.root)
+        self.assertEqual((result["result"], status), ("INVALID_STATE", 5))
+
 
 class Phase2BSkillsHandoffTests(unittest.TestCase):
     REQUIRED_SKILLS = (
@@ -6273,6 +6409,7 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
     def test_phase_2b_skill_catalog_and_documents_are_complete(self):
         self.assertIn("skill-catalog", self.helper.SCHEMA_NAMES)
         catalog = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/skill-catalog.json")
+        self.helper.validate_skill_catalog_semantics(catalog)
         self.assertEqual(catalog["schemaVersion"], 1)
         self.assertEqual({entry["id"] for entry in catalog["skills"]}, set(self.REQUIRED_SKILLS))
 
@@ -6304,6 +6441,8 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
     def test_agent_handoff_and_workflow_cache_reuse_validate(self):
         self.assertIn("agent-handoff", self.helper.SCHEMA_NAMES)
         handoff = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
+        catalog = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/skill-catalog.json")
+        self.helper.validate_handoff_skill_set(handoff, catalog)
         cache = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/workflow-cache.json")
         self.assertEqual(handoff["routeId"], "repo-wide-ai-workflow")
         self.assertEqual(handoff["owningFeature"], "none")
@@ -6353,6 +6492,21 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
         self.assertIn("ai/work-logs/issue-6/README.md", refs)
         self.assertFalse(any(ref.startswith(".ai-runs/") for ref in refs))
         self.assertTrue(any(note["id"] == "phase-2b-skills-handoff" for note in cache["handoffNotes"]))
+
+    def test_catalog_and_handoff_semantics_reject_duplicate_or_missing_skill_ids(self):
+        catalog = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/skill-catalog.json")
+        duplicate_catalog = json.loads(json.dumps(catalog))
+        duplicate_catalog["skills"][-1]["id"] = duplicate_catalog["skills"][0]["id"]
+        with self.assertRaises(self.helper.InvalidStateError) as catalog_error:
+            self.helper.validate_skill_catalog_semantics(duplicate_catalog)
+        self.assertEqual(catalog_error.exception.errors[0]["code"], "SKILL_CATALOG_ID_SET_INVALID")
+
+        handoff = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
+        duplicate_handoff = json.loads(json.dumps(handoff))
+        duplicate_handoff["skillIds"][-1] = duplicate_handoff["skillIds"][0]
+        with self.assertRaises(self.helper.InvalidStateError) as handoff_error:
+            self.helper.validate_handoff_skill_set(duplicate_handoff, catalog)
+        self.assertEqual(handoff_error.exception.errors[0]["code"], "HANDOFF_REQUIRED_SKILL_MISSING")
 
     def test_work_log_and_routing_docs_link_phase_2b_reuse_contracts(self):
         combined_routing = "\n".join(self.read_repository_text(path) for path in (

@@ -34,7 +34,7 @@
       "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*\\\\).+$"
     },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "cacheEntry": {
+    "pathCacheEntry": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "kind", "status", "key", "summary", "evidenceRefs", "createdAt"],
@@ -78,6 +78,104 @@
           "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
         }
       }
+    },
+    "verificationDecisionCacheEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "status", "key", "summary", "evidenceRefs", "createdAt"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+        "kind": { "const": "VERIFICATION_DECISION" },
+        "status": { "enum": ["FRESH", "STALE", "UNCERTAIN"] },
+        "key": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "taskKey",
+            "gateInvocationId",
+            "commitSha",
+            "changeType",
+            "entryPoint",
+            "policySha256",
+            "producerIds",
+            "evidence",
+            "environmentFingerprint",
+            "expiresAt"
+          ],
+          "properties": {
+            "taskKey": { "$ref": "#/$defs/identifier" },
+            "gateInvocationId": { "$ref": "#/$defs/identifier" },
+            "commitSha": { "type": "string", "pattern": "^[a-f0-9]{40}(?![\\s\\S])" },
+            "changeType": { "type": "string", "minLength": 1 },
+            "entryPoint": { "type": "string", "minLength": 1 },
+            "policySha256": { "$ref": "#/$defs/sha256" },
+            "producerIds": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/producerId" }
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/pathDigest" }
+            },
+            "environmentFingerprint": {
+              "oneOf": [
+                { "type": "null" },
+                { "$ref": "#/$defs/sha256" }
+              ]
+            },
+            "expiresAt": { "$ref": "#/$defs/timestamp" }
+          }
+        },
+        "summary": { "type": "string", "minLength": 1 },
+        "evidenceRefs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/repositoryPath" }
+        },
+        "createdAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "cacheEntry": {
+      "oneOf": [
+        { "$ref": "#/$defs/pathCacheEntry" },
+        { "$ref": "#/$defs/verificationDecisionCacheEntry" }
+      ]
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])"
+    },
+    "producerId": {
+      "enum": [
+        "review-gate",
+        "done-claim-gate",
+        "failure-triage",
+        "verify.static",
+        "native-runtime-adapter",
+        "verify.unit",
+        "verify.integration",
+        "verify.api-smoke",
+        "verify.e2e"
+      ]
+    },
+    "pathDigest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/repositoryPath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z(?![\\s\\S])"
     },
     "handoffNote": {
       "type": "object",

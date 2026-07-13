@@ -14,6 +14,8 @@ Phase 2B defines reusable AI workflow skill contracts. `ai/skill-catalog.json` i
 - `docs-sync`
 - `review-gate`
 
+The canonical catalog must contain this exact ID set with each ID appearing once. Schema `uniqueItems` is defense in depth; semantic validation rejects duplicate, missing, substituted, or unknown IDs even when the seven catalog objects remain structurally distinct.
+
 ## Shared Boundary
 
 These skills define inputs, outputs, handoff requirements, and reviewable evidence. They do not create repository `.ai-runs`, artifact manifests, finalized `run.json`, registry `VERIFIED` transitions, verification-completeness claims, issue-backed closure, reconciliation-complete claims, or unqualified overall DONE claims.

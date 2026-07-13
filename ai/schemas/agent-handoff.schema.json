@@ -23,6 +23,7 @@
       "type": "array",
       "minItems": 7,
       "maxItems": 7,
+      "uniqueItems": true,
       "items": { "enum": ["repo-intake", "command-runner", "verification-runner", "api-smoke-verifier", "failure-triage", "docs-sync", "review-gate"] }
     },
     "workLogRefs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repositoryPath" } },

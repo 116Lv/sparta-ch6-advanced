@@ -5715,10 +5715,151 @@ def command_discovery_update_proposals(registry):
     return proposals
 
 
+REQUIRED_SKILL_IDS = {
+    "repo-intake",
+    "command-runner",
+    "verification-runner",
+    "api-smoke-verifier",
+    "failure-triage",
+    "docs-sync",
+    "review-gate",
+}
+
+
+def cache_entry_identity(entry):
+    key = entry["key"]
+    if entry["kind"] == "VERIFICATION_DECISION":
+        return (
+            key["taskKey"],
+            key["gateInvocationId"],
+            key["commitSha"],
+            key["changeType"],
+            key["entryPoint"],
+            key["policySha256"],
+            tuple(sorted(key["producerIds"])),
+            tuple(sorted((item["path"], item["sha256"]) for item in key["evidence"])),
+            key["environmentFingerprint"],
+            key["expiresAt"],
+        )
+    return (
+        tuple(sorted((item["path"], item["sha256"]) for item in key["paths"])),
+        key["environmentFingerprint"],
+    )
+
+
+def validate_skill_catalog_semantics(catalog):
+    ids = [skill["id"] for skill in catalog["skills"]]
+    if len(ids) != len(set(ids)) or set(ids) != REQUIRED_SKILL_IDS:
+        raise InvalidStateError([validation_error(
+            "SKILL_CATALOG_ID_SET_INVALID",
+            message="skill catalog must contain every required skill ID exactly once",
+        )])
+
+
+def validate_handoff_skill_set(handoff, catalog):
+    expected = {skill["id"] for skill in catalog["skills"]}
+    actual = handoff["skillIds"]
+    if len(actual) != len(set(actual)) or set(actual) != expected:
+        raise InvalidStateError([validation_error(
+            "HANDOFF_REQUIRED_SKILL_MISSING",
+            message="handoff must contain every catalog skill ID exactly once",
+        )])
+
+
+def verification_cache_producers(policy, change_type, entry_point):
+    changes = {item["id"]: item for item in policy.get("changeTypes", [])}
+    checks = {item["id"]: item for item in policy.get("checks", [])}
+    change = changes.get(change_type)
+    if change is None or entry_point not in change.get("entryPoints", []):
+        return None
+    selected_ids = change.get("requiredChecks", []) + change.get("optionalChecks", [])
+    selected = []
+    for check_id in selected_ids:
+        check = checks.get(check_id)
+        if check is None:
+            return None
+        if check.get("entryPoint") == entry_point:
+            selected.append(check["producerId"])
+    return selected or None
+
+
+def verification_cache_invalidation(root, entry, policy, policy_sha256, commit_sha):
+    key = entry.get("key", {})
+    if not all(
+        isinstance(key.get(field), str)
+        and NATIVE_ADAPTER_IDENTIFIER.fullmatch(key[field])
+        for field in ("taskKey", "gateInvocationId")
+    ):
+        return "UNCERTAIN", "Cache task or gate correlation is missing or unmapped."
+
+    expected_producers = verification_cache_producers(
+        policy, key.get("changeType"), key.get("entryPoint"),
+    )
+    if expected_producers is None:
+        return "UNCERTAIN", "Cache change type or entry point is missing or unmapped."
+    if key.get("environmentFingerprint") is not None:
+        return "UNCERTAIN", "Cache environment fingerprint has no authoritative current mapping."
+    if key.get("commitSha") != commit_sha:
+        return "STALE", "Cache commit changed."
+    if key.get("policySha256") != policy_sha256:
+        return "STALE", "Cache verification policy digest changed."
+    if (
+        len(key.get("producerIds", [])) != len(set(key.get("producerIds", [])))
+        or set(key.get("producerIds", [])) != set(expected_producers)
+    ):
+        return "STALE", "Cache producer set changed."
+
+    repository_root = Path(root).resolve(strict=True)
+    for item in key.get("evidence", []):
+        try:
+            path = (repository_root / item["path"]).resolve(strict=True)
+            path.relative_to(repository_root)
+            if not path.is_file():
+                raise OSError("cache evidence is not a regular file")
+        except (KeyError, OSError, ValueError):
+            return "UNCERTAIN", "Cache evidence path is missing, unmapped, or unavailable."
+        if digest(path) != item.get("sha256"):
+            return "STALE", "Cache evidence digest changed."
+
+    try:
+        expires_at = parse_rfc3339_timestamp(key["expiresAt"])[0]
+    except (KeyError, TypeError, ValueError):
+        return "UNCERTAIN", "Cache expiry is missing or unmapped."
+    if dt.datetime.now(dt.timezone.utc) > expires_at:
+        return "STALE", "Cache decision expired."
+    return "FRESH", "All verification cache identity inputs match."
+
+
 def cache_invalidation_report(root, workflow_cache):
     repository_root = Path(root).resolve(strict=True)
     report = []
+    verification_entries = [
+        entry for entry in workflow_cache.get("entries", [])
+        if entry.get("kind") == "VERIFICATION_DECISION"
+    ]
+    verification_context = None
+    if verification_entries:
+        try:
+            policy_path = resolve_repository_file(root, "ai/verification-policy.json")
+            policy = validate_repository_instance(root, policy_path)
+            verification_context = (policy, digest(policy_path), repository_commit_sha(root))
+        except (InvalidStateError, VerificationNotConfiguredError, OSError, TypeError, ValueError):
+            verification_context = None
     for entry in workflow_cache.get("entries", []):
+        if entry.get("kind") == "VERIFICATION_DECISION":
+            if verification_context is None:
+                entry_status = "UNCERTAIN"
+                reason = "Verification cache policy or commit mapping is unavailable."
+            else:
+                entry_status, reason = verification_cache_invalidation(
+                    root, entry, *verification_context,
+                )
+            report.append({
+                "entryId": entry["id"],
+                "status": entry_status,
+                "reason": reason,
+            })
+            continue
         entry_status = "FRESH"
         reason = "All cache key paths match recorded digests."
         for item in entry.get("key", {}).get("paths", []):
@@ -5760,6 +5901,10 @@ def repo_intake(root):
         workflow_cache = validate_repository_instance(root, root / "ai" / "workflow-cache.json")
         project_state = validate_repository_instance(root, root / "ai" / "project-state.json")
         registry = validate_repository_instance(root, root / "ai" / "command-registry.json")
+        skill_catalog = validate_repository_instance(root, root / "ai" / "skill-catalog.json")
+        validate_skill_catalog_semantics(skill_catalog)
+        handoff = validate_repository_instance(root, root / "ai" / "agent-handoff.json")
+        validate_handoff_skill_set(handoff, skill_catalog)
         validate_context_map_paths(root, context)
         data = {
             "contextMapRef": "ai/context-map.json",

@@ -10,9 +10,13 @@ Product commands remain NOT RUN. Phase 2A does not evaluate verification complet
 
 File-read entries are keyed by normalized repository-relative path and SHA-256 content digest. Command evidence summaries are keyed by command ID, argv hash, working directory, declared input fingerprints, and allowlisted environment fingerprint from the supported command gateway.
 
+Verification-decision entries use a distinct closed key containing task key, gate invocation ID, checked-out commit SHA, change type, entry point, verification-policy SHA-256, the exact producer set selected by canonical change-type and entry-point policy, every consumed evidence path and SHA-256, the relevant environment fingerprint, and expiry. Task and gate identifiers are mandatory lookup identity, but repo intake does not claim an external authority for them. A non-null environment fingerprint is `UNCERTAIN` until an authoritative current environment mapping exists.
+
 ## Freshness Rules
 
-A cache entry is `FRESH` only when every declared path still exists as expected and every recorded digest matches. A changed mapped file makes the entry `STALE`. A missing or unmapped input makes the entry `UNCERTAIN` unless a specific route can prove it irrelevant.
+A cache entry is `FRESH` only when every declared path still exists as expected and every recorded digest matches. Verification-decision reuse additionally requires the current commit and policy digest, exact canonical producer set, every evidence digest, and unexpired decision to match. A mismatch or expiry makes the entry `STALE`. A missing or unmapped classification, task/gate identity, path, policy/commit source, or environment input makes the entry `UNCERTAIN` unless a specific route can prove it irrelevant.
+
+The canonical cache does not materialize a reusable verification PASS decision whose commit or short-lived expiry would become self-referential or immediately stale. Such decisions may be recorded only when every durable input is available.
 
 ## Conservative Invalidation
 
