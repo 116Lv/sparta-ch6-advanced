@@ -55,6 +55,57 @@
           "resolutionReason": { "enum": ["FALSE_POSITIVE", "REMEDIATED", "DUPLICATE_EVENT"] }
         }
       }
+    },
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "surface": { "const": "COMMAND" },
+            "operationType": { "const": "COMMAND" },
+            "commandIntent": { "const": "COMMAND" }
+          },
+          "required": ["surface", "operationType"]
+        },
+        {
+          "properties": {
+            "surface": { "const": "COMMAND" },
+            "operationType": { "const": "FILE_READ" },
+            "commandIntent": { "const": "FILE_READ" }
+          },
+          "required": ["surface", "operationType", "commandIntent"]
+        },
+        {
+          "properties": {
+            "surface": { "const": "COMMAND" },
+            "operationType": { "const": "SEARCH" },
+            "commandIntent": { "const": "SEARCH" }
+          },
+          "required": ["surface", "operationType", "commandIntent"]
+        },
+        {
+          "properties": {
+            "surface": { "const": "COMMAND" },
+            "operationType": { "const": "TOOL_CALL" },
+            "commandIntent": { "const": "TOOL_CALL" }
+          },
+          "required": ["surface", "operationType", "commandIntent"]
+        },
+        {
+          "properties": { "surface": { "const": "FILE_READ" }, "operationType": { "const": "FILE_READ" } },
+          "required": ["surface", "operationType"],
+          "not": { "required": ["commandIntent"] }
+        },
+        {
+          "properties": { "surface": { "const": "SEARCH" }, "operationType": { "const": "SEARCH" } },
+          "required": ["surface", "operationType"],
+          "not": { "required": ["commandIntent"] }
+        },
+        {
+          "properties": { "surface": { "const": "TOOL_CALL" }, "operationType": { "const": "TOOL_CALL" } },
+          "required": ["surface", "operationType"],
+          "not": { "required": ["commandIntent"] }
+        }
+      ]
     }
   ],
   "$defs": {

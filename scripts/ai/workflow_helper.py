@@ -36,9 +36,11 @@ except ImportError:
 
 try:
     from cryptography.exceptions import InvalidSignature as Ed25519InvalidSignature
+    from cryptography.exceptions import UnsupportedAlgorithm as Ed25519UnsupportedAlgorithm
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 except ImportError:
     Ed25519InvalidSignature = None
+    Ed25519UnsupportedAlgorithm = None
     Ed25519PublicKey = None
 
 
@@ -5918,6 +5920,8 @@ def load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invoca
             deduplication_groups.setdefault(attempt["deduplicationKey"], []).append(attempt)
 
         attempts = [json.loads(serialized) for serialized in delivered_events.values()]
+        if len(attempts) > 256:
+            raise ValueError("native bypass event set exceeds the signed snapshot bound")
         references = [
             f"{Path(bypass_attempts_ref).as_posix()}#{attempt['eventId']}"
             for attempts in deduplication_groups.values()
@@ -5926,6 +5930,17 @@ def load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invoca
         return attempts, references
     except (InvalidStateError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as error:
         raise NativeBypassContractError("native bypass attempt contract is invalid") from error
+
+
+def native_bypass_event_set_facts(attempts):
+    canonical = json.dumps(
+        sorted(attempts, key=lambda attempt: attempt["eventId"]),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return len(attempts), hashlib.sha256(canonical).hexdigest()
 
 
 def native_bypass_lifecycle_state(attempts, gate_invocation_id):
@@ -6065,7 +6080,7 @@ def native_snapshot_freshness_reason(observed_at):
     return None
 
 
-def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, gate_invocation_id):
+def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, task_key, gate_invocation_id):
     baseline_surfaces = supported_host["surfaces"]
     try:
         validate(root, snapshot, "ai/schemas/native-runtime-snapshot.schema.json")
@@ -6084,6 +6099,8 @@ def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, 
         return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_HOST_MISMATCH"
     if not native_adapter_version_allowed(supported_host["adapterVersionRange"], snapshot["adapterVersion"]):
         return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_VERSION_UNTRUSTED"
+    if snapshot["taskKey"] != task_key:
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_TASK_MISMATCH"
     if snapshot["gateInvocationId"] != gate_invocation_id:
         return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CHALLENGE_MISMATCH"
 
@@ -6110,6 +6127,8 @@ def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, 
             signature_bytes,
             native_snapshot_canonical_bytes(snapshot),
         )
+    except Ed25519UnsupportedAlgorithm:
+        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE"
     except (Ed25519InvalidSignature, ValueError, TypeError):
         return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_SIGNATURE_UNTRUSTED"
 
@@ -6127,6 +6146,7 @@ def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, 
     challenge_key = (
         str(Path(root).resolve()),
         supported_host["producerId"],
+        task_key,
         gate_invocation_id,
     )
     if challenge_key in NATIVE_CONSUMED_CHALLENGES:
@@ -6167,6 +6187,7 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
             repository_only_qualification,
         )
         attempts, attempt_refs = load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invocation_id)
+        bypass_event_count, bypass_event_set_sha256 = native_bypass_event_set_facts(attempts)
         data = native_adapter_data(
             current_host,
             baseline_surfaces,
@@ -6234,6 +6255,7 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                     snapshot,
                     supported_host,
                     current_host,
+                    task_key,
                     gate_invocation_id,
                 )
                 snapshot_data = native_adapter_data(
@@ -6273,6 +6295,15 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
         if any(surface["status"] != "ENFORCED" for surface in snapshot_trusted_surfaces):
             return publish_native_adapter_gate_result(
                 root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_ENFORCEMENT_INCOMPLETE", snapshot_data), 2,
+            )
+        if (
+            snapshot["bypassEventCount"] != bypass_event_count
+            or snapshot["bypassEventSetSha256"] != bypass_event_set_sha256
+        ):
+            return publish_native_adapter_gate_result(
+                root,
+                native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_EVENT_SET_MISMATCH", snapshot_data),
+                2,
             )
         resolution_binding_reason = native_resolution_binding_reason(
             snapshot["resolutionEventIds"], resolution_event_ids,

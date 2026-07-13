@@ -26,6 +26,7 @@ related_files:
   - scripts/ai/workflow_helper.py
   - scripts/ai/tests/test_workflow_helper.py
 changed_files:
+  - .gitattributes
   - AGENTS.md
   - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
   - docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md
@@ -33,6 +34,7 @@ changed_files:
   - ai/schemas/native-runtime-snapshot.schema.json
   - ai/schemas/native-bypass-attempt.schema.json
   - ai/schemas/native-adapter-result.schema.json
+  - ai/schemas/agent-handoff.schema.json
   - ai/native-runtime-adapters.json
   - ai/native-runtime-adapters.md
   - ai/agent-handoff.json
@@ -128,6 +130,10 @@ issue_creation_failure_reason:
 expected_issue_scope: Phase 3A native runtime adapter contracts, current-host evaluation, and Phase 2C integration without product-command execution.
 migration_history: []
 ---
+
+# Final Approval Review Remediation
+
+The approval review was initially NOT READY with one Critical and three Important findings: unsigned lifecycle content, missing task binding, unconstrained capability semantics, and an unhandled Ed25519 backend-unavailable exception. Another independent review identified a checkout-specific raw handoff cache digest. The implementation added failing tests first, then signed task plus complete event-set facts, task-aware replay identity, semantic schema branches, structured crypto-unavailable handling, explicit Phase 3A Issue metadata, and deterministic handoff bytes. A fresh independent rereview is required before Draft PR creation.
 
 # Summary
 

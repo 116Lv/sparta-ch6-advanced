@@ -27,9 +27,11 @@ import uuid as uuid_module
 from jsonschema import Draft202012Validator, FormatChecker
 
 try:
+    from cryptography.exceptions import UnsupportedAlgorithm
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 except ImportError:
+    UnsupportedAlgorithm = None
     Ed25519PrivateKey = None
     Encoding = None
     PublicFormat = None
@@ -6093,6 +6095,11 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
             handoff["githubIssue"]["previousReconciliationError"],
             "authorization failure: GitHub API 403 Resource not accessible by integration",
         )
+        self.assertEqual(handoff["phase3AIssue"], {
+            "issueNumber": 10,
+            "issueUrl": "https://github.com/116Lv/sparta-ch6-advanced/issues/10",
+            "trackingStatus": "issue_backed",
+        })
         self.assertEqual(set(handoff["skillIds"]), set(self.REQUIRED_SKILLS))
         self.assertIn("ai/work-logs/issue-5/README.md", handoff["reusableContextRefs"])
         self.assertIn("ai/work-logs/issue-6/README.md", handoff["workLogRefs"])
@@ -6698,6 +6705,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "adapterVersion": "1.0.0",
             "surface": "COMMAND",
             "operationType": "FILE_READ",
+            "commandIntent": "FILE_READ",
             "statusAtObservation": "ENFORCED",
             "decision": "BLOCKED",
             "reasonCode": "DIRECT_TOOL_BYPASS",
@@ -6754,7 +6762,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     def signed_snapshot(self, gate_invocation_id="gate-signed", observed_at=None,
                         producer_id="example.native.adapter", host_id="codex-desktop",
                         host_version="1.0.0", callback_result="BLOCKED",
-                        resolution_event_ids=None):
+                        resolution_event_ids=None, task_key="issue-10",
+                        bypass_attempts=None):
         if Ed25519PrivateKey is None:
             self.skipTest("cryptography is unavailable for the valid Ed25519 vector")
         private_key = Ed25519PrivateKey.generate()
@@ -6762,6 +6771,13 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         fingerprint = hashlib.sha256(public_key_bytes).hexdigest()
         if observed_at is None:
             observed_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        bypass_attempts = [] if bypass_attempts is None else bypass_attempts
+        event_set_bytes = json.dumps(
+            sorted(bypass_attempts, key=lambda attempt: attempt["eventId"]),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
         snapshot = {
             "$schema": "ai/schemas/native-runtime-snapshot.schema.json",
             "$id": "ai/native-runtime-snapshot.json",
@@ -6771,7 +6787,10 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "hostVersion": host_version,
             "adapterVersion": "1.0.0",
             "observedAt": observed_at,
+            "taskKey": task_key,
             "gateInvocationId": gate_invocation_id,
+            "bypassEventCount": len(bypass_attempts),
+            "bypassEventSetSha256": hashlib.sha256(event_set_bytes).hexdigest(),
             "resolutionEventIds": [] if resolution_event_ids is None else resolution_event_ids,
             "surfaces": [
                 {
@@ -6872,6 +6891,96 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assert_invalid("native-runtime-snapshot", invalid)
 
+    def test_signed_snapshot_binds_task_and_complete_bypass_event_set(self):
+        attempts = self.resolved_transition_attempts("gate-event-set")
+        snapshot, fingerprint, private_key = self.signed_snapshot(
+            gate_invocation_id="gate-event-set",
+            resolution_event_ids=["event-resolution-2"],
+            bypass_attempts=attempts,
+        )
+        self.assert_valid("native-runtime-snapshot", snapshot)
+        canonical = self.helper.native_snapshot_canonical_bytes(snapshot)
+        self.assertIn(b'"taskKey":"issue-10"', canonical)
+        self.assertIn(b'"bypassEventCount":2', canonical)
+        self.assertIn(b'"bypassEventSetSha256":', canonical)
+
+        altered = json.loads(json.dumps(attempts))
+        for attempt in altered:
+            attempt["deduplicationKey"] = "grafted-group"
+        altered_result, altered_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-event-set",
+            runtime_snapshot_ref=self.write_fixture("snapshot-event-set.json", snapshot),
+            bypass_attempts_ref=self.write_fixture("attempts-event-set.json", {"attempts": altered}),
+            policy_ref=self.write_fixture(
+                "policy-event-set.json", self.supported_policy_with_fingerprint(fingerprint),
+            ),
+        )
+        self.assertEqual((altered_result["result"], altered_result["reason"], altered_status), (
+            "BLOCKED", "NATIVE_BYPASS_EVENT_SET_MISMATCH", 2,
+        ))
+
+        wrong_task = dict(snapshot)
+        wrong_task["taskKey"] = "other-task"
+        self.resign_snapshot(wrong_task, private_key)
+        task_result, task_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-event-set",
+            runtime_snapshot_ref=self.write_fixture("snapshot-wrong-task.json", wrong_task),
+            bypass_attempts_ref=self.write_fixture("attempts-wrong-task.json", {"attempts": attempts}),
+            policy_ref=self.write_fixture(
+                "policy-wrong-task.json", self.supported_policy_with_fingerprint(fingerprint),
+            ),
+        )
+        self.assertEqual((task_result["result"], task_result["reason"], task_status), (
+            "BLOCKED", "NATIVE_ADAPTER_TASK_MISMATCH", 2,
+        ))
+
+    def test_bypass_surface_operation_semantics_are_closed(self):
+        valid_cases = (
+            self.valid_attempt(surface="COMMAND", operationType="COMMAND", commandIntent="COMMAND"),
+            self.valid_attempt(surface="COMMAND", operationType="FILE_READ", commandIntent="FILE_READ"),
+            self.valid_attempt(surface="FILE_READ", operationType="FILE_READ", commandIntent=None),
+            self.valid_attempt(surface="SEARCH", operationType="SEARCH", commandIntent=None),
+            self.valid_attempt(surface="TOOL_CALL", operationType="TOOL_CALL", commandIntent=None),
+        )
+        for attempt in valid_cases:
+            if attempt.get("commandIntent") is None:
+                attempt.pop("commandIntent", None)
+            self.assert_valid("native-bypass-attempt", attempt)
+
+        invalid_cases = (
+            self.valid_attempt(surface="FILE_READ", operationType="COMMAND", commandIntent="FILE_READ"),
+            self.valid_attempt(surface="COMMAND", operationType="SEARCH", commandIntent="FILE_READ"),
+            self.valid_attempt(surface="SEARCH", operationType="SEARCH", commandIntent="SEARCH"),
+        )
+        for attempt in invalid_cases:
+            self.assert_invalid("native-bypass-attempt", attempt)
+
+    def test_ed25519_backend_unavailable_is_structured_and_fail_closed(self):
+        if UnsupportedAlgorithm is None:
+            self.skipTest("cryptography exception type is unavailable")
+        snapshot, fingerprint, _ = self.signed_snapshot()
+
+        class UnsupportedEd25519:
+            @staticmethod
+            def from_public_bytes(_value):
+                raise UnsupportedAlgorithm("Ed25519 is unavailable")
+
+        with mock.patch.object(self.helper, "Ed25519PublicKey", UnsupportedEd25519):
+            result, status = self.helper.native_adapter_gate(
+                self.root,
+                "issue-10",
+                "gate-signed",
+                runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
+                policy_ref=self.write_supported_policy(fingerprint),
+            )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE", 2,
+        ))
+
     def test_native_snapshot_canonical_bytes_match_restricted_rfc8785_vector(self):
         canonicalizer = getattr(self.helper, "native_snapshot_canonical_bytes", None)
         self.assertIsNotNone(canonicalizer)
@@ -6916,16 +7025,18 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assertFalse((self.root / ".ai-runs").exists())
 
     def test_valid_signed_bound_resolution_clears_lifecycle_and_passes(self):
+        attempts = self.resolved_transition_attempts()
         snapshot, fingerprint, _ = self.signed_snapshot(
             gate_invocation_id="gate-resolution",
             resolution_event_ids=["event-resolution-2"],
+            bypass_attempts=attempts,
         )
         result, status = self.helper.native_adapter_gate(
             self.root,
             "issue-10",
             "gate-resolution",
             runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
-            bypass_attempts_ref=self.write_attempts(self.resolved_transition_attempts()),
+            bypass_attempts_ref=self.write_attempts(attempts),
             policy_ref=self.write_supported_policy(fingerprint),
         )
 
@@ -6948,9 +7059,11 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         for name, resolution_event_ids, expected_reason in cases:
             with self.subTest(name=name):
                 gate_invocation_id = f"gate-binding-{name}"
+                attempts = self.resolved_transition_attempts(gate_invocation_id)
                 snapshot, fingerprint, _ = self.signed_snapshot(
                     gate_invocation_id=gate_invocation_id,
                     resolution_event_ids=resolution_event_ids,
+                    bypass_attempts=attempts,
                 )
                 result, status = self.helper.native_adapter_gate(
                     self.root,
@@ -6959,7 +7072,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                     runtime_snapshot_ref=self.write_fixture(f"snapshot-{name}.json", snapshot),
                     bypass_attempts_ref=self.write_fixture(
                         f"attempts-{name}.json",
-                        {"attempts": self.resolved_transition_attempts(gate_invocation_id)},
+                        {"attempts": attempts},
                     ),
                     policy_ref=self.write_fixture(
                         f"policy-binding-{name}.json",
@@ -7221,6 +7334,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
     def test_issue_10_logs_cover_actual_phase_3a_files_and_use_tracked_references(self):
         expected_changed_files = {
+            ".gitattributes",
             "AGENTS.md",
             "ai/agent-handoff.json",
             "ai/agent-handoff.md",
@@ -7229,6 +7343,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "ai/native-runtime-adapters.json",
             "ai/native-runtime-adapters.md",
             "ai/schemas/native-adapter-result.schema.json",
+            "ai/schemas/agent-handoff.schema.json",
             "ai/schemas/native-bypass-attempt.schema.json",
             "ai/schemas/native-runtime-adapters.schema.json",
             "ai/schemas/native-runtime-snapshot.schema.json",

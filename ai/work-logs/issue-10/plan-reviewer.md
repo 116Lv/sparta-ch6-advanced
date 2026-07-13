@@ -15,6 +15,7 @@ related_files:
   - docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md
   - ai/work-logs/issue-10/README.md
 changed_files:
+  - .gitattributes
   - AGENTS.md
   - ai/agent-handoff.json
   - ai/agent-handoff.md
@@ -23,6 +24,7 @@ changed_files:
   - ai/native-runtime-adapters.json
   - ai/native-runtime-adapters.md
   - ai/schemas/native-adapter-result.schema.json
+  - ai/schemas/agent-handoff.schema.json
   - ai/schemas/native-bypass-attempt.schema.json
   - ai/schemas/native-runtime-adapters.schema.json
   - ai/schemas/native-runtime-snapshot.schema.json

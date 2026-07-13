@@ -23,6 +23,7 @@ related_files:
   - scripts/ai/workflow_helper.py
   - scripts/ai/tests/test_workflow_helper.py
 changed_files:
+  - .gitattributes
   - AGENTS.md
   - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
   - docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md
@@ -30,6 +31,7 @@ changed_files:
   - ai/schemas/native-runtime-snapshot.schema.json
   - ai/schemas/native-bypass-attempt.schema.json
   - ai/schemas/native-adapter-result.schema.json
+  - ai/schemas/agent-handoff.schema.json
   - ai/native-runtime-adapters.json
   - ai/native-runtime-adapters.md
   - ai/agent-handoff.json
@@ -127,6 +129,10 @@ migration_history: []
 ---
 
 # Summary
+
+## Final Approval Review Remediation
+
+Implemented the final review fixes with test-first evidence. The snapshot signature now binds task identity and the complete canonical deduplicated bypass event set by count and SHA-256, replay identity includes the task, supported-host PASS compares those signed facts after trust, and resolution IDs remain an additional exact binding. Surface/operation/command-intent combinations are closed, backend Ed25519 unavailability returns structured `BLOCKED`, and handoff cache bytes are checkout-stable through an exact-file `-text` attribute. Focused GREEN passed four tests; the Phase 3A suite passed 88 tests.
 
 Completed the historical Task 1 closed schema contracts and three-name helper allowlist update; the final review wave adds the separately reviewed closed runtime-snapshot schema.
 

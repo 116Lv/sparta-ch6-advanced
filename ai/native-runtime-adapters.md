@@ -49,7 +49,8 @@ claimed/trusted normalization, bypass lifecycle checks, and Phase 2C mapping.
 A supported-host snapshot is closed by
 `ai/schemas/native-runtime-snapshot.schema.json`. The signed payload binds the
 trusted `producerId`, `hostId`, `hostVersion`, adapter version, `observedAt`,
-the current `gateInvocationId`, the bounded unique `resolutionEventIds` array,
+the current `taskKey` and `gateInvocationId`, the bounded bypass event count
+and complete event-set SHA-256, the bounded unique `resolutionEventIds` array,
 all four surfaces, per-surface callback proof, the raw Ed25519 public key, and
 its SHA-256 fingerprint. The detached
 `signature` member signs the snapshot with that member removed.
@@ -65,6 +66,8 @@ Trust requires all of the following:
 - `cryptography.hazmat` Ed25519 verification accepts the detached signature;
 - every `ENFORCED` surface has signed proof that its callback observed the
   operation before execution and returned `BLOCKED` for the same challenge;
+- the signed event count and canonical event-set digest exactly match every
+  supplied deduplicated bypass record;
 - the signed `resolutionEventIds` exactly equal the current valid later-gate
   `RESOLVED` event IDs, including an empty array when no resolution is claimed;
 - the in-process one-use challenge has not already been consumed.
@@ -121,6 +124,11 @@ applicable, and SHA-256 digests; raw authorization data, cookies, credentials,
 environment values, request bodies, argv, query text, payloads, and absolute
 external targets are forbidden. Redaction uncertainty is completion-blocking.
 
+`surface`, `operationType`, and `commandIntent` use a closed semantic matrix.
+Native `FILE_READ`, `SEARCH`, and `TOOL_CALL` records match their operation and
+omit command intent. Shell-mediated logical operations retain `COMMAND` as the
+surface and carry a command intent matching the logical operation.
+
 Each observed event starts as `DETECTED`. Repeated delivery of the same
 `eventId` is idempotent; `deduplicationKey` groups events but never removes the
 original. A later `RESOLVED` event must use the same task, a later observation,
@@ -128,7 +136,8 @@ a different gate invocation, and a closed allowlisted resolution reason. A
 detection from the current gate remains unresolved even if a current-gate
 resolution follows it. A valid later-gate transition can clear only on a
 supported, authoritatively probed host with a fresh trusted all-`ENFORCED`
-snapshot whose signed `resolutionEventIds` exactly match every current
+snapshot whose signed task, complete event count and canonical event-set
+digest match the gate inputs and whose signed `resolutionEventIds` match every current
 resolution event. Missing snapshots and missing, mismatched, duplicate,
 oversized, or extra bindings block; canonical unsupported-host resolution
 claims also block. Any ordinary unresolved attempt blocks before snapshot

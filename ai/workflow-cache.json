@@ -2,7 +2,7 @@
   "$schema": "./schemas/workflow-cache.schema.json",
   "$id": "ai/workflow-cache.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-13T11:47:29Z",
+  "updatedAt": "2026-07-13T12:45:00Z",
   "entries": [
     {
       "id": "phase-2b-handoff-context",
@@ -12,7 +12,7 @@
         "paths": [
           {
             "path": "ai/agent-handoff.json",
-            "sha256": "4c2a56647501ee46c5d7307c58a3185907ff20d710077f95a2507436c85da67f"
+            "sha256": "c22d8afd14a774654641a4a4ecb18f74713710c8022d01199fecf0ff3bba47d1"
           }
         ],
         "environmentFingerprint": null
@@ -47,7 +47,7 @@
     },
     {
       "id": "phase-3a-native-snapshot-trust",
-      "summary": "Use ai/native-runtime-adapters.json, ai/native-runtime-adapters.md, and the native runtime snapshot schema for Phase 3A claimed/trusted status, ephemeral Ed25519 verification, and signed resolutionEventIds binding; runtime snapshots are not reusable cache evidence.",
+      "summary": "Use ai/native-runtime-adapters.json, ai/native-runtime-adapters.md, and the native runtime snapshot schema for Phase 3A claimed/trusted status, ephemeral Ed25519 verification, signed task/event-set binding, and signed resolutionEventIds binding; runtime snapshots are not reusable cache evidence.",
       "createdAt": "2026-07-13T11:47:29Z"
     }
   ],

@@ -13,6 +13,7 @@ related_files:
   - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
   - docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md
 changed_files:
+  - .gitattributes
   - AGENTS.md
   - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-design.md
   - docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md
@@ -20,6 +21,7 @@ changed_files:
   - ai/schemas/native-runtime-snapshot.schema.json
   - ai/schemas/native-bypass-attempt.schema.json
   - ai/schemas/native-adapter-result.schema.json
+  - ai/schemas/agent-handoff.schema.json
   - ai/native-runtime-adapters.json
   - ai/native-runtime-adapters.md
   - ai/agent-handoff.json
@@ -119,6 +121,14 @@ migration_history: []
 ---
 
 # Issue Summary
+
+## Final Approval Review Remediation (2026-07-13)
+
+The final independent approval review found one Critical and three Important trust-contract gaps: the signed snapshot authenticated only resolution IDs rather than the complete bypass event set, omitted `taskKey` from signed challenge identity, allowed inconsistent surface/operation combinations, and did not classify backend-level Ed25519 unavailability. A separate reviewer also found that the raw-byte handoff cache digest depended on checkout EOL conversion.
+
+The remediation adds signed `taskKey`, bounded `bypassEventCount`, and `bypassEventSetSha256`, recomputes the canonical deduplicated event-set digest before PASS, includes task identity in replay state, closes surface/operation/command-intent combinations, and maps `UnsupportedAlgorithm` to completion-blocking `NATIVE_ADAPTER_CRYPTO_UNAVAILABLE`. The Phase 2C Issue #7 reconciliation record remains intact while `phase3AIssue` identifies Issue #10. `.gitattributes` fixes `ai/agent-handoff.json` as `-text`, and the `FRESH` raw-byte SHA-256 was recomputed from deterministic LF bytes.
+
+Focused RED produced four expected failures before implementation. Focused GREEN passed four tests, and the complete Phase 3A suite passed 88 tests. The independently observed full helper result remains NOT PASS: 336 tests, one unchanged CRLF fixture failure, and 17 skips. No product command or durable evidence command was run.
 
 ## Recovery Summary
 

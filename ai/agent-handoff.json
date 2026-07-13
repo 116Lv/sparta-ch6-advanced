@@ -2,7 +2,7 @@
   "$schema": "./schemas/agent-handoff.schema.json",
   "$id": "ai/agent-handoff.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-13T00:00:00Z",
+  "updatedAt": "2026-07-13T12:45:00Z",
   "routeId": "repo-wide-ai-workflow",
   "owningFeature": "none",
   "startupDocuments": [
@@ -55,6 +55,11 @@
     "reconciliationCommentUrl": "https://github.com/116Lv/sparta-ch6-advanced/issues/7#issuecomment-4953424231",
     "previousReconciliationError": "authorization failure: GitHub API 403 Resource not accessible by integration"
   },
+  "phase3AIssue": {
+    "issueNumber": 10,
+    "issueUrl": "https://github.com/116Lv/sparta-ch6-advanced/issues/10",
+    "trackingStatus": "issue_backed"
+  },
   "notRunProjectCommands": [
     "Gradle",
     "build",
@@ -70,14 +75,14 @@
   "laterPhaseBoundaries": [
     "Verification completeness remains Phase 2C or later.",
     "Registry VERIFIED promotion remains unsupported without durable command-runner evidence.",
-    "GitHub Issue #7 now backs the current Phase 2C handoff; the migration comment is recorded and the prior 403 remains historical evidence.",
-    "Issue-backed tracking does not by itself close the Issue or authorize an unqualified overall DONE claim.",
-    "Phase 2C static/helper gates define verification completeness and task/change applicability but do not execute product commands.",
+    "GitHub Issue #7 preserves the approved Phase 2C reconciliation record; GitHub Issue #10 backs the current Phase 3A work.",
+    "Issue-backed tracking does not by itself close either Issue or authorize an unqualified overall DONE claim.",
+    "Phase 2C static/helper gates define verification completeness and task/change applicability mapping but do not execute product commands.",
     "Phase 3A requires the internal native-runtime-adapter leaf for every change type; the current host version is null/UNPROBED, so the host is UNSUPPORTED and maps to repository-qualified NOT_APPLICABLE with HOST_UNSUPPORTED.",
-    "Supported-host matching requires a PROBED version; only a fresh one-use challenge-bound Ed25519 snapshot with signed callback proof can promote trusted surfaces to ENFORCED, valid later-gate resolutions require exact signed resolutionEventIds binding, and unavailable crypto blocks.",
+    "Supported-host matching requires a PROBED version; only a fresh task-and-gate-bound one-use Ed25519 snapshot with signed callback proof and an exact digest of the complete bypass event set can promote trusted surfaces to ENFORCED, and valid later-gate resolutions also require exact signed resolutionEventIds binding.",
     "Runtime keys, signatures, challenge state, bypass attempts, and native evidence remain ephemeral in Phase 3A and are not reusable cache evidence.",
     "scripts/ai/command-runner.sh remains the only supported product-command path; native adapters do not execute product commands.",
     "Phase 1B-3 remains INTEGRITY_ONLY and does not establish verification completeness, registry VERIFIED promotion, closure, or unqualified overall DONE.",
-    "Phase 3B owns CI adapter installation, remote-runner guarantees, durable CI evidence, and cross-host parity."
+    "Phase 3B owns CI adapter installation, remote-runner guarantees, durable CI evidence, cross-process challenge and bypass-event durability, and cross-host parity."
   ]
 }
