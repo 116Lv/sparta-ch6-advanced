@@ -6831,6 +6831,23 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 )
                 self.assertEqual((result["result"], status), ("FAIL", 1))
 
+    def test_bypass_summary_rejects_alphabetic_bearer_credentials(self):
+        self.assertTrue(self.helper.native_summary_has_secret("Bearer opaqueToken"))
+
+    def test_bypass_summary_allows_bearer_token_documentation(self):
+        self.assertFalse(self.helper.native_summary_has_secret("bearer token documentation"))
+
+    def test_bypass_summary_rejects_basic_credentials_before_sentence_punctuation(self):
+        for punctuation in (".", ")", "]", ":", "!", "?", ",", ";"):
+            for credential in ("dXNlcjpwYXNz", "YWxpY2U6cA=="):
+                with self.subTest(punctuation=punctuation, credential=credential):
+                    self.assertTrue(self.helper.native_summary_has_secret(f"Basic {credential}{punctuation}"))
+
+        for credential in ("dXNlcjpwYXNz", "YWxpY2U6cA=="):
+            with self.subTest(credential=credential):
+                self.assertTrue(self.helper.native_summary_has_secret(f"Basic {credential}"))
+                self.assertTrue(self.helper.native_summary_has_secret(f"Basic {credential} followed"))
+
     def test_bypass_summary_allows_ordinary_non_secret_descriptions(self):
         attempt = self.valid_attempt(
             lifecycle="RESOLVED",
