@@ -6933,6 +6933,13 @@ def native_detection_digest(detection):
 
 
 def native_bypass_lifecycle_state(attempts, gate_invocation_id):
+    if any(
+        attempt["lifecycle"] == "DETECTED"
+        and attempt["gateInvocationId"] == gate_invocation_id
+        for attempt in attempts
+    ):
+        return "UNRESOLVED", []
+
     groups = {}
     for attempt in attempts:
         groups.setdefault(attempt["deduplicationKey"], []).append(attempt)

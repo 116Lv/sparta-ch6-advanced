@@ -10616,6 +10616,64 @@ print(json.dumps({"result": result, "status": status}))
         )
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
 
+    def test_current_gate_detection_precedes_cross_group_invalid_resolution_in_all_orders(self):
+        prior_detection = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:58:00Z",
+            deduplicationKey="dedupe-invalid-resolution",
+        )
+        invalid_resolution = self.valid_attempt(
+            attemptId="attempt-invalid-resolution",
+            eventId="event-invalid-resolution",
+            gateInvocationId="gate-cross-group",
+            observedAt="2026-07-13T01:00:00Z",
+            deduplicationKey="dedupe-invalid-resolution",
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            detectionEventId="event-unrelated",
+            detectionGateInvocationId=prior_detection["gateInvocationId"],
+            detectionEventSha256=self.helper.native_detection_digest(prior_detection),
+        )
+        current_detection = self.valid_attempt(
+            attemptId="attempt-current-detection",
+            eventId="event-current-detection",
+            gateInvocationId="gate-cross-group",
+            observedAt="2026-07-13T01:02:00Z",
+            deduplicationKey="dedupe-current-detection",
+        )
+
+        orders = {
+            "invalid-first": [prior_detection, invalid_resolution, current_detection],
+            "current-first": [current_detection, prior_detection, invalid_resolution],
+        }
+        for name, attempts in orders.items():
+            with self.subTest(name=name):
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    "gate-cross-group",
+                    bypass_attempts_ref=self.write_fixture(
+                        f"cross-group-{name}.json", {"attempts": attempts},
+                    ),
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "NATIVE_BYPASS_UNRESOLVED", 2,
+                ))
+
+        invalid_only, invalid_only_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-cross-group",
+            bypass_attempts_ref=self.write_fixture(
+                "cross-group-invalid-only.json",
+                {"attempts": [prior_detection, invalid_resolution]},
+            ),
+        )
+        self.assertEqual((
+            invalid_only["result"], invalid_only["reason"], invalid_only_status,
+        ), ("BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", 2))
+
     def test_current_detection_remains_unresolved_when_current_resolution_follows_it(self):
         prior_detected = self.valid_attempt(
             gateInvocationId="gate-prior",
