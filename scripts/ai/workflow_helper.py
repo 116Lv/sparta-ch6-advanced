@@ -5731,6 +5731,17 @@ def native_bypass_attempt_has_secret(value):
     return False
 
 
+def native_summary_string_values(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from native_summary_string_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from native_summary_string_values(item)
+
+
 def native_adapter_gate_result(result, reason, data):
     phase2c_leaf_result = {
         "PASS": "PASS",
@@ -5854,7 +5865,7 @@ def load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invoca
                 raise ValueError("native bypass attempt resolution does not match this gate")
             if native_bypass_attempt_has_secret(attempt):
                 raise ValueError("native bypass attempt contains secret-bearing content")
-            for value in attempt["summary"].values():
+            for value in native_summary_string_values(attempt["summary"]):
                 if (len(value) > NATIVE_SUMMARY_MAX_BYTES
                         or len(value.encode("utf-8")) > NATIVE_SUMMARY_MAX_BYTES
                         or native_summary_has_secret(value)):
@@ -5891,6 +5902,11 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
             attempt for attempt in attempts_in_group
             if attempt["lifecycle"] == "DETECTED"
         ]
+        if any(
+            detection["gateInvocationId"] == gate_invocation_id
+            for detection in detections
+        ):
+            return "UNRESOLVED"
         current_resolutions = [
             attempt for attempt in attempts_in_group
             if attempt["lifecycle"] == "RESOLVED" and attempt["gateInvocationId"] == gate_invocation_id

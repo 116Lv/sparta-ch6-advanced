@@ -81,9 +81,15 @@ Each normalized attempt records:
 - `deduplicationKey`, lifecycle state `DETECTED` or `RESOLVED`, nullable `resolvedAt`, and a closed resolution reason.
 - Redacted target, argv, query, or tool payload summary.
 
-The contract forbids raw environment values, authorization data, cookies, credentials, request bodies, arbitrary tool payloads, and unbounded output. Paths are repository-relative when inside the repository; absolute paths outside it are reduced to a stable redacted category. Arguments preserve only allowlisted literals and structural placeholders. Search queries and tool payloads store a bounded digest plus a redacted classification, never raw content. Redaction uncertainty blocks publication and maps the adapter leaf result to `BLOCKED`.
+The contract forbids raw environment values, authorization data, cookies, credentials, request bodies, arbitrary tool payloads, and unbounded output. The `summary` object has no free-form string slot:
 
-The adapter producer creates a record only for an observed attempt; `NOT_OBSERVED` is an adapter evaluation state, not a fabricated attempt. `eventId` is unique and repeated delivery of the same `eventId` is idempotent. `deduplicationKey` groups semantically repeated attempts but never removes the original event. An attempt is unresolved while its lifecycle is `DETECTED`. Resolution is permitted only by a later gate invocation with the same `taskKey`, a fresh trusted adapter snapshot, and an allowlisted resolution reason. Any unresolved attempt for the current `taskKey` blocks its Phase 3A completion claim.
+- `target` is exactly one of `NONE`, `REPOSITORY_PATH` with a safe repository-relative `repositoryPath`, or `EXTERNAL_TARGET` with a closed `redactedCategory` and SHA-256 digest. Absolute or otherwise external raw targets are never stored.
+- `argumentSummary` contains only classification `NONE`, `ALLOWLISTED_LITERALS`, or `STRUCTURAL_PLACEHOLDERS`, a count from zero through 64 constrained by classification, and a SHA-256 digest. It has no argv, argument, or raw-string member.
+- `querySummary` is `NONE` with no digest, or `TEXT_QUERY|STRUCTURED_QUERY` with a SHA-256 digest. `toolPayloadSummary` is `NONE` with no digest, or `STRUCTURED_PAYLOAD|OPAQUE_PAYLOAD` with a SHA-256 digest. Their closed conditionals reject content, email, JSON, and other raw payload members.
+
+Every allowed summary string remains bounded to 512 Unicode scalars and 512 UTF-8 bytes and is subject to semantic secret-marker checks. Redaction uncertainty blocks publication and maps the adapter leaf result to `BLOCKED`.
+
+The adapter producer creates a record only for an observed attempt; `NOT_OBSERVED` is an adapter evaluation state, not a fabricated attempt. `eventId` is unique and repeated delivery of the same `eventId` is idempotent. `deduplicationKey` groups semantically repeated attempts but never removes the original event. An attempt is unresolved while its lifecycle is `DETECTED`. Resolution is permitted only by a later gate invocation with the same `taskKey`, a fresh trusted adapter snapshot, and an allowlisted resolution reason. Any `DETECTED` event emitted by the current gate remains unresolved and cannot be consumed by a current-gate `RESOLVED` event, even when an older detection exists in the same deduplication group. Any unresolved attempt for the current `taskKey` blocks its Phase 3A completion claim.
 
 ## Fail-Closed And Completion Policy
 

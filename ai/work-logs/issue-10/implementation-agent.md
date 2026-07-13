@@ -156,3 +156,26 @@ Task 1 is complete. Issue #10 remains in progress for later Phase 3A tasks.
 
 - No product commands, runtime evidence, or repository `.ai-runs` artifacts were created.
 - The lifecycle remains fail-closed: a later unpaired detection is unresolved, while a resolution with no earlier detection from a different invocation is invalid.
+
+## Task 3 Structured Redaction Contract Report (2026-07-13)
+
+### Scope
+
+- Replaced all four free-form bypass summary strings with closed structured schema variants.
+- Required SHA-256 digests for non-`NONE` query/tool summaries and all argument summaries; `NONE` query/tool variants have no digest or content slot.
+- Limited arguments to closed classifications and a count from zero through 64, repository targets to safe relative paths, and external targets to a closed redacted category plus digest.
+- Preserved 512-scalar/UTF-8-byte checks and semantic secret-marker scanning across nested summary string leaves.
+- Made every current-gate `DETECTED` event unresolved even when a later current-gate `RESOLVED` event can pair with an older detection.
+
+### TDD Evidence
+
+- Initial RED: the focused three-test command exited `1`; the old schema rejected each structured summary object and the lifecycle vector could not pass the retired string contract.
+- Intermediate RED: after the schema change, both schema tests passed while lifecycle loading raised on the helper's string-only `.encode()` assumption.
+- Lifecycle RED: after recursive summary inspection, same-gate detection vectors returned `NATIVE_BYPASS_RESOLUTION_INVALID` or `NATIVE_BYPASS_RESOLUTION_UNTRUSTED` instead of `NATIVE_BYPASS_UNRESOLVED`.
+- Focused GREEN: six structured-contract, bounds, semantic-secret, and lifecycle tests passed.
+- Full Phase 3A suite: `python -B -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v` exited `0`; 53 tests passed.
+
+### Boundary Notes And Concerns
+
+- No Phase 1/2 baseline, product command, workflow evidence, `.ai-runs` artifact, network call, database operation, or infrastructure command was touched or run.
+- External target and payload/query classifications are deliberately closed. A future producer needing another category must update the schema and tests explicitly rather than publish an arbitrary label.

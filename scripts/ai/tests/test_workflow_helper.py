@@ -6604,10 +6604,17 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "resolvedAt": None,
             "resolutionReason": None,
             "summary": {
-                "target": "repository-relative-path",
-                "argumentSummary": "redacted structural arguments",
-                "querySummary": "query digest only",
-                "toolPayloadSummary": "payload classification only",
+                "target": {
+                    "classification": "REPOSITORY_PATH",
+                    "repositoryPath": "docs/00-index.md",
+                },
+                "argumentSummary": {
+                    "classification": "STRUCTURAL_PLACEHOLDERS",
+                    "count": 1,
+                    "sha256": "a" * 64,
+                },
+                "querySummary": {"classification": "NONE"},
+                "toolPayloadSummary": {"classification": "NONE"},
             },
         }
 
@@ -6671,6 +6678,78 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assert_valid("native-runtime-adapters", self.supported_host_policy())
         self.assert_valid("native-bypass-attempt", self.bypass_attempt())
         self.assert_valid("native-adapter-result", self.adapter_result())
+
+    def test_native_bypass_summary_accepts_only_closed_classifications_and_digests(self):
+        attempt = self.bypass_attempt()
+        attempt["summary"].update({
+            "target": {
+                "classification": "EXTERNAL_TARGET",
+                "redactedCategory": "OUTSIDE_REPOSITORY_PATH",
+                "sha256": "d" * 64,
+            },
+            "argumentSummary": {
+                "classification": "ALLOWLISTED_LITERALS",
+                "count": 2,
+                "sha256": "a" * 64,
+            },
+            "querySummary": {
+                "classification": "TEXT_QUERY",
+                "sha256": "b" * 64,
+            },
+            "toolPayloadSummary": {
+                "classification": "STRUCTURED_PAYLOAD",
+                "sha256": "c" * 64,
+            },
+        })
+        self.assert_valid("native-bypass-attempt", attempt)
+
+        invalid_summaries = {
+            "raw-query-string": {"querySummary": "alice@example.com"},
+            "raw-query-content": {"querySummary": {
+                "classification": "TEXT_QUERY",
+                "sha256": "b" * 64,
+                "content": "alice@example.com",
+            }},
+            "raw-tool-json": {"toolPayloadSummary": {
+                "classification": "STRUCTURED_PAYLOAD",
+                "sha256": "c" * 64,
+                "content": '{"email":"alice@example.com"}',
+            }},
+            "none-query-digest": {"querySummary": {
+                "classification": "NONE",
+                "sha256": "b" * 64,
+            }},
+            "none-tool-content": {"toolPayloadSummary": {
+                "classification": "NONE",
+                "content": "{}",
+            }},
+            "raw-arguments": {"argumentSummary": {
+                "classification": "ALLOWLISTED_LITERALS",
+                "count": 1,
+                "sha256": "a" * 64,
+                "argv": ["--token", "opaque"],
+            }},
+            "unbounded-argument-count": {"argumentSummary": {
+                "classification": "STRUCTURAL_PLACEHOLDERS",
+                "count": 65,
+                "sha256": "a" * 64,
+            }},
+            "absolute-repository-path": {"target": {
+                "classification": "REPOSITORY_PATH",
+                "repositoryPath": "C:/Users/alice/secret.json",
+            }},
+            "raw-external-target": {"target": {
+                "classification": "EXTERNAL_TARGET",
+                "redactedCategory": "OUTSIDE_REPOSITORY_PATH",
+                "sha256": "d" * 64,
+                "absolutePath": "C:/Users/alice/secret.json",
+            }},
+        }
+        for name, summary_update in invalid_summaries.items():
+            with self.subTest(name=name):
+                invalid_attempt = self.bypass_attempt()
+                invalid_attempt["summary"].update(summary_update)
+                self.assert_invalid("native-bypass-attempt", invalid_attempt)
 
     def test_native_adapter_version_schemas_require_strict_semver_2(self):
         valid_version = "1.0.0-rc.1+build.5"
@@ -6889,16 +6968,30 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "malformed": {"eventId": "missing-required-fields"},
             "raw-secret": dict(self.valid_attempt(), payload="secret"),
             "byte-bound": self.valid_attempt(summary={
-                "target": "a" * 512,
-                "argumentSummary": "b" * 512,
-                "querySummary": "c" * 512,
-                "toolPayloadSummary": "가" * 200,
+                "target": {
+                    "classification": "REPOSITORY_PATH",
+                    "repositoryPath": "\uac00" * 200,
+                },
+                "argumentSummary": {
+                    "classification": "NONE",
+                    "count": 0,
+                    "sha256": "a" * 64,
+                },
+                "querySummary": {"classification": "NONE"},
+                "toolPayloadSummary": {"classification": "NONE"},
             }),
             "scalar-bound": self.valid_attempt(summary={
-                "target": "a" * 513,
-                "argumentSummary": "summary",
-                "querySummary": "summary",
-                "toolPayloadSummary": "summary",
+                "target": {
+                    "classification": "REPOSITORY_PATH",
+                    "repositoryPath": "a" * 513,
+                },
+                "argumentSummary": {
+                    "classification": "NONE",
+                    "count": 0,
+                    "sha256": "a" * 64,
+                },
+                "querySummary": {"classification": "NONE"},
+                "toolPayloadSummary": {"classification": "NONE"},
             }),
         }
         for name, attempt in cases.items():
@@ -6933,10 +7026,17 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 ))
 
         attempt = self.valid_attempt(summary={
-            "target": "Cookie: session=opaque",
-            "argumentSummary": "redacted structural arguments",
-            "querySummary": "query digest only",
-            "toolPayloadSummary": "payload classification only",
+            "target": {
+                "classification": "REPOSITORY_PATH",
+                "repositoryPath": "docs/Cookie/session.txt",
+            },
+            "argumentSummary": {
+                "classification": "STRUCTURAL_PLACEHOLDERS",
+                "count": 1,
+                "sha256": "a" * 64,
+            },
+            "querySummary": {"classification": "NONE"},
+            "toolPayloadSummary": {"classification": "NONE"},
         })
         result, status = self.helper.native_adapter_gate(
             self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
@@ -6980,16 +7080,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         )
         for summary in secret_summaries:
             with self.subTest(summary=summary):
-                attempt = self.valid_attempt(summary={
-                    "target": "repository-relative-path",
-                    "argumentSummary": summary,
-                    "querySummary": "query digest only",
-                    "toolPayloadSummary": "payload classification only",
-                })
-                result, status = self.helper.native_adapter_gate(
-                    self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([attempt]),
-                )
-                self.assertEqual((result["result"], status), ("FAIL", 1))
+                self.assertTrue(self.helper.native_summary_has_secret(summary))
 
     def test_bypass_summary_rejects_review_raw_content_label_examples(self):
         review_examples = (
@@ -7055,16 +7146,30 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             with self.subTest(separator=repr(separator)):
                 self.assertTrue(self.helper.native_summary_has_secret(f"Basic{separator}dXNlcjpwYXNz"))
 
-    def test_bypass_summary_allows_ordinary_non_secret_descriptions(self):
+    def test_bypass_summary_allows_closed_non_secret_classifications(self):
         attempt = self.valid_attempt(
             lifecycle="RESOLVED",
             resolvedAt="2026-07-13T01:01:00Z",
             resolutionReason="REMEDIATED",
             summary={
-                "target": "repository-relative-path",
-                "argumentSummary": "credential handling documentation",
-                "querySummary": "token budget metadata",
-                "toolPayloadSummary": "bearer token documentation",
+                "target": {
+                    "classification": "EXTERNAL_TARGET",
+                    "redactedCategory": "OTHER_EXTERNAL_TARGET",
+                    "sha256": "d" * 64,
+                },
+                "argumentSummary": {
+                    "classification": "ALLOWLISTED_LITERALS",
+                    "count": 2,
+                    "sha256": "a" * 64,
+                },
+                "querySummary": {
+                    "classification": "STRUCTURED_QUERY",
+                    "sha256": "b" * 64,
+                },
+                "toolPayloadSummary": {
+                    "classification": "OPAQUE_PAYLOAD",
+                    "sha256": "c" * 64,
+                },
             },
         )
         result, status = self.helper.native_adapter_gate(
@@ -7094,7 +7199,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         )
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
 
-    def test_bypass_resolution_rejects_detection_from_the_same_gate_invocation(self):
+    def test_bypass_detection_from_the_same_gate_invocation_remains_unresolved(self):
         same_invocation_detection = self.valid_attempt(
             gateInvocationId="gate-1",
             observedAt="2026-07-13T00:59:00Z",
@@ -7117,7 +7222,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         )
 
         self.assertEqual((result["result"], result["reason"], status), (
-            "BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", 2,
+            "BLOCKED", "NATIVE_BYPASS_UNRESOLVED", 2,
         ))
 
     def test_mixed_resolution_times_in_one_deduplication_group_are_invalid(self):
@@ -7219,6 +7324,36 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([prior_detected]),
         )
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_current_detection_remains_unresolved_when_current_resolution_follows_it(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:58:00Z",
+        )
+        current_detected = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        current_resolved = self.valid_attempt(
+            attemptId="attempt-3",
+            eventId="event-3",
+            lifecycle="RESOLVED",
+            observedAt="2026-07-13T01:00:00Z",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+        )
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, current_detected, current_resolved]),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_BYPASS_UNRESOLVED", 2,
+        ))
 
     def test_repeated_events_are_idempotent_and_dedup_groups_preserve_every_event(self):
         resolved = self.valid_attempt(
