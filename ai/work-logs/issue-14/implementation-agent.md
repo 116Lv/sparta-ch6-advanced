@@ -657,3 +657,40 @@ absent.
   infrastructure, and GitHub Issue state were not edited. Prohibited commands
   and claims remain NOT RUN/not made as recorded above; independent rereview
   remains with the parent.
+
+### Task 6 Final Review Fix - Evidence Read-Time Faults (2026-07-14)
+
+- Final review found that evidence resolve and regular-file checks were guarded,
+  but `digest(path)` ran after the guard. Disappearance, permission, or read
+  failure after `is_file()` could therefore escape instead of producing
+  conservative cache classification.
+- The accepted evidence content is now opened/read/hashed once inside the
+  guarded block. Unsafe paths remain lexically rejected before open. Any
+  open/read `OSError` records unavailable evidence, skips that digest, and
+  continues through remaining evidence and expiry. With no safe stale fact the
+  result is `UNCERTAIN`; a safely proven later digest mismatch or expiry yields
+  `STALE` while retaining both stale and unavailable diagnostics.
+- The focused regression simulates `FileNotFoundError` at open and `OSError`
+  during read after a successful `is_file()`, asserts the second evidence is
+  still opened in all four subcases, and covers both standalone `UNCERTAIN` and
+  compound `STALE` outcomes.
+
+Exact RED command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase2ARepoIntakeTests.test_verification_cache_evidence_read_faults_continue_to_safe_stale_checks -v`
+exited `1`; 1 test ran in `0.771s` with 4 intended errors because both open-
+time disappearance and read-time `OSError` escaped in plain and compound cases.
+After guarding the digest, the same command exposed 2 intended diagnostic-
+retention failures: statuses were correct but compound `STALE` reasons omitted
+the unavailable evidence finding. The final focused GREEN exited `0`; 1 test
+with 4 subcases passed in `0.782s`.
+
+Phase 2A/2B focus exited `0`; 20 tests passed in `8.122s`. The required Phase
+2A/2B/2C/3A command exited `0`; 131 tests passed in `50.038s`. `git diff
+--check` and staged `git diff --cached --check` exited `0` with only line-ending
+warnings; `.ai-runs` and recursive `__pycache__` remained absent.
+
+- Implementation/tests commit: `5b2994c` (`fix(ai): guard cache evidence reads`).
+  This evidence append is committed separately.
+- Exact-set semantics, policy single-read binding, no-canonical-fake-decision
+  state, summary, index, reviewer log, product/infrastructure scope, and GitHub
+  state remain unchanged. Independent rereview remains with the parent.
