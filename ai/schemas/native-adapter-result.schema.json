@@ -23,7 +23,8 @@
         "hostVersion": { "$ref": "#/$defs/version" },
         "surfaces": { "$ref": "#/$defs/fourSurfaces" },
         "bypassAttemptRefs": { "type": "array", "items": { "$ref": "#/$defs/repositoryPath" } },
-        "repositoryOnlyQualification": { "type": "boolean" }
+        "repositoryOnlyQualification": { "type": "boolean" },
+        "phase2CLeafResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE"] }
       }
     }
   },

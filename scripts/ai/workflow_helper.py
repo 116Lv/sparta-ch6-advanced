@@ -5664,6 +5664,235 @@ def aggregate_verification_gate(mapped_checks):
     return "PASS"
 
 
+NATIVE_ADAPTER_SURFACES = ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+NATIVE_SUMMARY_MAX_BYTES = 512
+
+
+def native_adapter_gate_result(result, reason, data):
+    phase2c_leaf_result = {
+        "PASS": "PASS",
+        "FAIL": "FAIL",
+        "BLOCKED": "BLOCKED",
+        "NOT_CONFIGURED": "NOT_CONFIGURED",
+        "UNSUPPORTED": "NOT_APPLICABLE",
+    }[result]
+    data = dict(data)
+    data["phase2CLeafResult"] = phase2c_leaf_result
+    return {
+        "$schema": "ai/schemas/native-adapter-result.schema.json",
+        "$id": "ai/native-adapter-result.json",
+        "schemaVersion": 1,
+        "operation": "NATIVE_ADAPTER_GATE",
+        "result": result,
+        "phase2cLeafResult": phase2c_leaf_result,
+        "reason": reason,
+        "data": data,
+    }
+
+
+def native_adapter_data(host, surfaces, bypass_attempt_refs):
+    return {
+        "hostId": host["hostId"],
+        "hostVersion": host["hostVersion"],
+        "surfaces": surfaces,
+        "bypassAttemptRefs": bypass_attempt_refs,
+        "repositoryOnlyQualification": True,
+    }
+
+
+def native_adapter_fallback_data():
+    return native_adapter_data(
+        {"hostId": "unknown-host", "hostVersion": "0.0.0"},
+        [
+            {"surface": surface, "status": "NOT_CONFIGURED", "reasonCode": "NATIVE_ADAPTER_EVALUATION_FAILED"}
+            for surface in NATIVE_ADAPTER_SURFACES
+        ],
+        [],
+    )
+
+
+def publish_native_adapter_gate_result(root, result, status):
+    try:
+        validate(root, result, "ai/schemas/native-adapter-result.schema.json")
+    except InvalidStateError:
+        fallback = native_adapter_gate_result(
+            "BLOCKED", "NATIVE_ADAPTER_RESULT_INVALID", native_adapter_fallback_data(),
+        )
+        try:
+            validate(root, fallback, "ai/schemas/native-adapter-result.schema.json")
+        except InvalidStateError:
+            pass
+        return fallback, 2
+    return result, status
+
+
+def native_adapter_fixture_path(root, reference, *, canonical=False):
+    if not isinstance(reference, str) or not reference:
+        raise ValueError("native adapter fixture reference is required")
+    path = Path(reference)
+    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
+        raise ValueError("native adapter fixture reference is invalid")
+    normalized = path.as_posix()
+    if canonical:
+        if normalized != "ai/native-runtime-adapters.json" and not normalized.startswith("ai/fixtures/"):
+            raise ValueError("native adapter policy must be canonical or a temporary fixture")
+    elif not normalized.startswith("ai/fixtures/"):
+        raise ValueError("native adapter input must be a temporary fixture")
+    return resolve_repository_file(root, normalized)
+
+
+def native_adapter_supported_host(policy):
+    current_host = policy["currentHost"]
+    current_version = tuple(int(part) for part in current_host["hostVersion"].split("-", 1)[0].split("+", 1)[0].split("."))
+    for supported_host in policy["supportedHosts"]:
+        minimum_version = tuple(int(part) for part in supported_host["minimumHostVersion"].split("-", 1)[0].split("+", 1)[0].split("."))
+        if supported_host["hostId"] == current_host["hostId"] and current_version >= minimum_version:
+            return supported_host
+    return None
+
+
+def load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invocation_id):
+    if bypass_attempts_ref is None:
+        return [], []
+    path = native_adapter_fixture_path(root, bypass_attempts_ref)
+    payload = read_json(path)
+    if not isinstance(payload, dict) or set(payload) != {"attempts"} or not isinstance(payload["attempts"], list):
+        raise ValueError("native bypass attempts must be a closed attempts object")
+
+    delivered_events = {}
+    deduplication_groups = {}
+    for attempt in payload["attempts"]:
+        if not isinstance(attempt, dict):
+            raise ValueError("native bypass attempt must be an object")
+        validate(root, attempt, "ai/schemas/native-bypass-attempt.schema.json")
+        if attempt["taskKey"] != task_key or attempt["gateInvocationId"] != gate_invocation_id:
+            raise ValueError("native bypass attempt correlation does not match this gate")
+        for value in attempt["summary"].values():
+            if len(value) > NATIVE_SUMMARY_MAX_BYTES or len(value.encode("utf-8")) > NATIVE_SUMMARY_MAX_BYTES:
+                raise ValueError("native bypass summary exceeds redacted bounds")
+        event_id = attempt["eventId"]
+        serialized = compact(attempt)
+        existing = delivered_events.get(event_id)
+        if existing is not None:
+            if existing != serialized:
+                raise ValueError("native bypass event delivery conflicts with existing event")
+            continue
+        delivered_events[event_id] = serialized
+        deduplication_groups.setdefault(attempt["deduplicationKey"], []).append(attempt)
+
+    attempts = [json.loads(serialized) for serialized in delivered_events.values()]
+    references = [
+        f"{Path(bypass_attempts_ref).as_posix()}#{attempt['eventId']}"
+        for attempts in deduplication_groups.values()
+        for attempt in attempts
+    ]
+    return attempts, references
+
+
+def native_snapshot_surfaces(snapshot, fallback_surfaces):
+    surfaces = snapshot.get("surfaces")
+    if not isinstance(surfaces, list) or len(surfaces) != len(NATIVE_ADAPTER_SURFACES):
+        return fallback_surfaces, False
+    normalized = []
+    names = set()
+    for surface in surfaces:
+        if not isinstance(surface, dict) or set(surface) != {"surface", "status", "reasonCode"}:
+            return fallback_surfaces, False
+        if surface["surface"] not in NATIVE_ADAPTER_SURFACES or surface["status"] not in (
+            "ENFORCED", "AUDIT_ONLY", "NOT_CONFIGURED", "UNSUPPORTED",
+        ) or not isinstance(surface["reasonCode"], str) or not surface["reasonCode"]:
+            return fallback_surfaces, False
+        names.add(surface["surface"])
+        normalized.append(surface)
+    if names != set(NATIVE_ADAPTER_SURFACES):
+        return fallback_surfaces, False
+    return normalized, True
+
+
+def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref=None, bypass_attempts_ref=None,
+                        policy_ref="ai/native-runtime-adapters.json"):
+    root = Path(root).resolve()
+    fallback_data = native_adapter_fallback_data()
+    try:
+        policy_path = native_adapter_fixture_path(root, policy_ref, canonical=True)
+        policy = validate_repository_instance(root, policy_path)
+        current_host = policy["currentHost"]
+        fallback_data = native_adapter_data(current_host, current_host["surfaces"], [])
+        attempts, attempt_refs = load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invocation_id)
+        data = native_adapter_data(current_host, current_host["surfaces"], attempt_refs)
+        if any(attempt["lifecycle"] == "DETECTED" for attempt in attempts):
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_UNRESOLVED", data), 2,
+            )
+        if any(attempt["reasonCode"] == "REDACTION_UNCERTAIN" for attempt in attempts):
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("BLOCKED", "NATIVE_BYPASS_REDACTION_UNCERTAIN", data), 2,
+            )
+
+        supported_host = native_adapter_supported_host(policy)
+        if supported_host is None:
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("UNSUPPORTED", "HOST_UNSUPPORTED", data), 6,
+            )
+        if runtime_snapshot_ref is None:
+            supported_data = native_adapter_data(current_host, supported_host["surfaces"], attempt_refs)
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("NOT_CONFIGURED", "NATIVE_ADAPTER_NOT_CONFIGURED", supported_data), 3,
+            )
+
+        snapshot = read_json(native_adapter_fixture_path(root, runtime_snapshot_ref))
+        if not isinstance(snapshot, dict):
+            raise ValueError("native runtime snapshot must be an object")
+        snapshot_surfaces, valid_surfaces = native_snapshot_surfaces(snapshot, supported_host["surfaces"])
+        snapshot_data = native_adapter_data(current_host, snapshot_surfaces, attempt_refs)
+        if snapshot.get("fresh") is not True:
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SNAPSHOT_STALE", snapshot_data), 2,
+            )
+        if snapshot.get("signatureValid") is not True:
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_SIGNATURE_UNTRUSTED", snapshot_data), 2,
+            )
+        if snapshot.get("callbackStatus") != "OK":
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_CALLBACK_FAILED", snapshot_data), 2,
+            )
+        if not valid_surfaces:
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("NOT_CONFIGURED", "NATIVE_ADAPTER_SURFACES_NOT_CONFIGURED", snapshot_data), 3,
+            )
+        if any(surface["status"] != "ENFORCED" for surface in snapshot_surfaces):
+            return publish_native_adapter_gate_result(
+                root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_ENFORCEMENT_INCOMPLETE", snapshot_data), 2,
+            )
+        return publish_native_adapter_gate_result(
+            root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_FIXTURE_NOT_TRUSTED", snapshot_data), 2,
+        )
+    except (InvalidStateError, OSError, TypeError, ValueError, KeyError):
+        return publish_native_adapter_gate_result(
+            root, native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", fallback_data), 2,
+        )
+
+
+def run_native_adapter_gate_cli(arguments):
+    root = Path(arguments.repository_root).resolve()
+    result, status = native_adapter_gate(
+        root,
+        arguments.task_key,
+        arguments.gate_invocation_id,
+        arguments.runtime_snapshot,
+        arguments.bypass_attempts,
+    )
+    output_status = write_resolve_output(root, arguments.output, result)
+    if output_status != 0:
+        return publish_native_adapter_gate_result(
+            root,
+            native_adapter_gate_result("BLOCKED", "NATIVE_ADAPTER_OUTPUT_PATH_INVALID", native_adapter_fallback_data()),
+            2,
+        )
+    return result, status
+
+
 def verification_gate(root, change_type, entry_point, leaf_results_ref=None):
     root = Path(root).resolve()
     try:
@@ -5794,12 +6023,19 @@ def main():
     verification_gate_parser.add_argument("--entry-point", required=True)
     verification_gate_parser.add_argument("--leaf-results-file")
     verification_gate_parser.add_argument("--output", required=True)
+    native_adapter_gate_parser = subparsers.add_parser("native-adapter-gate", add_help=False)
+    native_adapter_gate_parser.add_argument("--repository-root", required=True)
+    native_adapter_gate_parser.add_argument("--task-key", required=True)
+    native_adapter_gate_parser.add_argument("--gate-invocation-id", required=True)
+    native_adapter_gate_parser.add_argument("--runtime-snapshot")
+    native_adapter_gate_parser.add_argument("--bypass-attempts")
+    native_adapter_gate_parser.add_argument("--output", required=True)
     try:
         arguments = parser.parse_args()
     except ValueError:
         if len(sys.argv) > 1 and sys.argv[1] in (
             "run-start", "pre-command", "execute-command", "post-command", "done-claim-prepare",
-            "verify-finalized", "verification-gate",
+            "verify-finalized", "verification-gate", "native-adapter-gate",
         ):
             result, status = invalid_cli_result(sys.argv[1])
             print(compact(result))
@@ -5834,6 +6070,9 @@ def main():
         return status
     if arguments.operation == "verification-gate":
         result, status = run_verification_gate_cli(arguments)
+        return status
+    if arguments.operation == "native-adapter-gate":
+        result, status = run_native_adapter_gate_cli(arguments)
         return status
     result, status = run_resolve(arguments)
     result, status, output_status = publish_resolve_output(
