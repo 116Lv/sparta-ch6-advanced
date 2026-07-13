@@ -6556,6 +6556,22 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         )
         self.assertEqual({surface["status"] for surface in policy["currentHost"]["surfaces"]}, {"UNSUPPORTED"})
 
+    def test_current_host_support_document_matches_canonical_policy(self):
+        document_path = REPOSITORY_ROOT / "ai/native-runtime-adapters.md"
+        self.assertTrue(document_path.is_file())
+
+        policy = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/native-runtime-adapters.json")
+        document = document_path.read_text(encoding="utf-8")
+
+        self.assertIn("ai/native-runtime-adapters.json", document)
+        self.assertIn("supportedHosts: []", document)
+        self.assertIn(policy["currentHost"]["hostId"], document)
+        for surface in policy["currentHost"]["surfaces"]:
+            with self.subTest(surface=surface["surface"]):
+                self.assertIn(surface["surface"], document)
+                self.assertIn(surface["status"], document)
+                self.assertIn(surface["reasonCode"], document)
+
     def test_closed_native_adapter_schemas_accept_complete_supported_host_vectors(self):
         self.assert_valid("native-runtime-adapters", self.supported_host_policy())
         self.assert_valid("native-bypass-attempt", self.bypass_attempt())
