@@ -255,3 +255,33 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: Static final re-review confirms fail-closed aggregation, exclusive identity shapes, exact accepted-byte digest binding, mapped-only synthesized-result closure, native boundary preservation, and accurate role metadata. No findings remain.
+
+## Task 6 Final Re-review (2026-07-14)
+
+### Spec Compliance
+
+- Verdict: Spec compliant.
+- Verification-decision identity remains closed over task, gate, commit, classification, policy, exact producers, exact evidence, environment, and expiry.
+- Canonical verification policy parsing, schema validation, hashing, and producer derivation use one bounded immutable read.
+- Deterministic `STALE` findings override accumulated `UNCERTAIN` findings while retaining all diagnostics.
+- Evidence open/read failures are guarded, recorded as `UNCERTAIN`, and do not prevent independent safe evidence or expiry checks; unsafe paths are not opened.
+- The exact seven-skill catalog and handoff ID sets remain enforced structurally and semantically.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+- None. The policy TOCTOU, compound-classification precedence, and evidence read-time findings are closed.
+
+#### Minor (Nice to Have)
+
+- None. The terminal-newline SHA-256 schema finding is closed.
+
+### Assessment
+
+- Task quality: Approved.
+- Reasoning: Final static re-review confirms that all policy snapshot, classification precedence, exact-end digest, and evidence read-time findings are closed. No issues remain for Task 6.
