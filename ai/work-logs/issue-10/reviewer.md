@@ -7,8 +7,8 @@ status: done
 owning_feature: none
 current_owner: reviewer
 started_at: 2026-07-13T11:11:49+09:00
-ended_at: 2026-07-13T11:11:49+09:00
-last_updated: 2026-07-13T11:11:49+09:00
+ended_at: 2026-07-13T19:35:05+09:00
+last_updated: 2026-07-13T19:35:05+09:00
 branch: codex/phase-3a-native-runtime-adapters
 related_files:
   - .superpowers/sdd/task-1-brief.md
@@ -56,7 +56,7 @@ migration_history: []
 
 # Summary
 
-Completed Task 1 scoped self-review.
+Historical Task 1 scoped self-review, followed by the Task 5 independent final review.
 
 # Work Done
 
@@ -68,7 +68,7 @@ Completed Task 1 scoped self-review.
 
 # Current State
 
-No Task 1 findings. Issue #10 remains open for later Phase 3A tasks.
+No Critical or Important Task 3/Task 4/Task 5 review finding remains. The final evidence is qualified: it does not prove native enforcement PASS, product-command verification, a `VERIFIED` registry transition, issue closure, or unqualified overall DONE.
 
 # Decisions
 
@@ -96,5 +96,15 @@ No Task 1 findings. Issue #10 remains open for later Phase 3A tasks.
 - Context links:
   - [Issue summary](README.md)
   - [Implementation agent log](implementation-agent.md)
-- Remaining work: review the later Phase 3A task diffs.
-- Evidence required: Task 2 verification and scoped diff inspection.
+- Remaining work: supported-host CI/remote adapter installation, durable evidence, and cross-host parity are deferred to Phase 3B.
+- Evidence required: separately scoped supported-host verification and review.
+
+## Task 5 Independent Final Review (2026-07-13)
+
+Reviewed the full Phase 3A diff, Task 3 and Task 4 ranges, fresh evidence, host support claims, closed redaction and bypass lifecycle, completion mapping, repository boundary, and Phase 3B deferral. The canonical current-host policy has four `UNSUPPORTED` surfaces and maps only to the repository-qualified Phase 2C `NOT_APPLICABLE` leaf. The internal native leaf runs in-process with the current correlation, rejects external/precomputed leaves, and cannot reach the static `registryCommandId: null` PASS fallback. Documentation retains `scripts/ai/command-runner.sh` as the only supported product-command path and defers CI/remote installation, durable evidence, and cross-host parity to Phase 3B.
+
+Fresh evidence: Phase 3A passed 68 tests; Phase 2C plus Phase 3A passed 75 tests; contract checks, runtime preflight, repo intake, and `git diff --check` exited 0. The native gate returned its expected exit 1 `UNSUPPORTED`/`HOST_UNSUPPORTED` result with a `NOT_APPLICABLE` leaf. Artifacts are absent and the command-registry diff against `origin/main` exits 0.
+
+Findings: Critical none. Important none. Minor (queued, no auto-fix): `load_verification_leaf_results()` validates array entries in order, so a malformed ordinary item before a forged native leaf can mask `NATIVE_ADAPTER_LEAF_FORGED` with the generic invalid-leaf diagnostic. Both outcomes fail closed; queue a pre-scan/precedence regression in a separately scoped task.
+
+The direct full unittest and `run-helper-tests.sh` are **not PASS**: each exited 1 after 319 tests with one failure and 17 skips. The exact failure is `PosixLaunchTests.test_fake_gradlew_is_exact_posix_builtin_fixture`, which expects LF while this Windows worktree has CRLF. The tracked fixture hash is identical in the worktree, index, and `origin/main` (`59c3111f32a22ddac701cf212b148160df516850`), so this is an environmental CRLF diagnosis, not a Phase 3A branch regression. No code was changed.

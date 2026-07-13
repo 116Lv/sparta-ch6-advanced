@@ -7,8 +7,8 @@ status: done
 owning_feature: none
 current_owner: implementation-agent
 started_at: 2026-07-13T11:03:43+09:00
-ended_at: 2026-07-13T11:11:49+09:00
-last_updated: 2026-07-13T11:11:49+09:00
+ended_at: 2026-07-13T19:35:05+09:00
+last_updated: 2026-07-13T19:35:05+09:00
 branch: codex/phase-3a-native-runtime-adapters
 related_files:
   - ai/schemas/native-runtime-adapters.schema.json
@@ -64,7 +64,7 @@ Completed Task 1 closed schema contracts and the explicitly authorized three-nam
 
 # Current State
 
-Task 1 is complete. Issue #10 remains in progress for later Phase 3A tasks.
+Historical Task 1 is complete. Tasks 2 through 4 subsequently completed; Task 5 records the final qualified evidence and independent review.
 
 # Decisions
 
@@ -89,8 +89,20 @@ Task 1 is complete. Issue #10 remains in progress for later Phase 3A tasks.
   - [Implementation plan](../../../docs/superpowers/plans/2026-07-13-ai-workflow-phase-3a-native-runtime-adapters-implementation.md)
 - Context links:
   - [Plan reviewer log](plan-reviewer.md)
-- Remaining work: continue with Task 2.
-- Evidence required: Task 2 RED/GREEN evidence and scoped review.
+- Remaining work: Phase 3B CI installation, remote-runner guarantees, durable CI evidence, and cross-host parity.
+- Evidence required: separately scoped supported-host verification; Task 5 did not create or claim native enforcement evidence.
+
+## Task 5 Final Verification Record (2026-07-13)
+
+- Phase 3A suite: exit 0, 68 tests passed.
+- Phase 2C plus Phase 3A suite: exit 0, 75 tests passed.
+- Full helper unittest and `run-helper-tests.sh`: exit 1 each; 319 tests, one CRLF fixture failure, and 17 skips. They are not PASS.
+- Contract script, runtime preflight without `--record`, repo intake, and `git diff --check`: exit 0.
+- Native adapter gate: expected exit 1 with `UNSUPPORTED`/`HOST_UNSUPPORTED` and `phase2CLeafResult: NOT_APPLICABLE`.
+
+The sole full-helper failure is `PosixLaunchTests.test_fake_gradlew_is_exact_posix_builtin_fixture`: it expects LF while `ai/fixtures/phase-1b/execution/fake-gradlew` has CRLF worktree bytes. The worktree, index, and `origin/main` hashes match (`59c3111f32a22ddac701cf212b148160df516850`), and `git ls-files --eol` reports `i/lf w/crlf`; no Phase 3A code change or auto-fix was made.
+
+The repository was clean before and after the commands. `.ai-runs`, non-fixture `artifact-manifest.json`, and non-fixture finalized `run.json` remain absent; the command-registry diff against `origin/main` exits 0. Gradle/build, product tests, application server, Docker Compose, HTTP/curl/API, database, migration, seed, infrastructure, and deployment commands remain NOT RUN. No native enforcement PASS or registry `VERIFIED` promotion is claimed.
 
 ## Task 3 Final Hardening Report (2026-07-13)
 
