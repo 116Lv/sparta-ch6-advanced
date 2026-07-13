@@ -10,3 +10,4 @@ The Orchestrator maintains this index. Each row links the active recovery record
 | #7 | issue_backed | done | none | implementation-agent | 2026-07-13T09:32:29+09:00 | [Phase 2C verification and document gates](issue-7/README.md) | complete |
 | #8 | issue_backed | done | none | orchestrator | 2026-07-13T09:32:29+09:00 | [subagent workflow](issue-8/README.md) | complete |
 | #10 | issue_backed | done | none | reviewer | 2026-07-13T22:21:36+09:00 | [Phase 3A native runtime adapters](issue-10/README.md) | issue-backed |
+| #14 | issue_backed | in_progress | none | implementation-agent | 2026-07-14T02:48:51+09:00 | [AI workflow trust-boundary hardening](issue-14/README.md) | issue-backed |
