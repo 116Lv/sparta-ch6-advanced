@@ -5675,11 +5675,9 @@ NATIVE_SECRET_BEARING_SUMMARY = re.compile(
     r"\b(?:request\s+body|raw\s+(?:credentials?|payload|query|argv|env(?:ironment)?)))",
     re.IGNORECASE,
 )
-NATIVE_BASIC_CREDENTIAL = re.compile(r"\bbasic\s+([A-Za-z0-9+/]+={0,2})(?=$|[\s.,:!?\)\];])", re.IGNORECASE)
-NATIVE_BEARER_CREDENTIAL = re.compile(
-    r"\bbearer\s+(?!token\s+documentation\b)[A-Za-z0-9._~+/=-]{3,}(?=$|[\s.,:!?\)\];])",
-    re.IGNORECASE,
-)
+NATIVE_BASIC_CREDENTIAL = re.compile(r"\bbasic[ \t]+\S+", re.IGNORECASE)
+NATIVE_BEARER_CREDENTIAL = re.compile(r"\bbearer[ \t]+\S+", re.IGNORECASE)
+NATIVE_ALLOWED_BEARER_DOCUMENTATION = frozenset(("bearer token documentation",))
 
 
 class NativeBypassContractError(ValueError):
@@ -5687,16 +5685,13 @@ class NativeBypassContractError(ValueError):
 
 
 def native_summary_has_secret(value):
-    if NATIVE_SECRET_BEARING_SUMMARY.search(value) or NATIVE_BEARER_CREDENTIAL.search(value):
+    if NATIVE_SECRET_BEARING_SUMMARY.search(value) or NATIVE_BASIC_CREDENTIAL.search(value):
         return True
-    for match in NATIVE_BASIC_CREDENTIAL.finditer(value):
-        try:
-            encoded = match.group(1)
-            decoded = base64.b64decode(encoded + "=" * (-len(encoded) % 4), validate=True)
-        except ValueError:
-            continue
-        if b":" in decoded:
-            return True
+    if (
+        NATIVE_BEARER_CREDENTIAL.search(value)
+        and value.casefold() not in NATIVE_ALLOWED_BEARER_DOCUMENTATION
+    ):
+        return True
     return False
 
 
@@ -5848,6 +5843,12 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
 
     resolved_transition = False
     for attempts_in_group in groups.values():
+        current_detections = [
+            attempt for attempt in attempts_in_group
+            if attempt["lifecycle"] == "DETECTED" and attempt["gateInvocationId"] == gate_invocation_id
+        ]
+        if current_detections:
+            return "UNRESOLVED"
         current_resolutions = [
             attempt for attempt in attempts_in_group
             if attempt["lifecycle"] == "RESOLVED" and attempt["gateInvocationId"] == gate_invocation_id

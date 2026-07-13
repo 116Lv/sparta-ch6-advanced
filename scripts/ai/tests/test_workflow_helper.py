@@ -6831,14 +6831,17 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 )
                 self.assertEqual((result["result"], status), ("FAIL", 1))
 
-    def test_bypass_summary_rejects_alphabetic_bearer_credentials(self):
-        self.assertTrue(self.helper.native_summary_has_secret("Bearer opaqueToken"))
+    def test_bypass_summary_rejects_bearer_credentials_regardless_of_trailing_non_whitespace(self):
+        for suffix in ("", ".", ")", "]", ":", "!", "?", ",", ";", '"', "'", "}", "/"):
+            with self.subTest(suffix=suffix):
+                self.assertTrue(self.helper.native_summary_has_secret(f"Bearer opaqueToken{suffix}"))
 
     def test_bypass_summary_allows_bearer_token_documentation(self):
         self.assertFalse(self.helper.native_summary_has_secret("bearer token documentation"))
+        self.assertTrue(self.helper.native_summary_has_secret("bearer token documentation extra"))
 
-    def test_bypass_summary_rejects_basic_credentials_before_sentence_punctuation(self):
-        for punctuation in (".", ")", "]", ":", "!", "?", ",", ";"):
+    def test_bypass_summary_rejects_basic_credentials_regardless_of_trailing_non_whitespace(self):
+        for punctuation in (".", ")", "]", ":", "!", "?", ",", ";", '"', "'", "}", "/"):
             for credential in ("dXNlcjpwYXNz", "YWxpY2U6cA=="):
                 with self.subTest(punctuation=punctuation, credential=credential):
                     self.assertTrue(self.helper.native_summary_has_secret(f"Basic {credential}{punctuation}"))
@@ -6886,6 +6889,32 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             bypass_attempts_ref=self.write_attempts([prior_detected, current_resolved]),
         )
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_current_detection_wins_over_resolution_in_the_same_deduplication_group(self):
+        prior_detected = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        current_resolved = self.valid_attempt(
+            attemptId="attempt-2",
+            eventId="event-2",
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+        )
+        current_detected = self.valid_attempt(
+            attemptId="attempt-3",
+            eventId="event-3",
+            observedAt="2026-07-13T01:02:00Z",
+        )
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-1",
+            bypass_attempts_ref=self.write_attempts([prior_detected, current_resolved, current_detected]),
+        )
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+        self.assertEqual(result["reason"], "NATIVE_BYPASS_UNRESOLVED")
 
         result, status = self.helper.native_adapter_gate(
             self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([current_resolved]),

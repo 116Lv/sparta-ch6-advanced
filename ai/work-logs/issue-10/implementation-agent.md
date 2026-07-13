@@ -91,3 +91,27 @@ Task 1 is complete. Issue #10 remains in progress for later Phase 3A tasks.
   - [Plan reviewer log](plan-reviewer.md)
 - Remaining work: continue with Task 2.
 - Evidence required: Task 2 RED/GREEN evidence and scoped review.
+
+## Task 3 Final Hardening Report (2026-07-13)
+
+### Scope
+
+- Hardened native bypass-summary credential detection and lifecycle precedence in the assigned helper and focused tests.
+- Preserved existing work and did not run product commands or collect runtime evidence.
+
+### RED
+
+- Command: `python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_bypass_summary_rejects_bearer_credentials_regardless_of_trailing_non_whitespace scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_bypass_summary_allows_bearer_token_documentation scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_bypass_summary_rejects_basic_credentials_regardless_of_trailing_non_whitespace scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests.test_current_detection_wins_over_resolution_in_the_same_deduplication_group -v`
+- Result: expected exit `1`; 4 tests ran with 13 failures. Quotes, apostrophes, braces, slashes, and an over-broad Bearer documentation exception bypassed the delimiter-based rules; a current detection lost to a resolution in the same deduplication group.
+
+### GREEN
+
+- Replaced delimiter enumeration with `Basic`/`Bearer` scheme-plus-non-whitespace-token checks.
+- Restricted the Bearer documentation exception to the exact whole-summary phrase `bearer token documentation`.
+- Made a current `DETECTED` event return `UNRESOLVED` before evaluating resolutions in the same deduplication group.
+- Focused RED command after implementation: exit `0`; 4 tests passed.
+- Complete adapter class: `python -m unittest scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests -v` exited `0`; 26 tests passed.
+
+### Concerns
+
+- The explicit Bearer documentation allowlist intentionally contains only the case-insensitive exact whole-summary phrase required by the tests. Any surrounding or additional text remains fail-closed.
