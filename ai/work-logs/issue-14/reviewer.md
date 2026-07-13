@@ -285,3 +285,33 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: Final static re-review confirms that all policy snapshot, classification precedence, exact-end digest, and evidence read-time findings are closed. No issues remain for Task 6.
+
+## Task 7 Final Re-review (2026-07-14)
+
+### Spec Compliance
+
+- Verdict: Spec compliant.
+- Repository policy remains unable to declare supported hosts or promote repository-owned keys and probe facts.
+- Public native CLI evaluation retains `host_trust=None` and exposes no descriptor, probe, ledger, policy, snapshot, or bypass trust-injection arguments.
+- External host descriptor, probe, and ledger paths remain outside-repository, non-symlink, compiled-validation inputs.
+- `HostNativeTrust` now recursively copies mappings into fresh read-only values and sequences into tuples during `__post_init__`, detaching direct and loader construction from caller-owned mutable aliases.
+- Evaluator mapping and sequence access remains compatible with the deeply immutable trust value, and Python 3.9 annotation compatibility remains preserved.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+- None. The prior mutable descriptor/probe and nested-surface alias finding is closed.
+
+#### Minor (Nice to Have)
+
+- None.
+
+### Assessment
+
+- Task quality: Approved.
+- Reasoning: Final static re-review confirms deep host-trust immutability, external authority ownership, canonical unsupported repository state, and public CLI isolation. No issues remain for Task 7.
