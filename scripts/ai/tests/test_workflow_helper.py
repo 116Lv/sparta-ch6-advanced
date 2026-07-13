@@ -8104,6 +8104,69 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             {"ENFORCED"},
         )
 
+    def test_host_native_trust_deep_freezes_values_and_detaches_input_aliases(self):
+        snapshot, fingerprint, _ = self.signed_snapshot()
+        descriptor = self.host_trust_descriptor(fingerprint)
+        probe = {
+            "hostId": "codex-desktop",
+            "hostVersion": "1.0.0",
+            "versionProvenance": "PROBED",
+            "producerId": "example.native.adapter",
+            "observedAt": "2026-07-14T01:00:00Z",
+        }
+        _descriptor_path, _probe_path, ledger_root = self.write_external_host_documents(
+            descriptor, probe,
+        )
+        host_trust = self.helper.HostNativeTrust(descriptor, probe, ledger_root)
+
+        for target, field, replacement in (
+            (host_trust.descriptor, "ed25519PublicKeyFingerprint", "f" * 64),
+            (host_trust.descriptor, "producerId", "mutated-producer"),
+            (host_trust.descriptor, "hostId", "mutated-host"),
+            (host_trust.probe, "producerId", "mutated-producer"),
+            (host_trust.probe, "hostId", "mutated-host"),
+            (host_trust.probe, "hostVersion", "9.9.9"),
+        ):
+            with self.subTest(
+                field=field,
+                target="descriptor" if target is host_trust.descriptor else "probe",
+            ):
+                with self.assertRaises(TypeError):
+                    target[field] = replacement
+        with self.assertRaises(TypeError):
+            host_trust.descriptor["surfaces"][0] = "TOOL_CALL"
+
+        descriptor.update({
+            "ed25519PublicKeyFingerprint": "f" * 64,
+            "producerId": "mutated-producer",
+            "hostId": "mutated-host",
+        })
+        descriptor["surfaces"][0] = "TOOL_CALL"
+        probe.update({
+            "producerId": "mutated-producer",
+            "hostId": "mutated-host",
+            "hostVersion": "9.9.9",
+        })
+
+        self.assertEqual(host_trust.descriptor["ed25519PublicKeyFingerprint"], fingerprint)
+        self.assertEqual(host_trust.descriptor["producerId"], "example.native.adapter")
+        self.assertEqual(host_trust.descriptor["hostId"], "codex-desktop")
+        self.assertEqual(tuple(host_trust.descriptor["surfaces"]), (
+            "COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL",
+        ))
+        self.assertEqual(host_trust.probe["producerId"], "example.native.adapter")
+        self.assertEqual(host_trust.probe["hostId"], "codex-desktop")
+        self.assertEqual(host_trust.probe["hostVersion"], "1.0.0")
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-signed",
+            runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
+            host_trust=host_trust,
+        )
+        self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
+
     def test_host_native_trust_rejects_closed_contract_and_identity_mutations(self):
         descriptor_cases = {
             "unknown-key": lambda value: value.update({"unexpected": True}),

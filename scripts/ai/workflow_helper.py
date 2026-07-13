@@ -4,7 +4,7 @@
 import argparse
 import base64
 import codecs
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import ctypes
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -27,6 +27,7 @@ import sys
 import tempfile
 import time
 import traceback
+from types import MappingProxyType
 import uuid
 
 try:
@@ -6351,11 +6352,26 @@ NATIVE_RFC3339_TIMESTAMP = re.compile(
 )
 
 
+def native_deep_freeze(value):
+    if isinstance(value, Mapping):
+        return MappingProxyType({
+            key: native_deep_freeze(item)
+            for key, item in value.items()
+        })
+    if isinstance(value, (list, tuple)):
+        return tuple(native_deep_freeze(item) for item in value)
+    return value
+
+
 @dataclass(frozen=True)
 class HostNativeTrust:
-    descriptor: dict
-    probe: dict
+    descriptor: Mapping
+    probe: Mapping
     ledger_root: Path
+
+    def __post_init__(self):
+        object.__setattr__(self, "descriptor", native_deep_freeze(self.descriptor))
+        object.__setattr__(self, "probe", native_deep_freeze(self.probe))
 
 
 class NativeBypassContractError(ValueError):
