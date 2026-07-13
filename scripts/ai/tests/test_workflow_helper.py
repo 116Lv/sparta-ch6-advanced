@@ -6566,7 +6566,10 @@ class Phase2CVerificationGateTests(unittest.TestCase):
             ("producer", lambda leaf: leaf.update(producerId="done-claim-gate"), "VERIFICATION_LEAF_PRODUCER_MISMATCH"),
             (
                 "evidence-schema",
-                lambda leaf: leaf["evidence"].update(schema="ai/schemas/command-result.schema.json"),
+                lambda leaf: leaf["evidence"].update(
+                    schema="ai/schemas/command-result.schema.json",
+                    ref="ai/fixtures/phase-2c/missing-evidence.json",
+                ),
                 "VERIFICATION_LEAF_EVIDENCE_SCHEMA_MISMATCH",
             ),
             ("evidence-digest", lambda leaf: leaf["evidence"].update(sha256="b" * 64), "VERIFICATION_LEAF_DIGEST_MISMATCH"),
@@ -6674,6 +6677,112 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
         checks = {check["checkId"]: check for check in result["data"]["checks"]}
         self.assertEqual(checks["review-gate"]["rawResult"], "PASS")
+
+    def test_leaf_evidence_is_opened_once_and_verified_from_the_same_bytes(self):
+        leaf_ref = self.write_bound_leaf(name="single-read-evidence")
+        leaf = json.loads((self.root / leaf_ref).read_text(encoding="utf-8"))
+        evidence_path = self.root / leaf["evidence"]["ref"]
+        evidence_bytes = evidence_path.read_bytes()
+        replacement_bytes = json.dumps(
+            {**preflight_pass(), "result": "FAIL", "reason": "replacement"},
+            sort_keys=True,
+        ).encode("utf-8")
+        expected = {
+            "checkId": leaf["checkId"],
+            "taskKey": leaf["taskKey"],
+            "gateInvocationId": leaf["gateInvocationId"],
+            "commitSha": leaf["commitSha"],
+            "producerId": leaf["producerId"],
+            "evidenceSchema": leaf["evidence"]["schema"],
+        }
+        original_open = Path.open
+        evidence_open_count = 0
+
+        def race_open(path, *args, **kwargs):
+            nonlocal evidence_open_count
+            if Path(path) == evidence_path:
+                evidence_open_count += 1
+                payload = evidence_bytes if evidence_open_count == 1 else replacement_bytes
+                return io.BytesIO(payload)
+            return original_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.helper.Path, "open", autospec=True, side_effect=race_open):
+            verified = self.helper.verified_leaf_result(
+                self.root, leaf_ref, expected, leaf["policySha256"],
+            )
+
+        self.assertEqual(verified["checkId"], "review-gate")
+        self.assertEqual(evidence_open_count, 1)
+
+    def test_malformed_leaf_evidence_preserves_strict_json_reason(self):
+        leaf_ref = self.write_bound_leaf(name="malformed-evidence")
+        leaf_path = self.root / leaf_ref
+        leaf = json.loads(leaf_path.read_text(encoding="utf-8"))
+        evidence_path = self.root / leaf["evidence"]["ref"]
+        evidence_path.write_bytes(b'{"result":')
+        leaf["evidence"]["sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+        leaf_path.write_text(json.dumps(leaf, sort_keys=True), encoding="utf-8")
+        refs = self.write_leaf_result_refs([leaf_ref], name="malformed-evidence-refs.json")
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "MALFORMED_JSON", 5,
+        ))
+
+    def test_oversized_leaf_evidence_is_rejected_before_schema_validation(self):
+        leaf_ref = self.write_bound_leaf(name="oversized-evidence")
+        leaf_path = self.root / leaf_ref
+        leaf = json.loads(leaf_path.read_text(encoding="utf-8"))
+        evidence_path = self.root / leaf["evidence"]["ref"]
+        oversized = preflight_pass()
+        oversized["data"]["pythonVersion"] = "x" * 65536
+        evidence_path.write_text(json.dumps(oversized, sort_keys=True), encoding="utf-8")
+        leaf["evidence"]["sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+        leaf_path.write_text(json.dumps(leaf, sort_keys=True), encoding="utf-8")
+        refs = self.write_leaf_result_refs([leaf_ref], name="oversized-evidence-refs.json")
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "VERIFICATION_LEAF_EVIDENCE_TOO_LARGE", 5,
+        ))
+
+    def test_evidence_schema_validation_precedes_digest_mismatch(self):
+        leaf_ref = self.write_bound_leaf(name="invalid-schema-and-digest")
+        leaf = json.loads((self.root / leaf_ref).read_text(encoding="utf-8"))
+        evidence_path = self.root / leaf["evidence"]["ref"]
+        evidence_path.write_text(json.dumps({"not": "a gateway result"}), encoding="utf-8")
+        refs = self.write_leaf_result_refs(
+            [leaf_ref], name="invalid-schema-and-digest-refs.json",
+        )
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "SCHEMA_VALIDATION_ERROR", 5,
+        ))
 
     def test_external_native_bound_leaf_is_rejected_before_evidence_lookup(self):
         def forge_native(leaf):

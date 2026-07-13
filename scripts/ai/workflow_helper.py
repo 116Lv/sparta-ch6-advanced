@@ -5834,6 +5834,7 @@ def publish_verification_gate_result(root, result, status):
 
 NATIVE_ADAPTER_CHECK_ID = "native-runtime-adapter"
 VERIFICATION_LEAF_MAX_AGE = dt.timedelta(minutes=5)
+MAX_VERIFICATION_LEAF_EVIDENCE_BYTES = MAX_PARAMETER_FILE_BYTES
 VERIFICATION_REPOSITORY_PATH = re.compile(
     r"(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\s\S]*\\)(?![\s\S]*(?:^|/)\.\.(?:/|$)).+\Z"
 )
@@ -5864,6 +5865,37 @@ def repository_commit_sha(root):
             message="the checked-out repository commit is malformed",
         )])
     return matched.group(1)
+
+
+def read_verification_leaf_evidence(path):
+    with path.open("rb") as handle:
+        encoded = handle.read(MAX_VERIFICATION_LEAF_EVIDENCE_BYTES + 1)
+    if len(encoded) > MAX_VERIFICATION_LEAF_EVIDENCE_BYTES:
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_EVIDENCE_TOO_LARGE",
+            message="verification leaf evidence exceeds the bounded read limit",
+        )])
+    try:
+        value = json.loads(
+            encoded.decode("utf-8", errors="strict"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_non_finite_number,
+        )
+    except DuplicateJsonKey as error:
+        raise InvalidStateError([validation_error(
+            "DUPLICATE_JSON_KEY",
+            message="duplicate JSON object key is forbidden",
+        )]) from error
+    except NonFiniteJsonNumber as error:
+        raise InvalidStateError([validation_error(
+            "NON_FINITE_JSON_NUMBER",
+            message=f"non-finite JSON number is forbidden: {error}",
+        )]) from error
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise InvalidStateError([validation_error(
+            "MALFORMED_JSON", message="input is not valid UTF-8 JSON",
+        )]) from error
+    return encoded, value
 
 
 def verification_leaf_references(root, refs_file):
@@ -5972,8 +6004,10 @@ def verified_leaf_result(root, reference, expected, policy_sha256):
                 message="verification leaf evidence schema does not match canonical policy",
             )])
         evidence_path = resolve_repository_file(root, evidence["ref"])
-        validate(root, read_json(evidence_path), evidence["schema"])
-        if digest(evidence_path) != evidence["sha256"]:
+        evidence_bytes, evidence_value = read_verification_leaf_evidence(evidence_path)
+        evidence_sha256 = hashlib.sha256(evidence_bytes).hexdigest()
+        validate(root, evidence_value, evidence["schema"])
+        if evidence_sha256 != evidence["sha256"]:
             raise InvalidStateError([validation_error(
                 "VERIFICATION_LEAF_DIGEST_MISMATCH",
                 message="verification leaf evidence digest does not match",
