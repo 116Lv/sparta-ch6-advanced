@@ -2057,3 +2057,53 @@ independent re-review remains with the parent.
   migrations, seeds, deploys, infrastructure, GitHub mutation, push, PR, merge,
   Issue closure, and real repository `.ai-runs` were NOT RUN. Independent
   re-review remains required.
+
+### Task 16 Integration Fix - Deferred Native Nonce Consumption (2026-07-14)
+
+#### Root Cause And RED Evidence
+
+- `native_runtime_snapshot_trust()` consumed the durable native attestation
+  immediately after signature and callback verification. The outer
+  `native_adapter_gate()` then separately checked complete ENFORCED surfaces,
+  the current bypass event count and set digest, and exact resolution IDs.
+  Therefore each of those semantic BLOCKED results had already spent the
+  nonce, and a corrected snapshot with the same challenge was rejected as a
+  replay.
+- Two focused test methods were observed RED in `1.228s`, exit `1`, with seven
+  expected failures: incomplete enforcement, event-count mismatch, event-set
+  mismatch, and missing/mismatched/extra resolution bindings each left one
+  ledger record; the corrected same-nonce retry returned
+  `NATIVE_ADAPTER_CHALLENGE_REPLAYED` instead of PASS.
+
+#### Deferred Mutation And Replay Semantics
+
+- Commit `5e4afa1` (`fix(ai): defer native nonce consumption`) makes signed
+  snapshot trust evaluation side-effect free. The durable mutation and
+  in-process replay marker now live in `consume_trusted_native_snapshot()` and
+  are invoked only after every ENFORCED, bypass-set, and resolution-binding
+  check has passed.
+- All pre-consumption semantic BLOCKED paths now leave both the real external
+  ledger and the platform test ledger empty. A corrected fully valid snapshot
+  can reuse the same nonce after an earlier semantic rejection.
+- Durable create-exclusive publication remains the concurrency authority:
+  simultaneous fully valid contenders still produce exactly one PASS and one
+  `NATIVE_ADAPTER_CHALLENGE_REPLAYED` result. Replay results continue to expose
+  baseline, non-ENFORCED trusted surfaces rather than signed claimed surfaces.
+
+#### Fresh Verification And Boundary
+
+- The four focused ordering/retry/concurrency/replay tests passed in `1.685s`,
+  exit `0` after implementation.
+- Fresh committed-HEAD Phase 3A verification exited `0`:
+  `Phase3ANativeRuntimeAdapterTests` ran 110 tests in `31.951s`; all runnable
+  tests passed and 2 Windows capability tests were skipped (real handle-
+  relative cross-process ledger backend and directory symlink creation).
+- Cache-free AST parsing of the helper and test module and
+  `git diff --check 74657b4..5e4afa1` exited `0`; the implementation worktree
+  was clean before this evidence entry.
+- Only Python helper tests and static checks against temporary repositories
+  ran. Gradle, product/build tests, servers, Docker, HTTP/API, databases,
+  migrations, seeds, deploys, infrastructure, GitHub mutation, push, PR, merge,
+  Issue closure, and real repository `.ai-runs` were NOT RUN. Independent
+  review remains required; this implementation evidence does not self-approve
+  Task 16 or claim overall completion.
