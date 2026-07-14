@@ -116,9 +116,9 @@ infrastructure -> external systems
 ## ADR References
 
 - `adr/ADR-000-template.md`
-- TODO: Create ADR for Redisson lock choice.
-- TODO: Create ADR for Kafka Outbox choice.
-- TODO: Create ADR for Redis Sorted Set + daily aggregate choice.
+- Redisson lock choice: [ADR-001](../adr/ADR-001-redisson-distributed-lock.md)
+- Kafka Outbox choice: [ADR-002](../adr/ADR-002-transactional-outbox-kafka.md)
+- Redis Sorted Set + daily aggregate choice: [ADR-003](../adr/ADR-003-redis-sorted-set-daily-aggregation.md)
 
 ## Open Questions
 
