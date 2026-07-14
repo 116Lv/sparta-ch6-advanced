@@ -8,12 +8,18 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T09:20:12+09:00
+last_updated: 2026-07-14T09:51:16+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
   - docs/superpowers/plans/2026-07-14-phase-1b3-evidence-integrity-hardening.md
+  - docs/superpowers/plans/2026-07-14-phase-3b-ci-provenance-hardening.md
 changed_files:
+  - ai/ci-capability-status.json
+  - ai/ci-gates.md
+  - ai/schemas/ci-capability-status.schema.json
+  - ai/schemas/ci-gate-result.schema.json
+  - ai/schemas/github-ci-provenance.schema.json
   - scripts/ai/tests/test_workflow_helper.py
   - scripts/ai/workflow_helper.py
   - ai/work-logs/issue-14/implementation-agent.md
@@ -1288,3 +1294,59 @@ then exited `0`; 3 tests passed in `0.251s`.
 - Task 11 provenance and Task 12 full contract entry point remain untouched.
   Phase 3A and Phase 2 mappings are unchanged, and no product, infrastructure,
   GitHub-state, or real run-state operation was performed.
+
+### Task 11 - Authenticated GitHub Provenance (2026-07-14)
+
+- Added the closed Draft 2020-12
+  `ai/schemas/github-ci-provenance.schema.json` contract and allowlisted it in
+  the helper. The envelope binds repository, workflow ref/SHA, head SHA, event,
+  run ID/attempt, job ID, artifact ID/digest and member digests, task/gate,
+  native evidence digest, bypass event-set digest, resolution IDs, signer, and
+  verified attestation subject.
+- Expanded the repository `retainedRun` schema to the same 16 binding claims.
+  This object remains untrusted and is compared exactly with externally
+  verified provenance; it cannot create authority on its own.
+- Added frozen canonical-byte `GitHubCiProvenance`. The internal PASS path
+  rejects raw dictionaries, while the public `ci-evidence-gate.sh`/CLI exposes
+  no provenance option and therefore always calls with `None`, returning
+  `NOT_CONFIGURED / CI_GITHUB_PROVENANCE_NOT_AVAILABLE / exit 3`.
+- Artifact members use handle-relative `O_NOFOLLOW` reads on supporting POSIX
+  hosts and a regular-file identity-revalidating fallback elsewhere. Traversal,
+  symlink substitution, open identity races, missing files, digest tampering,
+  wrong run identity, and unrelated-run evidence are rejected.
+- `ai/schemas/ci-gate-result.schema.json` exposes verified GitHub identity and
+  requires a non-null closed identity for every schema-valid PASS. Contract and
+  native-enforcement identities remain separate.
+
+RED evidence:
+
+- Closed-schema test exited `1` because `github-ci-provenance` was absent.
+- Repository-only retained state produced the prior generic BLOCKED result,
+  and a fully matching raw dictionary produced PASS; both contradicted the new
+  trust boundary.
+- A PASS result with `githubProvenance: null` validated under the old result
+  schema. Each regression failed for the intended missing-boundary reason
+  before production changes.
+
+GREEN and expanded evidence:
+
+- Focused provenance matrix exited `0`; 5 tests passed in `1.740s`.
+- Frozen-value/raw-dictionary boundary exited `0`; 2 tests passed in `0.327s`.
+- Full Phase 3B class exited `0`; 18 tests passed in `2.803s` with one Windows
+  symlink-capability skip before the frozen-value test was added.
+- Final Phase 2C + Phase 3A + Phase 3B expansion exited `0`; 150 tests passed in
+  `56.814s` with 3 platform-capability skips: existing directory-symlink and
+  real handle-relative ledger skips plus the new file-symlink permission skip.
+- Draft 2020-12 self-check for all three affected provenance/result/status
+  schemas, `bash -n scripts/ai/ci-evidence-gate.sh`, and `git diff --check`
+  exited `0`. `.ai-runs`, recursive `__pycache__`, and temporary
+  `.phase3b-provenance-*` artifacts were absent.
+
+Implementation commit: `7ea9308` (`fix(ai): bind ci evidence to github
+provenance`). The ignored detailed report is
+`.superpowers/sdd/task-11-phase3b-report.md`. Gradle, product/build tests,
+server, Docker, HTTP/API, database, migration, seed, deploy, infrastructure,
+GitHub Actions/state mutation, push, PR, merge, Issue closure, and real
+`.ai-runs` were NOT RUN. External GitHub/Sigstore verification and required
+native-enforcement check installation remain `NOT_CONFIGURED`; independent
+review is the next role.
