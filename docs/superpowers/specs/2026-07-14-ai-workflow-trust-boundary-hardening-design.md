@@ -100,19 +100,39 @@ timestamps, result/reason, command and policy references, evidence references,
 redaction state, manifest closure, done-claim outcome, and gate scope. Any
 tampering or stale projection is `INVALID_STATE`.
 
-Before final artifacts are published, exact compare-and-swap seals those inputs
-as a closed FINALIZED receipt in `.state/run-session.json`. The retained
-read-only receipt contains the complete run projection, canonical claim and
-gate identities, manifest identity, and exact artifact path/kind identities;
-`run.json` and the mutable manifest surface are consumers, not the authority.
+Before the first OPEN-to-FINALIZING compare-and-swap, the finalizer exclusively
+publishes closed `.state/finalization-journal.json`. This independent authority
+contains a journal UUID, exact source OPEN session, exact intended FINALIZING
+session, claim-input reference, and expected lock-recovery prefix. The run
+session's closed top-level `finalizationJournalIdentity` is null in OPEN, equals
+that journal path/UUID/digest in FINALIZING, and remains equal to the FINALIZED
+receipt's `journalIdentity`. Because the journal embeds that identity, its
+canonical digest is computed after normalizing only the embedded digest to 64
+ASCII zeroes; no other field is omitted or rewritten.
 
-Finalization uses a recoverable transaction boundary. Before publishing the
-first immutable final artifact it records the prior OPEN session and intended
-finalization identity in `.state`. If validation or publication fails before
-`run.json` is published, it removes only safely attributable partial final
-artifacts and restores the exact validated OPEN session. If cleanup cannot be
-proved safe, it retains a recoverable FINALIZING journal and returns BLOCKED
-rather than silently mutating state. A published `run.json` remains immutable.
+Before final artifacts are published, a second exact compare-and-swap seals
+those inputs as a closed FINALIZED receipt in `.state/run-session.json`. The
+retained read-only receipt contains the complete run projection, canonical
+claim and gate identities, manifest identity, journal identity, and exact
+artifact path/kind identities; `run.json` and the mutable manifest surface are
+consumers, not the authority.
+
+Finalization uses a recoverable transaction boundary. Any OPEN session with a
+journal is recovery-required, so normal command, approval, and finalization
+operations cannot mutate it. Explicit recovery validates the journal's exact
+OPEN source plus only an allowed lock-recovery suffix, removes and directory-
+fsyncs that journal, and returns `ALREADY_OPEN` without a normal mutation.
+FINALIZING and FINALIZED recovery additionally validate the session's exact
+journal identity against the independent authority before cleanup, rollback,
+or resume. Publication uncertainty is reconciled against the possibly
+published session/journal into a schema-valid rollback or recovery-required
+result, never an escaped traceback. If validation or publication fails before
+`run.json` is published, recovery removes only safely attributable partial
+final artifacts and restores the exact validated OPEN source. If cleanup
+cannot be proved safe, it retains the recovery state and returns BLOCKED.
+Failed recovery over raw FINALIZED state reapplies read-only mode to the
+session and journal before releasing the lock. A published `run.json` remains
+immutable.
 
 Control precedence remains:
 
@@ -213,6 +233,12 @@ Required Phase 1B tests:
 - stale generated summary;
 - validation and injected I/O failure after entering FINALIZING, proving safe
   rollback or recoverable journal behavior;
+- OPEN plus journal blocking normal operations until explicit `ALREADY_OPEN`
+  recovery, including allowed lock-recovery suffix validation;
+- journal path/UUID/digest tampering, first-CAS session identity binding, and
+  FINALIZED receipt identity equality;
+- publication uncertainty and runtime exception reconciliation without a
+  traceback, plus read-only mode repair on every failed FINALIZED recovery;
 - result precedence for blocking policy and child failure.
 
 Required Phase 2 tests:

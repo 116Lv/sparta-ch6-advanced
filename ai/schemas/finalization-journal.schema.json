@@ -27,7 +27,7 @@
     "sessionProjection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "workingDirectory", "environment", "state", "commandResultRefs", "processAttemptRefs", "approvalRefs", "policyViolationRefs", "gateResultRefs", "reservations", "lockRecoveries", "redactionApplied", "finalizationReceipt"],
+      "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "workingDirectory", "environment", "state", "commandResultRefs", "processAttemptRefs", "approvalRefs", "policyViolationRefs", "gateResultRefs", "reservations", "lockRecoveries", "redactionApplied", "finalizationJournalIdentity", "finalizationReceipt"],
       "properties": {
         "$schema": { "const": "ai/schemas/run-session.schema.json" },
         "$id": { "$ref": "#/$defs/repositoryPath" },
@@ -46,7 +46,29 @@
         "reservations": { "type": "array", "items": { "$ref": "#/$defs/reservation" } },
         "lockRecoveries": { "type": "array", "items": { "$ref": "#/$defs/lockRecovery" } },
         "redactionApplied": { "type": "boolean" },
+        "finalizationJournalIdentity": {
+          "oneOf": [{ "$ref": "#/$defs/finalizationJournalIdentity" }, { "type": "null" }]
+        },
         "finalizationReceipt": { "type": "null" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "OPEN" } }, "required": ["state"] },
+          "then": { "properties": { "finalizationJournalIdentity": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "state": { "const": "FINALIZING" } }, "required": ["state"] },
+          "then": { "properties": { "finalizationJournalIdentity": { "$ref": "#/$defs/finalizationJournalIdentity" } } }
+        }
+      ]
+    },
+    "finalizationJournalIdentity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "journalId", "canonicalSha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/repositoryPath" },
+        "journalId": { "$ref": "#/$defs/identifier" },
+        "canonicalSha256": { "$ref": "#/$defs/digest" }
       }
     },
     "reservation": {

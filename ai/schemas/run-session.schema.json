@@ -5,7 +5,7 @@
   "title": "AI Workflow Run Session And Finalization Receipt",
   "type": "object",
   "additionalProperties": false,
-  "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "workingDirectory", "environment", "state", "commandResultRefs", "processAttemptRefs", "approvalRefs", "policyViolationRefs", "gateResultRefs", "reservations", "lockRecoveries", "redactionApplied", "finalizationReceipt"],
+  "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "workingDirectory", "environment", "state", "commandResultRefs", "processAttemptRefs", "approvalRefs", "policyViolationRefs", "gateResultRefs", "reservations", "lockRecoveries", "redactionApplied", "finalizationJournalIdentity", "finalizationReceipt"],
   "properties": {
     "$schema": { "const": "ai/schemas/run-session.schema.json" },
     "$id": { "$ref": "#/$defs/repositoryPath" },
@@ -30,16 +30,21 @@
       "items": { "$ref": "#/$defs/lockRecovery" }
     },
     "redactionApplied": { "type": "boolean" },
+    "finalizationJournalIdentity": { "oneOf": [{ "$ref": "#/$defs/finalizationJournalIdentity" }, { "type": "null" }] },
     "finalizationReceipt": { "oneOf": [{ "$ref": "#/$defs/finalizationReceipt" }, { "type": "null" }] }
   },
   "allOf": [
     {
-      "if": { "properties": { "state": { "enum": ["OPEN", "FINALIZING"] } }, "required": ["state"] },
-      "then": { "properties": { "finalizationReceipt": { "type": "null" } } }
+      "if": { "properties": { "state": { "const": "OPEN" } }, "required": ["state"] },
+      "then": { "properties": { "finalizationJournalIdentity": { "type": "null" }, "finalizationReceipt": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "FINALIZING" } }, "required": ["state"] },
+      "then": { "properties": { "finalizationJournalIdentity": { "$ref": "#/$defs/finalizationJournalIdentity" }, "finalizationReceipt": { "type": "null" } } }
     },
     {
       "if": { "properties": { "state": { "const": "FINALIZED" } }, "required": ["state"] },
-      "then": { "properties": { "finalizationReceipt": { "$ref": "#/$defs/finalizationReceipt" } } }
+      "then": { "properties": { "finalizationJournalIdentity": { "$ref": "#/$defs/finalizationJournalIdentity" }, "finalizationReceipt": { "$ref": "#/$defs/finalizationReceipt" } } }
     }
   ],
   "$defs": {
@@ -66,6 +71,15 @@
     },
     "artifactKind": {
       "enum": ["COMMAND_RESULT", "PROCESS_ATTEMPT", "STDOUT_LOG", "STDERR_LOG", "APPROVAL", "POLICY_VIOLATION", "GATE_RESULT", "DONE_CLAIM"]
+    },
+    "finalizationJournalIdentity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "journalId", "canonicalSha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/repositoryPath" },
+        "journalId": { "$ref": "#/$defs/identifier" },
+        "canonicalSha256": { "$ref": "#/$defs/digest" }
+      }
     },
     "finalRunProjection": {
       "type": "object",
@@ -95,15 +109,7 @@
       "additionalProperties": false,
       "required": ["journalIdentity", "preReceiptSession", "preReceiptSessionSha256", "manifestIdentity", "runProjection", "claimIdentity", "gateIdentity", "artifactIdentities"],
       "properties": {
-        "journalIdentity": {
-          "type": "object", "additionalProperties": false,
-          "required": ["path", "journalId", "canonicalSha256"],
-          "properties": {
-            "path": { "$ref": "#/$defs/repositoryPath" },
-            "journalId": { "$ref": "#/$defs/identifier" },
-            "canonicalSha256": { "$ref": "#/$defs/digest" }
-          }
-        },
+        "journalIdentity": { "$ref": "#/$defs/finalizationJournalIdentity" },
         "preReceiptSession": { "$ref": "#/$defs/preReceiptSession" },
         "preReceiptSessionSha256": { "$ref": "#/$defs/digest" },
         "manifestIdentity": {
@@ -146,7 +152,7 @@
     "preReceiptSession": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "workingDirectory", "environment", "state", "commandResultRefs", "processAttemptRefs", "approvalRefs", "policyViolationRefs", "gateResultRefs", "reservations", "lockRecoveries", "redactionApplied", "finalizationReceipt"],
+      "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "workingDirectory", "environment", "state", "commandResultRefs", "processAttemptRefs", "approvalRefs", "policyViolationRefs", "gateResultRefs", "reservations", "lockRecoveries", "redactionApplied", "finalizationJournalIdentity", "finalizationReceipt"],
       "properties": {
         "$schema": { "const": "ai/schemas/run-session.schema.json" },
         "$id": { "$ref": "#/$defs/repositoryPath" },
@@ -165,6 +171,7 @@
         "reservations": { "type": "array", "items": { "$ref": "#/$defs/reservation" } },
         "lockRecoveries": { "type": "array", "items": { "$ref": "#/$defs/lockRecovery" } },
         "redactionApplied": { "type": "boolean" },
+        "finalizationJournalIdentity": { "$ref": "#/$defs/finalizationJournalIdentity" },
         "finalizationReceipt": { "type": "null" }
       }
     },
