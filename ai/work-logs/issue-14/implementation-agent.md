@@ -1793,6 +1793,61 @@ independent re-review remains with the parent.
   real repository `.ai-runs` were NOT RUN. Independent review remains required;
   this implementation evidence does not self-approve Task 13.
 
+### Task 13 Integration Fix 4 - Pre-Visibility Sealing And Retained Journals (2026-07-14)
+
+#### Findings And RED Evidence
+
+- A fifth narrow review found two Important gaps. Immutable final JSON was
+  linked into its visible destination while still writable and only chmodded
+  afterward. Rollback also restored OPEN and then unlinked the single fixed
+  journal, leaving a second fallible cleanup window after the authority CAS.
+- Five focused tests were observed RED in `8.608s`: the temporary source was
+  writable at link, a post-link failure left a writable visible artifact,
+  RESUMED and ALREADY_FINALIZED recovery left final artifacts writable, and an
+  applied-error after the OPEN rollback CAS could not observe a usable OPEN run
+  or a retained journal.
+
+#### Publication And Journal Transaction Semantics
+
+- Commit `050ba82` (`fix(ai): seal final evidence before visibility`) fully
+  encodes and file-fsyncs immutable final JSON in a same-directory temporary,
+  changes it to read-only, verifies that no write bits remain, and only then
+  creates the exclusive visible link and directory-fsyncs it. Post-chmod
+  uncertainty publishes nothing; post-link uncertainty can expose only a
+  read-only complete JSON file.
+- Finalization journals now use a closed per-attempt UUID path at
+  `.state/finalization-journals/<journal-id>.json`. The session identity path,
+  journal UUID, and canonical digest are validated together. Published journals
+  are never deleted on rollback or success; the OPEN compare-and-swap clears
+  the active identity atomically, inactive unique journals remain immutable
+  audit history, and the next attempt creates a new UUID journal.
+- A fixed legacy `.state/finalization-journal.json` marker is not migrated or
+  treated as inactive. Normal OPEN access and explicit recovery both fail
+  closed until that unsupported marker is resolved externally.
+- Normal success, recovery resume, and ALREADY_FINALIZED recovery re-apply and
+  verify read-only mode on the exact done claim, PRE_DONE_CLAIM gate, artifact
+  manifest, `run.json`, retained session, and active journal. Existing exact
+  partial artifacts are also sealed when recovery consumes them.
+- The run-session and journal schemas, AGENTS policy, Phase 1B specification,
+  and trust-boundary design now define unique journal paths, pre-visibility
+  sealing, retained audit history, active-identity authority, legacy-marker
+  rejection, and six-file recovery mode repair.
+
+#### Fresh Verification And Boundary
+
+- The five focused regressions passed in `9.660s` after implementation.
+- Fresh committed-HEAD verification exited `0`: GatewayResultSchema,
+  Phase1B2Task1Schema, StrictJsonAndSchemaValidation, the complete expanded
+  Phase1B3DoneClaimGate class, and Phase1B2Task7RepositoryBoundary ran 98 tests
+  in `120.527s`, all passed.
+- Cache-free AST parsing of both touched Python files, JSON parsing of both
+  touched schemas, and `git diff --check` exited `0`.
+- Only helper/schema/static checks against temporary repositories ran. Gradle,
+  product/build tests, servers, Docker, HTTP/API, databases, migrations, seeds,
+  deploys, infrastructure, GitHub mutation, push, PR, merge, Issue closure, and
+  real repository `.ai-runs` were NOT RUN. Independent review remains required;
+  this implementation evidence does not self-approve Task 13.
+
 ### Task 13 Integration Fix 3 - Session-Bound Journal Recovery (2026-07-14)
 
 #### Findings And RED Evidence
