@@ -100,15 +100,17 @@ timestamps, result/reason, command and policy references, evidence references,
 redaction state, manifest closure, done-claim outcome, and gate scope. Any
 tampering or stale projection is `INVALID_STATE`.
 
-Before the first OPEN-to-FINALIZING compare-and-swap, the finalizer exclusively
-publishes closed `.state/finalization-journal.json`. This independent authority
+Before the first OPEN-to-FINALIZING compare-and-swap, the finalizer creates a
+fresh UUID and exclusively publishes closed
+`.state/finalization-journals/<journal-id>.json`. This independent authority
 contains a journal UUID, exact source OPEN session, exact intended FINALIZING
 session, claim-input reference, and expected lock-recovery prefix. The run
 session's closed top-level `finalizationJournalIdentity` is null in OPEN, equals
 that journal path/UUID/digest in FINALIZING, and remains equal to the FINALIZED
 receipt's `journalIdentity`. Because the journal embeds that identity, its
 canonical digest is computed after normalizing only the embedded digest to 64
-ASCII zeroes; no other field is omitted or rewritten.
+ASCII zeroes; no other field is omitted or rewritten. Every attempt uses a new
+path, and every published journal remains immutable read-only audit history.
 
 Before final artifacts are published, a second exact compare-and-swap seals
 those inputs as a closed FINALIZED receipt in `.state/run-session.json`. The
@@ -117,11 +119,12 @@ claim and gate identities, manifest identity, journal identity, and exact
 artifact path/kind identities; `run.json` and the mutable manifest surface are
 consumers, not the authority.
 
-Finalization uses a recoverable transaction boundary. Any OPEN session with a
-journal is recovery-required, so normal command, approval, and finalization
-operations cannot mutate it. Explicit recovery validates the journal's exact
-OPEN source plus only an allowed lock-recovery suffix, removes and directory-
-fsyncs that journal, and returns `ALREADY_OPEN` without a normal mutation.
+Finalization uses a recoverable transaction boundary. Only the journal identity
+in the session is active authority; inactive schema-valid UUID journals do not
+block OPEN work. A fixed legacy marker is never accepted and remains explicit
+recovery-required. Rollback validates the journal's exact OPEN source plus only
+an allowed lock-recovery suffix and compare-and-swaps that OPEN session, which
+atomically clears active authority. It never deletes a published journal.
 FINALIZING and FINALIZED recovery additionally validate the session's exact
 journal identity against the independent authority before cleanup, rollback,
 or resume. Publication uncertainty is reconciled against the possibly
@@ -130,9 +133,15 @@ result, never an escaped traceback. If validation or publication fails before
 `run.json` is published, recovery removes only safely attributable partial
 final artifacts and restores the exact validated OPEN source. If cleanup
 cannot be proved safe, it retains the recovery state and returns BLOCKED.
-Failed recovery over raw FINALIZED state reapplies read-only mode to the
-session and journal before releasing the lock. A published `run.json` remains
-immutable.
+Immutable final JSON is fully written and file-fsynced in a same-directory
+temporary, changed to read-only and mode-verified before an exclusive link
+makes it visible, then directory-fsynced. Thus post-chmod uncertainty publishes
+nothing and post-link uncertainty can expose only a read-only file. Successful
+resume and `ALREADY_FINALIZED` recovery call and verify read-only sealing for
+the exact claim, gate, manifest, run, session, and active journal. Failed
+recovery over raw FINALIZED state reapplies read-only mode to the session and
+safely identified journal before releasing the lock. A published `run.json`
+remains immutable.
 
 Control precedence remains:
 
@@ -239,6 +248,9 @@ Required Phase 1B tests:
   FINALIZED receipt identity equality;
 - publication uncertainty and runtime exception reconciliation without a
   traceback, plus read-only mode repair on every failed FINALIZED recovery;
+- post-chmod and post-link publication uncertainty, six-file recovery mode
+  repair, applied-error after OPEN rollback CAS, retained immutable audit
+  journals, fixed legacy-marker rejection, and a distinct next-attempt journal;
 - result precedence for blocking policy and child failure.
 
 Required Phase 2 tests:

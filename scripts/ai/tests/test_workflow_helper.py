@@ -759,8 +759,8 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
         finalizing = json.loads(json.dumps(instance))
         finalizing["state"] = "FINALIZING"
         finalizing["finalizationJournalIdentity"] = {
-            "path": ".ai-runs/run-1/.state/finalization-journal.json",
-            "journalId": "journal-1",
+            "path": ".ai-runs/run-1/.state/finalization-journals/11111111-1111-4111-8111-111111111111.json",
+            "journalId": "11111111-1111-4111-8111-111111111111",
             "canonicalSha256": "a" * 64,
         }
         self.assert_schema_valid("run-session", finalizing)
@@ -2984,8 +2984,8 @@ class PreCommandTests(unittest.TestCase):
         session = self.session()
         session["state"] = "FINALIZING"
         session["finalizationJournalIdentity"] = {
-            "path": ".ai-runs/run-1/.state/finalization-journal.json",
-            "journalId": "journal-1",
+            "path": ".ai-runs/run-1/.state/finalization-journals/11111111-1111-4111-8111-111111111111.json",
+            "journalId": "11111111-1111-4111-8111-111111111111",
             "canonicalSha256": "a" * 64,
         }
         self.write_json(self.session_path().relative_to(self.root).as_posix(), session)
@@ -5979,9 +5979,16 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
     def assert_partial_finalization_absent(self):
         for path in self.partial_finalization_paths():
             self.assertFalse(path.exists(), path)
-        self.assertFalse(
-            (self.root / ".ai-runs/run-1/.state/finalization-journal.json").exists(),
-        )
+        for path in (self.root / ".ai-runs/run-1/.state/finalization-journals").glob("*.json"):
+            self.assertFalse(path.stat().st_mode & stat.S_IWRITE, path)
+
+    def journal_path(self, *, session=None, journal=None):
+        if journal is not None:
+            reference = journal["$id"]
+        else:
+            retained = self.session() if session is None else session
+            reference = retained["finalizationJournalIdentity"]["path"]
+        return self.root / reference
 
     def crash_left_finalization(
         self, *, sealed=False, partial=(),
@@ -6083,7 +6090,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual(self.session()["state"], "FINALIZED")
         self.assertIsNotNone(self.session()["finalizationReceipt"])
         self.assertFalse(self.session_path.stat().st_mode & stat.S_IWRITE)
-        journal_path = run / ".state" / "finalization-journal.json"
+        journal_path = self.journal_path()
         self.assertTrue(journal_path.is_file())
         self.assertFalse(journal_path.stat().st_mode & stat.S_IWRITE)
         verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
@@ -6119,7 +6126,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
     def test_finalization_journal_semantically_binds_exact_session_transition(self):
         result, status = self.finalize()
         self.assertEqual((result["result"], status), ("PASS", 0))
-        journal_path = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+        journal_path = self.journal_path()
         original = json.loads(journal_path.read_text(encoding="utf-8"))
         self.helper.validate_finalization_journal(self.root, original, "run-1")
         mutations = {
@@ -6143,29 +6150,37 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
                 with self.assertRaises(self.helper.InvalidStateError):
                     self.helper.validate_finalization_journal(self.root, journal, "run-1")
 
-    def test_open_journal_blocks_normal_session_access_until_explicit_recovery(self):
-        source, _journal = self.open_finalization_journal()
-        journal_path = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+    def test_inactive_open_journal_is_retained_without_blocking_normal_session(self):
+        source, journal = self.open_finalization_journal()
+        journal_path = self.journal_path(journal=journal)
+
+        self.assertEqual(self.helper.active_open_session(self.root, "run-1"), source)
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "ALREADY_OPEN")
+        self.assertTrue(journal_path.exists())
+        self.assertFalse(journal_path.stat().st_mode & stat.S_IWRITE)
+        self.assertEqual(self.helper.active_open_session(self.root, "run-1"), source)
+
+    def test_legacy_fixed_journal_marker_remains_explicit_recovery_required(self):
+        marker = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+        marker.write_text("{}\n", encoding="utf-8")
 
         with self.assertRaises(self.helper.RegistryBlockedError):
             self.helper.active_open_session(self.root, "run-1")
         recovered, status = self.recover_finalization()
 
-        self.assertEqual((recovered["result"], status), ("PASS", 0))
-        self.assertEqual(recovered["data"]["action"], "ALREADY_OPEN")
-        self.assertFalse(journal_path.exists())
-        self.assertEqual(self.helper.active_open_session(self.root, "run-1"), source)
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+        self.assertTrue(marker.exists())
 
     def test_session_journal_identity_tracks_first_cas_and_sealed_receipt(self):
         result, status = self.finalize()
         self.assertEqual((result["result"], status), ("PASS", 0))
         session = self.session()
         receipt = session["finalizationReceipt"]
-        journal = json.loads(
-            (self.root / ".ai-runs/run-1/.state/finalization-journal.json").read_text(
-                encoding="utf-8",
-            )
-        )
+        journal = json.loads(self.journal_path().read_text(encoding="utf-8"))
         identity = session.get("finalizationJournalIdentity")
 
         self.assertIsNotNone(identity)
@@ -6199,7 +6214,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
                 self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
                 self.assertEqual(self.session()["state"], "FINALIZING")
                 self.assertTrue(
-                    (self.root / ".ai-runs/run-1/.state/finalization-journal.json").exists(),
+                    self.journal_path(journal=journal).exists(),
                 )
 
     def assert_prepare_uncertainty_has_structured_reconciliation(self, exception_type):
@@ -6221,9 +6236,11 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertIn((result["result"], status), {("INVALID_STATE", 5), ("BLOCKED", 2)})
         if result["result"] == "INVALID_STATE":
             self.assertEqual(self.session()["state"], "OPEN")
-            self.assertFalse(
-                (self.root / ".ai-runs/run-1/.state/finalization-journal.json").exists(),
+            retained = list(
+                (self.root / ".ai-runs/run-1/.state/finalization-journals").glob("*.json"),
             )
+            self.assertTrue(retained)
+            self.assertTrue(all(not path.stat().st_mode & stat.S_IWRITE for path in retained))
 
     def test_prepare_evidence_uncertainty_has_no_traceback(self):
         self.assert_prepare_uncertainty_has_structured_reconciliation(
@@ -6238,7 +6255,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         session = self.session()
         session["finalizationReceipt"]["journalIdentity"]["canonicalSha256"] = "0" * 64
         self.session_path.write_text(json.dumps(session), encoding="utf-8")
-        journal_path = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+        journal_path = self.journal_path(session=session)
         journal_path.chmod(0o600)
 
         recovered, status = self.recover_finalization()
@@ -6246,6 +6263,139 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
         self.assertFalse(self.session_path.stat().st_mode & stat.S_IWRITE)
         self.assertFalse(journal_path.stat().st_mode & stat.S_IWRITE)
+
+    def test_final_json_is_read_only_before_link_visibility(self):
+        destination = self.root / ".ai-runs/run-1/pre-link-claim.json"
+        observed = {}
+
+        def reject_link(source, target):
+            observed["sourceWritable"] = bool(Path(source).stat().st_mode & stat.S_IWRITE)
+            raise OSError("injected post-chmod uncertainty")
+
+        with mock.patch.object(os, "link", side_effect=reject_link):
+            with self.assertRaises(OSError):
+                self.helper.publish_final_json(
+                    self.root, destination, self.done_claim(),
+                    "ai/schemas/done-claim.schema.json",
+                )
+
+        self.assertEqual(observed, {"sourceWritable": False})
+        self.assertFalse(destination.exists())
+        self.assertEqual(list(destination.parent.glob(f".{destination.name}.*")), [])
+
+    def test_post_link_uncertainty_leaves_visible_final_json_read_only(self):
+        destination = self.root / ".ai-runs/run-1/post-link-claim.json"
+        original_fsync = self.helper.fsync_directory
+
+        def fail_after_link(path):
+            if Path(path) == destination.parent and destination.exists():
+                raise OSError("injected post-link uncertainty")
+            return original_fsync(path)
+
+        with mock.patch.object(self.helper, "fsync_directory", side_effect=fail_after_link):
+            with self.assertRaises(OSError):
+                self.helper.publish_final_json(
+                    self.root, destination, self.done_claim(),
+                    "ai/schemas/done-claim.schema.json",
+                )
+
+        self.assertTrue(destination.is_file())
+        self.assertFalse(destination.stat().st_mode & stat.S_IWRITE)
+
+    def finalization_control_and_artifact_paths(self):
+        session = self.session()
+        identity = session["finalizationJournalIdentity"]
+        return (
+            self.root / ".ai-runs/run-1/done-claim.json",
+            self.root / ".ai-runs/run-1/gate-results/pre-done-claim.json",
+            self.root / ".ai-runs/run-1/artifact-manifest.json",
+            self.root / ".ai-runs/run-1/run.json",
+            self.session_path,
+            self.root / identity["path"],
+        )
+
+    def test_recovery_success_repairs_every_final_artifact_mode(self):
+        self.crash_left_finalization(
+            sealed=True, partial=("claim", "gate", "manifest"),
+        )
+        before = self.finalization_control_and_artifact_paths()
+        for path in before:
+            if path.exists():
+                path.chmod(0o600)
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], recovered["data"]["action"], status), (
+            "PASS", "RESUMED", 0,
+        ))
+        for path in self.finalization_control_and_artifact_paths():
+            self.assertTrue(path.is_file(), path)
+            self.assertFalse(path.stat().st_mode & stat.S_IWRITE, path)
+
+    def test_already_finalized_recovery_repairs_every_final_artifact_mode(self):
+        result, status = self.finalize()
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        paths = self.finalization_control_and_artifact_paths()
+        for path in paths:
+            path.chmod(0o600)
+
+        recovered, recovery_status = self.recover_finalization()
+
+        self.assertEqual((
+            recovered["result"], recovered["data"]["action"], recovery_status,
+        ), ("PASS", "ALREADY_FINALIZED", 0))
+        for path in paths:
+            self.assertFalse(path.stat().st_mode & stat.S_IWRITE, path)
+
+    def test_applied_open_rollback_retains_audit_and_next_attempt_uses_unique_journal(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        original_replace = self.helper.replace_run_session
+        first_journal = {}
+        open_observed = []
+        injected = False
+        failure = self.helper.InvalidStateError([self.helper.validation_error(
+            "INJECTED_FINALIZATION_FAILURE", message="injected final publication failure",
+        )])
+
+        def apply_then_fail(root, path, replacement, acquired, expected_session=None):
+            nonlocal injected
+            if replacement["state"] == "FINALIZING" and not first_journal:
+                first_journal.update(replacement["finalizationJournalIdentity"])
+            result = original_replace(root, path, replacement, acquired, expected_session)
+            if replacement["state"] == "OPEN" and not injected:
+                injected = True
+                open_observed.append(
+                    self.helper.active_open_session(self.root, "run-1")["state"],
+                )
+                raise RuntimeError("injected applied OPEN CAS uncertainty")
+            return result
+
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(self.helper, "replace_run_session", side_effect=apply_then_fail),
+            mock.patch.object(self.helper, "publish_done_gate_manifest_run", side_effect=failure),
+        ):
+            failed, failed_status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+
+        first_path = self.root / first_journal["path"]
+        self.assertEqual((failed["result"], failed_status), ("INVALID_STATE", 5))
+        self.assertEqual(open_observed, ["OPEN"])
+        self.assertIsNone(self.session()["finalizationJournalIdentity"])
+        self.assertTrue(first_path.is_file())
+        self.assertFalse(first_path.stat().st_mode & stat.S_IWRITE)
+
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            retry, retry_status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+
+        self.assertEqual((retry["result"], retry_status), ("PASS", 0))
+        second_identity = self.session()["finalizationJournalIdentity"]
+        second_path = self.root / second_identity["path"]
+        self.assertNotEqual(second_identity["journalId"], first_journal["journalId"])
+        self.assertNotEqual(second_path, first_path)
+        self.assertTrue(first_path.is_file())
+        self.assertFalse(first_path.stat().st_mode & stat.S_IWRITE)
+        self.assertFalse(second_path.stat().st_mode & stat.S_IWRITE)
 
     def test_verify_finalized_rejects_pre_receipt_session_reference_mutation_matrix(self):
         result, status = self.finalize()
@@ -6393,7 +6543,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
 
         def inspect_before_cas(root, path, replacement, acquired, expected_session=None):
             if replacement["state"] == "FINALIZING":
-                journal_path = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+                journal_path = self.root / replacement["finalizationJournalIdentity"]["path"]
                 if journal_path.is_file():
                     observed.update(json.loads(journal_path.read_text(encoding="utf-8")))
             return original_replace(root, path, replacement, acquired, expected_session)
@@ -6436,7 +6586,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
 
     def test_missing_finalization_journal_never_normalizes_to_open(self):
         self.crash_left_finalization(sealed=True, partial=("claim",))
-        journal_path = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+        journal_path = self.journal_path()
         journal_path.chmod(0o600)
         journal_path.unlink()
 
@@ -6449,7 +6599,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
 
     def test_mutated_finalization_journal_never_normalizes_to_open(self):
         self.crash_left_finalization(sealed=True, partial=("claim",))
-        journal_path = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+        journal_path = self.journal_path()
         journal_path.chmod(0o600)
         journal = json.loads(journal_path.read_text(encoding="utf-8"))
         journal["claimInputRef"] = ".ai-runs/run-1/alternate-claim-input.json"
@@ -6465,6 +6615,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
     def test_mutated_receipt_journal_identity_never_normalizes_to_open(self):
         self.crash_left_finalization(sealed=True, partial=("claim",))
         session = self.session()
+        journal_path = self.journal_path(session=session)
         session["finalizationReceipt"]["journalIdentity"]["canonicalSha256"] = "0" * 64
         self.session_path.write_text(json.dumps(session), encoding="utf-8")
 
@@ -6473,9 +6624,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
         self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
         self.assertEqual(self.session()["state"], "FINALIZED")
-        self.assertTrue(
-            (self.root / ".ai-runs/run-1/.state/finalization-journal.json").exists(),
-        )
+        self.assertTrue(journal_path.exists())
 
     def test_schema_invalid_receipt_never_normalizes_to_open(self):
         self.crash_left_finalization(sealed=True, partial=("claim",))
@@ -6587,8 +6736,9 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertIn(
             "done-claim-check.sh recover-finalization <run-id>", policy,
         )
-        self.assertIn(".state/finalization-journal.json", policy)
-        self.assertIn("invalid or missing journal/receipt authority remains `BLOCKED`", policy)
+        self.assertIn(".state/finalization-journals/<journal-id>.json", policy)
+        self.assertIn("invalid or missing journal/receipt authority", policy)
+        self.assertIn("legacy fixed `.state/finalization-journal.json` marker remain `BLOCKED`", policy)
 
     def test_recovery_never_rolls_back_published_run_and_repairs_session_read_only(self):
         result, status = self.finalize()

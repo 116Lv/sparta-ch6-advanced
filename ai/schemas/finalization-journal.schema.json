@@ -8,7 +8,7 @@
   "required": ["$schema", "$id", "schemaVersion", "journalId", "runId", "sourceOpenSession", "finalizingSession", "claimInputRef", "expectedLockRecoveries"],
   "properties": {
     "$schema": { "const": "ai/schemas/finalization-journal.schema.json" },
-    "$id": { "$ref": "#/$defs/repositoryPath" },
+    "$id": { "allOf": [{ "$ref": "#/$defs/repositoryPath" }, { "pattern": "^\\.ai-runs/[A-Za-z0-9][A-Za-z0-9._-]*/\\.state/finalization-journals/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\\.json$" }] },
     "schemaVersion": { "const": 1 },
     "journalId": { "type": "string", "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$" },
     "runId": { "$ref": "#/$defs/identifier" },
@@ -66,8 +66,8 @@
       "type": "object", "additionalProperties": false,
       "required": ["path", "journalId", "canonicalSha256"],
       "properties": {
-        "path": { "$ref": "#/$defs/repositoryPath" },
-        "journalId": { "$ref": "#/$defs/identifier" },
+        "path": { "allOf": [{ "$ref": "#/$defs/repositoryPath" }, { "pattern": "^\\.ai-runs/[A-Za-z0-9][A-Za-z0-9._-]*/\\.state/finalization-journals/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\\.json$" }] },
+        "journalId": { "type": "string", "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$" },
         "canonicalSha256": { "$ref": "#/$defs/digest" }
       }
     },
