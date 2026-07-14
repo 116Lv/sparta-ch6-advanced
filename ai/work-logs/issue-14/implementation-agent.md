@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T10:21:53+09:00
+last_updated: 2026-07-14T12:59:25+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -1595,3 +1595,86 @@ independent re-review remains with the parent.
   deploys, GitHub Actions/state mutation, push, PR, merge, Issue closure, or
   real `.ai-runs`. Native enforcement and the external verifier remain
   `NOT_CONFIGURED`; independent re-review remains next.
+
+### Task 13 Integration Fix - Complete Finalized Projection (2026-07-14)
+
+#### Root Cause And TDD Evidence
+
+- `run.json` is intentionally excluded from the artifact manifest, while the
+  prior `validate_final_run_projection()` compared only run/task/result,
+  selected reference lists, and the PASS manifest reference. Schema-valid
+  mutations of `$id`, `startedAt`, `endedAt`, `workingDirectory`,
+  `environment`, `redactionApplied`, and `reason` therefore returned PASS.
+  Non-PASS finalizations also left manifest ID/run ID, complete claim content,
+  gate reason, and non-command artifact path/kind identities unbound.
+- Focused RED exited `1`: 4 test methods produced 10 expected failures. Every
+  mutation returned `PASS`, exit `0`, instead of `FINAL_RUN_PROJECTION_MISMATCH`.
+  The matrix covered the seven unbound run fields plus schema-valid FAIL-run
+  manifest, claim, and gate mutations; claim/gate bytes were changed and the
+  manifest digest/size was repaired to prove the manifest was not authority.
+- The first embedded-manifest receipt prototype made the focused tests green,
+  but review of the trust model showed that the receipt could be repaired with
+  the manifest. That prototype was not committed. Authority was moved to the
+  exact-CAS retained run session before proceeding.
+
+#### Authoritative Receipt And Recovery Boundary
+
+- Run sessions now have closed OPEN, FINALIZING, and FINALIZED states.
+  `finalizationReceipt` is null in OPEN/FINALIZING and required in FINALIZED.
+  The receipt contains the complete closed run projection, canonical digest
+  and explicit outcome identity for the done claim, canonical digest and
+  result/reason identity for the PRE_DONE_CLAIM gate, exact manifest `$id` and
+  run ID, and the complete ordered artifact path/kind set.
+- Finalization uses exact expected-session CAS twice: OPEN to FINALIZING, then
+  FINALIZING to receipt-bearing FINALIZED before final artifacts are written.
+  `run.json` is published only from the retained receipt projection and remains
+  the final publication. The retained session is then made read-only and is
+  excluded from manifest/directory evidence closure as control authority.
+- Rollback receives the orchestrator's exact current FINALIZING or FINALIZED
+  snapshot. Before `run.json` publication it removes only the attributed final
+  artifacts and compare-and-swaps back to the captured OPEN session. A changed
+  sealed session fails closed with `FINALIZATION_RECOVERY_REQUIRED`; an
+  existing `run.json` remains non-rollbackable.
+- `verify-finalized` loads the retained FINALIZED session independently of the
+  manifest, validates every schema-defined run field by exact object equality,
+  recomputes claim/gate canonical identities, requires the requested manifest
+  identity, and compares every manifest artifact path/kind exactly.
+
+#### GREEN And Expanded Verification
+
+- Focused retained-authority GREEN exited `0`: the valid finalization plus the
+  run-field and non-PASS manifest/claim/gate mutation methods all passed.
+- Phase 1B-2 schema plus Phase 1B-3 finalization exited `0`: 38 tests passed in
+  `40.305s`. After adding the second seal-CAS fault, schema-coverage, read-only
+  receipt, and process-attempt kind-identity regressions, the fresh final Phase
+  1B-3 class exited `0`: 24 tests passed in `43.018s`.
+- Both CAS fault boundaries are covered: an exception after the first
+  FINALIZING replace and an exception after the receipt-bearing FINALIZED seal
+  each restore the exact OPEN snapshot. Validation/OSError partial publication
+  rollback, retry, restore-error, mutated-seal recovery, and published-run
+  non-rollback invariants also pass.
+- The first exact full helper run completed 424 tests in `220.670s` with 44
+  errors and 20 platform skips. All 44 errors were sandbox `WinError 5` failures
+  from Phase 3B temporary provenance directory creation; no product or helper
+  assertion failure was reported. Two approved long full-process reruns ended
+  after the tool host closed stdout, so no PASS or exit code is claimed from
+  them.
+- The same affected and downstream coverage was rerun in bounded partitions:
+  Phase 2C plus Phase 3A exited `0` with 131 tests passed and 2 platform skips
+  in `52.848s`; approved Phase 3B exited `0` with 25 tests passed and 1 platform
+  skip in `3.236s`. Together with the initial full-module evidence, this
+  distinguishes the filesystem sandbox fault from functional regressions.
+- Python AST parsing and Draft 2020-12 self-checks for all 28 schemas passed.
+  Git Bash syntax checks for every `scripts/ai/**/*.sh`, `git diff --check`,
+  staged diff check, and absence checks for repository `.ai-runs`, Phase 3B
+  temporary directories, and recursive `__pycache__` all exited `0`.
+
+#### Commit And Boundary
+
+- Implementation commit: `9692fba` (`fix(ai): bind complete final run
+  projection`). Changed files are the run-session schema/fixtures, helper,
+  focused regressions, Phase 1B specification, and trust-boundary design.
+- Gradle, product/build tests, server, Docker, HTTP/API, database, migration,
+  seed, deploy, infrastructure, GitHub Actions/state mutation, push, PR, merge,
+  Issue closure, and real repository `.ai-runs` were NOT RUN. This remains
+  Phase 1B integrity-only evidence; independent review is the next role.
