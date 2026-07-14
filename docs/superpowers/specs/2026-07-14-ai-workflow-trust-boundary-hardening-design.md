@@ -187,6 +187,14 @@ expiry remain bound. Missing, extra, duplicate, reordered, wrong-producer,
 wrong-schema, changed, expired, unavailable, or unmapped inputs are STALE or
 UNCERTAIN and cannot reuse PASS.
 
+The native binding additionally fixes the logical result reference to
+`ai/native-adapter-result.json` and its actual policy evidence to
+`ai/native-runtime-adapters.json` under the native-runtime-adapters schema.
+Copied or arbitrary native paths are stale even for identical bytes. Because
+the current native result does not contain a durable task, gate, commit, policy,
+and freshness envelope, the exact current native binding is still uncertain
+and cannot make a verification decision fresh.
+
 Skill catalog semantic validation requires every approved skill ID exactly once.
 Handoff semantic validation requires every distinct skill selected by the
 catalog/policy exactly once and rejects missing, duplicate, unknown, or

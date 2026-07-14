@@ -16,6 +16,8 @@ Verification-decision entries use a distinct closed key containing task key, gat
 
 A cache entry is `FRESH` only when every declared path still exists as expected and every recorded digest matches. Verification-decision reuse additionally requires the current commit and policy digest, exact ordered canonical check/producer set, every leaf-result and evidence digest, every canonical evidence schema, leaf correlation and freshness, and unexpired decision to match. Missing, extra, duplicate, reordered, wrong-producer, wrong-schema, or digest-mismatched known bindings are `STALE`; an unavailable path or unmapped classification, task/gate identity, policy/commit source, or environment input is `UNCERTAIN` unless another proven mismatch or expiry makes the entry `STALE`.
 
+The native cache binding has additional fixed identities: `leafResultRef` must be exactly `ai/native-adapter-result.json`, while evidence must be exactly `ai/native-runtime-adapters.json` validated with `ai/schemas/native-runtime-adapters.schema.json`. A copied or arbitrary native result/evidence path is `STALE` even when its bytes and digest match. The current native result schema does not carry a durable task, gate, commit, policy, and freshness envelope, so an otherwise exact native binding remains `UNCERTAIN` and prevents a `FRESH` verification decision until that correlated durable envelope exists.
+
 The canonical cache does not materialize a reusable verification PASS decision whose commit or short-lived expiry would become self-referential or immediately stale. Such decisions may be recorded only when every durable input is available.
 
 ## Conservative Invalidation

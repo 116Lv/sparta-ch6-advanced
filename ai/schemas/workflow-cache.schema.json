@@ -179,7 +179,8 @@
           "enum": [
             "ai/schemas/gateway-result.schema.json",
             "ai/schemas/command-result.schema.json",
-            "ai/schemas/native-adapter-result.schema.json"
+            "ai/schemas/native-adapter-result.schema.json",
+            "ai/schemas/native-runtime-adapters.schema.json"
           ]
         }
       }

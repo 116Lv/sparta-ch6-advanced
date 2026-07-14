@@ -7523,12 +7523,13 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
                         "phase2CLeafResult": "NOT_APPLICABLE",
                     },
                 }
-                leaf_path = self.root / "ai" / "cache-native-adapter-result.json"
+                leaf_path = self.root / "ai" / "native-adapter-result.json"
                 leaf_path.write_text(json.dumps(leaf, sort_keys=True), encoding="utf-8")
+                evidence_path = self.root / "ai" / "native-runtime-adapters.json"
                 evidence = {
-                    "path": leaf_path.relative_to(self.root).as_posix(),
-                    "sha256": hashlib.sha256(leaf_path.read_bytes()).hexdigest(),
-                    "schema": check["evidenceSchema"],
+                    "path": evidence_path.relative_to(self.root).as_posix(),
+                    "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+                    "schema": "ai/schemas/native-runtime-adapters.schema.json",
                 }
             else:
                 evidence_path = self.root / "ai" / f"cache-{check_id}-evidence.json"
@@ -7621,14 +7622,51 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
             )[0]
         self.assertEqual(actual["status"], "STALE")
 
-    def test_verification_cache_exact_full_consumed_check_set_is_fresh(self):
+    def test_verification_cache_exact_full_consumed_check_set_is_uncertain_without_durable_native_leaf(self):
         entry = self.verification_cache_entry()
         with mock.patch.object(
                 self.helper, "repository_commit_sha", return_value=entry["key"]["commitSha"]):
             actual = self.helper.cache_invalidation_report(
                 self.root, {"entries": [entry]},
             )[0]
-        self.assertEqual(actual["status"], "FRESH")
+        self.assertEqual(actual["status"], "UNCERTAIN")
+        self.assertIn("durable", actual["reason"].lower())
+
+    def test_verification_cache_copied_native_result_path_is_stale(self):
+        entry = self.verification_cache_entry()
+        native_binding = entry["key"]["checkBindings"][0]
+        source = self.root / native_binding["leafResultRef"]
+        copied = self.root / "ai" / "copied-native-adapter-result.json"
+        copied.write_bytes(source.read_bytes())
+        native_binding["leafResultRef"] = copied.relative_to(self.root).as_posix()
+        native_binding["leafResultSha256"] = hashlib.sha256(copied.read_bytes()).hexdigest()
+        native_binding["evidence"] = {
+            "path": native_binding["leafResultRef"],
+            "sha256": native_binding["leafResultSha256"],
+            "schema": "ai/schemas/native-adapter-result.schema.json",
+        }
+        entry["evidenceRefs"][0] = native_binding["evidence"]["path"]
+        with mock.patch.object(
+                self.helper, "repository_commit_sha", return_value=entry["key"]["commitSha"]):
+            actual = self.helper.cache_invalidation_report(
+                self.root, {"entries": [entry]},
+            )[0]
+        self.assertEqual(actual["status"], "STALE")
+
+    def test_verification_cache_schema_accepts_actual_native_evidence_schema(self):
+        entry = self.verification_cache_entry()
+        cache = {
+            "$schema": "./schemas/workflow-cache.schema.json",
+            "$id": "ai/workflow-cache.json",
+            "schemaVersion": 1,
+            "updatedAt": "2026-07-14T00:00:00Z",
+            "entries": [entry],
+            "handoffNotes": [],
+            "invalidationEvents": [],
+        }
+        self.helper.validate(
+            self.root, cache, "ai/schemas/workflow-cache.schema.json",
+        )
 
     def test_verification_cache_identity_covers_every_decision_input(self):
         entry = self.verification_cache_entry()
@@ -7674,7 +7712,7 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
         commit_sha = entry["key"]["commitSha"]
         with mock.patch.object(self.helper, "repository_commit_sha", return_value=commit_sha):
             report = self.helper.cache_invalidation_report(self.root, {"entries": [entry]})
-            self.assertEqual(report[0]["status"], "FRESH")
+            self.assertEqual(report[0]["status"], "UNCERTAIN")
 
             mutations = (
                 ("policy digest", "policySha256", "c" * 64, "STALE"),

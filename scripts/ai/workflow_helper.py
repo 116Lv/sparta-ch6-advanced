@@ -6624,6 +6624,14 @@ def validate_handoff_skill_set(handoff, catalog):
         )])
 
 
+def verification_cache_evidence_schema(check):
+    return (
+        "ai/schemas/native-runtime-adapters.schema.json"
+        if check["id"] == "native-runtime-adapter"
+        else check["evidenceSchema"]
+    )
+
+
 def verification_cache_checks(policy, change_type, entry_point):
     changes = {item["id"]: item for item in policy.get("changeTypes", [])}
     checks = {item["id"]: item for item in policy.get("checks", [])}
@@ -6641,7 +6649,7 @@ def verification_cache_checks(policy, change_type, entry_point):
         selected.append({
             "checkId": check_id,
             "producerId": check["producerId"],
-            "evidenceSchema": check["evidenceSchema"],
+            "evidenceSchema": verification_cache_evidence_schema(check),
         })
     return selected or None
 
@@ -6675,6 +6683,9 @@ def validate_verification_cache_binding(root, binding, expected, key):
         stale_reasons.append("Cache check producer changed.")
 
     leaf_ref = binding.get("leafResultRef")
+    is_native = expected["checkId"] == NATIVE_ADAPTER_CHECK_ID
+    if is_native and leaf_ref != "ai/native-adapter-result.json":
+        stale_reasons.append("Cache native leaf result reference changed.")
     leaf_value = None
     leaf_bytes = None
     try:
@@ -6701,7 +6712,7 @@ def validate_verification_cache_binding(root, binding, expected, key):
         except InvalidStateError:
             stale_reasons.append("Cache leaf result schema validation failed.")
         else:
-            if expected["checkId"] == NATIVE_ADAPTER_CHECK_ID:
+            if is_native:
                 if leaf_value.get("$id") != "ai/native-adapter-result.json":
                     stale_reasons.append("Cache native leaf identity changed.")
             else:
@@ -6737,34 +6748,23 @@ def validate_verification_cache_binding(root, binding, expected, key):
         return stale_reasons, uncertain_reasons
     if evidence.get("schema") != expected["evidenceSchema"]:
         stale_reasons.append("Cache evidence schema changed.")
+    if is_native and evidence.get("path") != "ai/native-runtime-adapters.json":
+        stale_reasons.append("Cache native evidence reference changed.")
     if leaf_value is not None:
-        if expected["checkId"] == NATIVE_ADAPTER_CHECK_ID:
-            expected_evidence = {
-                "path": leaf_ref,
-                "sha256": binding.get("leafResultSha256"),
-                "schema": expected["evidenceSchema"],
-            }
-        else:
+        if not is_native:
             leaf_evidence = leaf_value.get("evidence")
             expected_evidence = None if not isinstance(leaf_evidence, dict) else {
                 "path": leaf_evidence.get("ref"),
                 "sha256": leaf_evidence.get("sha256"),
                 "schema": leaf_evidence.get("schema"),
             }
-        if evidence != expected_evidence:
+        if not is_native and evidence != expected_evidence:
             stale_reasons.append("Cache evidence is not bound to its leaf result.")
 
     try:
-        if (
-            expected["checkId"] == NATIVE_ADAPTER_CHECK_ID
-            and evidence.get("path") == leaf_ref
-            and leaf_bytes is not None
-        ):
-            evidence_bytes, evidence_value = leaf_bytes, leaf_value
-        else:
-            evidence_bytes, evidence_value = verification_cache_file(
-                root, evidence.get("path"), read_verification_leaf_evidence,
-            )
+        evidence_bytes, evidence_value = verification_cache_file(
+            root, evidence.get("path"), read_verification_leaf_evidence,
+        )
     except InvalidStateError as error:
         if verification_cache_path_unavailable(error):
             uncertain_reasons.append("Cache evidence path is missing, unmapped, or unavailable.")
@@ -6780,6 +6780,10 @@ def validate_verification_cache_binding(root, binding, expected, key):
                 validate(root, evidence_value, expected["evidenceSchema"])
             except InvalidStateError:
                 stale_reasons.append("Cache evidence schema validation failed.")
+    if is_native:
+        uncertain_reasons.append(
+            "Cache native result has no durable task, gate, commit, policy, and freshness envelope."
+        )
     return stale_reasons, uncertain_reasons
 
 
@@ -6820,7 +6824,7 @@ def verification_cache_invalidation(root, entry, policy, policy_sha256, commit_s
             item["id"]: {
                 "checkId": item["id"],
                 "producerId": item["producerId"],
-                "evidenceSchema": item["evidenceSchema"],
+                "evidenceSchema": verification_cache_evidence_schema(item),
             }
             for item in policy.get("checks", [])
         }
