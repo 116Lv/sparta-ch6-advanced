@@ -3,12 +3,12 @@ issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 agent: implementation-agent
 tracking_status: issue_backed
-status: in_progress
+status: done
 owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
-ended_at:
-last_updated: 2026-07-14T18:04:17+09:00
+ended_at: 2026-07-14T18:15:29+09:00
+last_updated: 2026-07-14T18:15:29+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -140,6 +140,20 @@ Ready to begin global Task 1 (Phase 1B-3 local Task 1).
   required before commit. After approval, commit and push the existing branch,
   then monitor PR #15 repository-contract Actions to an uninterrupted green
   whole-module result.
+
+### GitHub Actions Result
+
+- Implementation commit: `7852e25ef7ce951dd749c9bc1a83b34c01acc3c9`
+  (`fix(ai): harden recovery quarantine races`).
+- Pushed to the existing `codex/ai-workflow-trust-hardening` branch; no force
+  push, merge, or Issue closure occurred.
+- PR #15 Actions run `29320678751`, job `87044997120`, executed the exact
+  repository-contract entrypoint on Linux. It passed 468 helper tests in
+  `252.518s`, emitted final `OK` with no reported skips, uploaded diagnostics,
+  and completed successfully at `2026-07-14T09:14:15Z`.
+- The two original CI failures are green on the target Linux runner.
+  Repository-contract green remains distinct from native enforcement, which
+  is still `NOT_CONFIGURED` under the existing project contract.
 
 # Decisions
 
