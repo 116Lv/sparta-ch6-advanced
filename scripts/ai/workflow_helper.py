@@ -117,6 +117,7 @@ SCHEMA_NAMES = (
     "github-ci-provenance",
     "context-map",
     "done-claim",
+    "finalization-journal",
     "gateway-result",
     "helper-runtime-evidence",
     "host-native-trust",
@@ -3742,7 +3743,7 @@ def complete_recovery(
             or existing["reason"] != "DEAD_AND_EXPIRED"
         ):
             raise InvalidStateError([validation_error("LOCK_RECOVERY_HISTORY_MISMATCH", message="recovery history contradicts quarantine")])
-    elif not finalization_recovery:
+    else:
         original_session = json.loads(json.dumps(session))
         session["lockRecoveries"].append({
             "recoveryId": recovery_id,
@@ -4953,7 +4954,7 @@ def expected_terminal_artifacts(session):
     return expected
 
 
-def validate_evidence_closure(root, session, include_final_refs=()):
+def validate_evidence_closure(root, session, include_final_refs=(), exclude_refs=()):
     session = json.loads(json.dumps(session))
     session["_root"] = root
     expected = expected_terminal_artifacts(session)
@@ -4965,9 +4966,14 @@ def validate_evidence_closure(root, session, include_final_refs=()):
         if not path.is_file():
             continue
         relative = path.relative_to(run).as_posix()
-        if relative.startswith(".state/") or relative == "claim-input.json":
+        reference = path.relative_to(root).as_posix()
+        if (
+            relative.startswith(".state/")
+            or relative in ("claim-input.json", "artifact-manifest.json", "run.json")
+            or reference in exclude_refs
+        ):
             continue
-        actual.add(path.relative_to(root).as_posix())
+        actual.add(reference)
     unexpected = actual - expected
     missing = expected - actual
     if unexpected:
@@ -5068,10 +5074,106 @@ def final_run_projection(session, gate_result, reason, ended_at):
     }
 
 
-def finalization_receipt(session, run_projection, claim, gate, artifact_identities):
+def finalization_journal_path(root, run_id):
+    _root, path, _exists = secure_run_artifact_path(
+        root, run_id, (".state", "finalization-journal.json"),
+    )
+    return path
+
+
+def finalization_journal(run_id, source_open_session, finalizing_session, claim_input_ref):
+    return {
+        "$schema": "ai/schemas/finalization-journal.schema.json",
+        "$id": f".ai-runs/{run_id}/.state/finalization-journal.json",
+        "schemaVersion": 1,
+        "journalId": str(uuid.uuid4()),
+        "runId": run_id,
+        "sourceOpenSession": json.loads(json.dumps(source_open_session)),
+        "finalizingSession": json.loads(json.dumps(finalizing_session)),
+        "claimInputRef": claim_input_ref,
+        "expectedLockRecoveries": json.loads(json.dumps(source_open_session["lockRecoveries"])),
+    }
+
+
+def validate_finalization_journal(root, journal, expected_run_id, *, source_session=None, claim_input_ref=None):
+    validate(root, journal, "ai/schemas/finalization-journal.schema.json")
+    source = journal["sourceOpenSession"]
+    finalizing = journal["finalizingSession"]
+    validate(root, source, "ai/schemas/run-session.schema.json")
+    validate(root, finalizing, "ai/schemas/run-session.schema.json")
+    expected_finalizing = expected_finalizing_session(source)
+    mismatched = (
+        journal["$id"] != f".ai-runs/{expected_run_id}/.state/finalization-journal.json"
+        or journal["runId"] != expected_run_id
+        or source["runId"] != expected_run_id
+        or source["state"] != "OPEN"
+        or finalizing != expected_finalizing
+        or journal["expectedLockRecoveries"] != source["lockRecoveries"]
+        or finalizing["lockRecoveries"] != journal["expectedLockRecoveries"]
+        or source_session is not None and source != source_session
+        or claim_input_ref is not None and journal["claimInputRef"] != claim_input_ref
+    )
+    if mismatched:
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_JOURNAL_MISMATCH", message="finalization journal authority mismatches the run",
+        )])
+    return journal
+
+
+def read_finalization_journal(root, run_id):
+    _path, journal = read_exact_run_json(
+        root, run_id, (".state", "finalization-journal.json"),
+        "ai/schemas/finalization-journal.schema.json",
+    )
+    if journal is None:
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_JOURNAL_MISSING", message="independent finalization journal is missing",
+        )])
+    return validate_finalization_journal(root, journal, run_id)
+
+
+def ensure_finalization_journal(root, source_session, finalizing_session, claim_input_ref):
+    run_id = source_session["runId"]
+    path = finalization_journal_path(root, run_id)
+    if path.exists() or path.is_symlink():
+        journal = read_finalization_journal(root, run_id)
+        return validate_finalization_journal(
+            root, journal, run_id, source_session=source_session, claim_input_ref=claim_input_ref,
+        )
+    journal = finalization_journal(run_id, source_session, finalizing_session, claim_input_ref)
+    publish_final_json(root, path, journal, "ai/schemas/finalization-journal.schema.json")
+    return journal
+
+
+def finalization_journal_identity(journal):
+    return {
+        "path": journal["$id"],
+        "journalId": journal["journalId"],
+        "canonicalSha256": canonical_instance_sha256(journal),
+    }
+
+
+def remove_exact_finalization_journal(root, run_id, journal, acquired, expected_session=None):
+    validate_held_run_lock(root, run_id, acquired)
+    if expected_session is not None and read_locked_run_session(root, run_id, acquired) != expected_session:
+        raise RegistryBlockedError([validation_error(
+            "RUN_SESSION_CHANGED", message="run session changed before journal cleanup",
+        )])
+    if read_finalization_journal(root, run_id) != journal:
+        raise RegistryBlockedError([validation_error(
+            "FINALIZATION_JOURNAL_CHANGED", message="finalization journal changed before cleanup",
+        )])
+    path = finalization_journal_path(root, run_id)
+    path.chmod(0o600)
+    path.unlink()
+    fsync_directory(path.parent)
+
+
+def finalization_receipt(session, journal, run_projection, claim, gate, artifact_identities):
     pre_receipt_session = json.loads(json.dumps(session))
     run_id = pre_receipt_session["runId"]
     return {
+        "journalIdentity": finalization_journal_identity(journal),
         "preReceiptSession": pre_receipt_session,
         "preReceiptSessionSha256": canonical_instance_sha256(pre_receipt_session),
         "manifestIdentity": {
@@ -5098,7 +5200,7 @@ def finalization_receipt(session, run_projection, claim, gate, artifact_identiti
     }
 
 
-def expected_final_artifact_identities(root, session):
+def expected_final_artifact_identities(root, session, excluded_refs=()):
     run_id = session["runId"]
     root = Path(root).resolve(strict=True)
     run = root / ".ai-runs" / run_id
@@ -5107,9 +5209,10 @@ def expected_final_artifact_identities(root, session):
         if not path.is_file():
             continue
         relative = path.relative_to(run).as_posix()
-        if relative.startswith(".state/") or relative == "claim-input.json":
+        reference = path.relative_to(root).as_posix()
+        if relative.startswith(".state/") or relative == "claim-input.json" or reference in excluded_refs:
             continue
-        references.add(path.relative_to(root).as_posix())
+        references.add(reference)
     references.update({
         f".ai-runs/{run_id}/done-claim.json",
         f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
@@ -5125,38 +5228,98 @@ def expected_final_artifact_identities(root, session):
     return identities
 
 
-def sealed_finalization_session(root, session, run_projection, claim, gate):
+def sealed_finalization_session(root, session, journal, run_projection, claim, gate):
     sealed = json.loads(json.dumps(session))
     sealed["state"] = "FINALIZED"
     sealed["finalizationReceipt"] = finalization_receipt(
         session,
+        journal,
         run_projection,
         claim,
         gate,
-        expected_final_artifact_identities(root, session),
+        expected_final_artifact_identities(root, session, {journal["claimInputRef"]}),
     )
     validate(root, sealed, "ai/schemas/run-session.schema.json")
     return sealed
 
 
-def validate_finalization_receipt_anchor(session, claim, gate, expected_run_id):
+def valid_lock_recovery_suffix(snapshot, session):
+    expected = snapshot["lockRecoveries"]
+    current = session["lockRecoveries"]
+    if current[:len(expected)] != expected:
+        return False
+    recovery_ids = {item["recoveryId"] for item in expected}
+    for recovery in current[len(expected):]:
+        recovery_id = recovery.get("recoveryId")
+        if (
+            not isinstance(recovery_id, str)
+            or not RECOVERY_QUARANTINE_PATTERN.fullmatch(recovery_id)
+            or recovery.get("replacementOwnerId") != recovery_uuid(recovery_id)
+            or recovery.get("runId") != snapshot["runId"]
+            or recovery_id in recovery_ids
+        ):
+            return False
+        recovery_ids.add(recovery_id)
+    return True
+
+
+def finalized_session_matches_snapshot(session, snapshot, receipt):
+    if not valid_lock_recovery_suffix(snapshot, session):
+        return False
+    expected = json.loads(json.dumps(snapshot))
+    expected["state"] = "FINALIZED"
+    expected["finalizationReceipt"] = receipt
+    expected["lockRecoveries"] = json.loads(json.dumps(session["lockRecoveries"]))
+    return session == expected
+
+
+def session_matches_journal_projection(session, projection):
+    if not valid_lock_recovery_suffix(projection, session):
+        return False
+    expected = json.loads(json.dumps(projection))
+    expected["lockRecoveries"] = json.loads(json.dumps(session["lockRecoveries"]))
+    return session == expected
+
+
+def validate_receipt_journal_binding(session, journal):
+    receipt = session.get("finalizationReceipt")
+    snapshot = receipt.get("preReceiptSession") if isinstance(receipt, dict) else None
+    mismatched = (
+        not isinstance(snapshot, dict)
+        or receipt.get("journalIdentity") != finalization_journal_identity(journal)
+        or receipt.get("preReceiptSessionSha256") != canonical_instance_sha256(snapshot)
+        or snapshot != journal["finalizingSession"]
+        or not finalized_session_matches_snapshot(session, snapshot, receipt)
+    )
+    if mismatched:
+        raise RegistryBlockedError([validation_error(
+            "FINALIZATION_RECOVERY_REQUIRED",
+            message="finalization receipt does not match independent journal authority",
+        )])
+    return receipt, snapshot
+
+
+def validate_finalization_receipt_anchor(root, session, claim, gate, expected_run_id, journal=None):
     receipt = session.get("finalizationReceipt")
     snapshot = receipt.get("preReceiptSession") if isinstance(receipt, dict) else None
     if not isinstance(snapshot, dict):
         raise InvalidStateError([validation_error(
             "FINAL_RUN_PROJECTION_MISMATCH", message="finalization receipt session anchor is missing",
         )])
-    expected_finalized = json.loads(json.dumps(snapshot))
-    expected_finalized["state"] = "FINALIZED"
-    expected_finalized["finalizationReceipt"] = receipt
+    journal = read_finalization_journal(root, expected_run_id) if journal is None else validate_finalization_journal(
+        root, journal, expected_run_id,
+    )
+    journal_identity = receipt.get("journalIdentity", {})
     claim_identity = receipt.get("claimIdentity", {})
     gate_identity = receipt.get("gateIdentity", {})
     mismatched = (
         receipt.get("preReceiptSessionSha256") != canonical_instance_sha256(snapshot)
+        or journal_identity != finalization_journal_identity(journal)
+        or snapshot != journal["finalizingSession"]
         or snapshot.get("state") != "FINALIZING"
         or snapshot.get("finalizationReceipt") is not None
         or snapshot.get("runId") != expected_run_id
-        or session != expected_finalized
+        or not finalized_session_matches_snapshot(session, snapshot, receipt)
         or claim_identity.get("path") != f".ai-runs/{expected_run_id}/done-claim.json"
         or claim_identity.get("canonicalSha256") != canonical_instance_sha256(claim)
         or claim_identity.get("implementationStatus") != claim.get("implementationStatus")
@@ -5173,10 +5336,12 @@ def validate_finalization_receipt_anchor(session, claim, gate, expected_run_id):
         raise InvalidStateError([validation_error(
             "FINAL_RUN_PROJECTION_MISMATCH", message="finalization receipt session anchor mismatches",
         )])
-    return receipt, snapshot
+    return receipt, snapshot, journal
 
 
-def validate_final_run_projection(run_index, claim, gate, manifest, session, expected_run_id=None):
+def validate_final_run_projection(
+    root, run_index, claim, gate, manifest, session, expected_run_id=None, journal=None,
+):
     expected_run_id = claim["runId"] if expected_run_id is None else expected_run_id
     expected_evidence = [
         f".ai-runs/{expected_run_id}/done-claim.json",
@@ -5190,8 +5355,8 @@ def validate_final_run_projection(run_index, claim, gate, manifest, session, exp
             if artifact["kind"] == kind
         )
 
-    receipt, snapshot = validate_finalization_receipt_anchor(
-        session, claim, gate, expected_run_id,
+    receipt, snapshot, journal = validate_finalization_receipt_anchor(
+        root, session, claim, gate, expected_run_id, journal=journal,
     )
     expected_artifact_identities = [
         {"path": artifact["path"], "kind": artifact["kind"]}
@@ -5248,7 +5413,7 @@ def publish_finalized_run(root, run_projection):
     return run_projection
 
 
-def publish_done_gate_manifest_run(root, session, claim, gate, run_projection):
+def publish_done_gate_manifest_run(root, session, claim, gate, run_projection, claim_input_ref):
     run_id = session["runId"]
     claim_destination = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "done-claim.json"
     if not claim_destination.exists():
@@ -5259,8 +5424,8 @@ def publish_done_gate_manifest_run(root, session, claim, gate, run_projection):
     validate_evidence_closure(root, session, include_final_refs={
         f".ai-runs/{run_id}/done-claim.json",
         f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
-    })
-    manifest = final_artifact_manifest(root, run_id)
+    }, exclude_refs={claim_input_ref})
+    manifest = final_artifact_manifest(root, run_id, {claim_input_ref})
     manifest_destination = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "artifact-manifest.json"
     publish_final_json(root, manifest_destination, manifest, "ai/schemas/artifact-manifest.schema.json")
     publish_finalized_run(root, run_projection)
@@ -5297,6 +5462,7 @@ def rollback_finalization(
     final_refs: Sequence[str],
     acquired,
     expected_current_session=None,
+    journal=None,
 ) -> None:
     root = Path(root).resolve(strict=True)
     validate(root, original_session, "ai/schemas/run-session.schema.json")
@@ -5332,6 +5498,12 @@ def rollback_finalization(
         raise RegistryBlockedError([validation_error(
             "FINALIZING_SESSION_CHANGED", message="FINALIZING session changed before rollback",
         )])
+    if journal is not None:
+        retained_journal = read_finalization_journal(root, run_id)
+        if retained_journal != journal:
+            raise RegistryBlockedError([validation_error(
+                "FINALIZATION_JOURNAL_CHANGED", message="finalization journal changed before rollback",
+            )])
 
     for reference in final_refs:
         validate_held_run_lock(root, run_id, acquired)
@@ -5352,12 +5524,15 @@ def rollback_finalization(
             expected_session=expected_finalizing,
         )
     except Exception:
-        if read_locked_run_session(root, run_id, acquired) == original_session:
-            return
-        raise
+        if read_locked_run_session(root, run_id, acquired) != original_session:
+            raise
+    if journal is not None:
+        remove_exact_finalization_journal(
+            root, run_id, journal, acquired, expected_session=original_session,
+        )
 
 
-def final_artifact_manifest(root, run_id):
+def final_artifact_manifest(root, run_id, excluded_refs=()):
     root = Path(root).resolve(strict=True)
     run = root / ".ai-runs" / run_id
     artifacts = []
@@ -5365,7 +5540,12 @@ def final_artifact_manifest(root, run_id):
         if not path.is_file():
             continue
         relative = path.relative_to(run).as_posix()
-        if relative.startswith(".state/") or relative in ("artifact-manifest.json", "run.json", "claim-input.json"):
+        reference = path.relative_to(root).as_posix()
+        if (
+            relative.startswith(".state/")
+            or relative in ("artifact-manifest.json", "run.json", "claim-input.json")
+            or reference in excluded_refs
+        ):
             continue
         kind = artifact_kind_for(path)
         if kind is None:
@@ -5395,6 +5575,8 @@ def verify_finalized_run(root, run_id):
         _path, run_index = read_exact_run_json(root, run_id, ("run.json",), "ai/schemas/run.schema.json")
         if run_index is None:
             raise InvalidStateError([validation_error("FINALIZED_RUN_MISSING", message="finalized run.json is missing")])
+        journal = read_finalization_journal(root, run_id)
+        claim_input_ref = journal["claimInputRef"]
         _manifest_path, manifest = read_exact_run_json(root, run_id, ("artifact-manifest.json",), "ai/schemas/artifact-manifest.schema.json")
         if manifest is None:
             raise InvalidStateError([validation_error("ARTIFACT_MANIFEST_MISSING", message="artifact manifest is missing")])
@@ -5410,9 +5592,14 @@ def verify_finalized_run(root, run_id):
             if not path.is_file():
                 continue
             relative = path.relative_to(run).as_posix()
-            if relative.startswith(".state/") or relative in ("artifact-manifest.json", "run.json", "claim-input.json"):
+            reference = path.relative_to(root).as_posix()
+            if (
+                relative.startswith(".state/")
+                or relative in ("artifact-manifest.json", "run.json", "claim-input.json")
+                or reference == claim_input_ref
+            ):
                 continue
-            actual.add(path.relative_to(root).as_posix())
+            actual.add(reference)
         if set(manifest_paths) != actual:
             raise InvalidStateError([validation_error("FINALIZED_DIRECTORY_CLOSURE_MISMATCH", message="finalized directory closure mismatches manifest")])
         _claim_path, claim = read_exact_run_json(
@@ -5433,7 +5620,8 @@ def verify_finalized_run(root, run_id):
                 "FINALIZATION_RECEIPT_MISSING", message="retained finalized session is missing",
             )])
         validate_final_run_projection(
-            run_index, claim, gate, manifest, session, expected_run_id=run_id,
+            root, run_index, claim, gate, manifest, session,
+            expected_run_id=run_id, journal=journal,
         )
         data = {
             "runId": run_id,
@@ -5479,7 +5667,7 @@ def read_or_publish_final_json(root, run_id, components, expected, schema_path):
     return expected
 
 
-def validate_recovery_manifest(root, run_id, manifest):
+def validate_recovery_manifest(root, run_id, manifest, excluded_refs=()):
     run = Path(root).resolve(strict=True) / ".ai-runs" / run_id
     manifest_paths = {artifact["path"]: artifact for artifact in manifest["artifacts"]}
     for reference, artifact in manifest_paths.items():
@@ -5497,7 +5685,12 @@ def validate_recovery_manifest(root, run_id, manifest):
         if not path.is_file():
             continue
         relative = path.relative_to(run).as_posix()
-        if relative.startswith(".state/") or relative in ("artifact-manifest.json", "run.json", "claim-input.json"):
+        reference = path.relative_to(root).as_posix()
+        if (
+            relative.startswith(".state/")
+            or relative in ("artifact-manifest.json", "run.json", "claim-input.json")
+            or reference in excluded_refs
+        ):
             continue
         actual.add(path.relative_to(Path(root).resolve(strict=True)).as_posix())
     if set(manifest_paths) != actual:
@@ -5507,14 +5700,14 @@ def validate_recovery_manifest(root, run_id, manifest):
         )])
 
 
-def resume_sealed_finalization(root, run_id, session, acquired):
+def resume_sealed_finalization(root, run_id, session, journal, acquired):
     receipt = session["finalizationReceipt"]
     snapshot = receipt["preReceiptSession"]
     claim_path = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "done-claim.json"
     if claim_path.exists():
         claim = read_json(claim_path)
     else:
-        claim = read_json(Path(root).resolve(strict=True) / ".ai-runs" / run_id / "claim-input.json")
+        claim = read_json(done_claim_source_path(root, run_id, journal["claimInputRef"]))
     validate(root, claim, "ai/schemas/done-claim.schema.json")
     gate_identity = receipt["gateIdentity"]
     gate = gate_result_artifact(
@@ -5522,7 +5715,14 @@ def resume_sealed_finalization(root, run_id, session, acquired):
     )
     if gate["result"] == "PASS":
         gate["data"]["taskKey"] = snapshot["taskKey"]
-    validate_finalization_receipt_anchor(session, claim, gate, run_id)
+    validate_finalization_receipt_anchor(root, session, claim, gate, run_id, journal=journal)
+    _root, manifest_path, manifest_exists = secure_run_artifact_path(
+        root, run_id, ("artifact-manifest.json",), create_parents=True,
+    )
+    manifest = None
+    if manifest_exists:
+        manifest = read_json(manifest_path)
+        validate(root, manifest, "ai/schemas/artifact-manifest.schema.json")
     read_or_publish_final_json(
         root, run_id, ("done-claim.json",), claim, "ai/schemas/done-claim.schema.json",
     )
@@ -5533,21 +5733,18 @@ def resume_sealed_finalization(root, run_id, session, acquired):
     validate_evidence_closure(root, snapshot, include_final_refs={
         f".ai-runs/{run_id}/done-claim.json",
         f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
-    })
-    _root, manifest_path, manifest_exists = secure_run_artifact_path(
-        root, run_id, ("artifact-manifest.json",), create_parents=True,
-    )
-    if manifest_exists:
-        manifest = read_json(manifest_path)
-        validate(root, manifest, "ai/schemas/artifact-manifest.schema.json")
-    else:
-        manifest = final_artifact_manifest(root, run_id)
+    }, exclude_refs={journal["claimInputRef"]})
+    if manifest is None:
+        manifest = final_artifact_manifest(root, run_id, {journal["claimInputRef"]})
         publish_final_json(
             root, manifest_path, manifest, "ai/schemas/artifact-manifest.schema.json",
         )
-    validate_recovery_manifest(root, run_id, manifest)
+    validate_recovery_manifest(root, run_id, manifest, {journal["claimInputRef"]})
     projection = receipt["runProjection"]
-    validate_final_run_projection(projection, claim, gate, manifest, session, expected_run_id=run_id)
+    validate_final_run_projection(
+        root, projection, claim, gate, manifest, session,
+        expected_run_id=run_id, journal=journal,
+    )
     validate_held_run_lock(root, run_id, acquired)
     publish_finalized_run(root, projection)
     make_read_only(Path(root).resolve(strict=True) / session["$id"])
@@ -5562,52 +5759,81 @@ def recover_finalization(root, run_id):
             errors=preflight["errors"],
         ), preflight_status)
     acquired = None
+
+    def recovery_required():
+        evidence = validation_error(
+            "FINALIZATION_RECOVERY_REQUIRED",
+            message="independent finalization authority is invalid or recovery is uncertain",
+        )
+        return publish_result(root, gateway_result(
+            "BLOCKED", evidence["code"], operation="FINALIZATION_RECOVERY", errors=[evidence],
+        ), 2)
+
     try:
         validate_run_start_inputs(run_id, "finalization-recovery")
         acquired = acquire_run_lock(root, run_id, purpose="finalization-recovery")
         session = read_locked_run_session(root, run_id, acquired)
         _root, _run_path, run_exists = secure_run_artifact_path(root, run_id, ("run.json",))
+        journal_path = finalization_journal_path(root, run_id)
+        if session["state"] == "OPEN" and not (journal_path.exists() or journal_path.is_symlink()):
+            return finalization_recovery_result(root, run_id, "OPEN", "ALREADY_OPEN")
+        try:
+            journal = read_finalization_journal(root, run_id)
+        except (InvalidStateError, OSError, KeyError, TypeError, ValueError):
+            return recovery_required()
         if run_exists:
             verified, status = verify_finalized_run(root, run_id)
             if status != 0:
-                raise InvalidStateError(verified.get("errors") or [validation_error(
-                    verified["reason"], message="published finalized run is invalid",
-                )])
+                return recovery_required()
             make_read_only(root / session["$id"])
             return finalization_recovery_result(
                 root, run_id, "FINALIZED", "ALREADY_FINALIZED",
             )
         if session["state"] == "OPEN":
-            return finalization_recovery_result(root, run_id, "OPEN", "ALREADY_OPEN")
-        if session["state"] == "FINALIZING":
-            original = json.loads(json.dumps(session))
-            original["state"] = "OPEN"
-            rollback_finalization(
-                root, original, finalization_artifact_refs(run_id), acquired,
-                expected_current_session=session,
+            if not session_matches_journal_projection(session, journal["sourceOpenSession"]):
+                return recovery_required()
+            remove_exact_finalization_journal(
+                root, run_id, journal, acquired, expected_session=session,
             )
             return finalization_recovery_result(root, run_id, "OPEN", "ROLLED_BACK")
-        receipt = session["finalizationReceipt"]
-        snapshot = receipt["preReceiptSession"]
-        original = json.loads(json.dumps(snapshot))
-        original["state"] = "OPEN"
-        try:
-            resume_sealed_finalization(root, run_id, session, acquired)
-        except (InvalidStateError, TypeError, ValueError):
+        if session["state"] == "FINALIZING":
+            if not session_matches_journal_projection(session, journal["finalizingSession"]):
+                return recovery_required()
+            original = json.loads(json.dumps(journal["sourceOpenSession"]))
+            original["lockRecoveries"] = json.loads(json.dumps(session["lockRecoveries"]))
             rollback_finalization(
                 root, original, finalization_artifact_refs(run_id), acquired,
-                expected_current_session=session,
+                expected_current_session=session, journal=journal,
             )
+            return finalization_recovery_result(root, run_id, "OPEN", "ROLLED_BACK")
+        try:
+            validate_receipt_journal_binding(session, journal)
+        except (InvalidStateError, RegistryBlockedError, KeyError, TypeError, ValueError):
+            return recovery_required()
+        original = json.loads(json.dumps(journal["sourceOpenSession"]))
+        original["lockRecoveries"] = json.loads(json.dumps(session["lockRecoveries"]))
+        try:
+            resume_sealed_finalization(root, run_id, session, journal, acquired)
+        except (EvidenceWriteUncertainty, RuntimeError):
+            return recovery_required()
+        except (InvalidStateError, TypeError, ValueError):
+            try:
+                rollback_finalization(
+                    root, original, finalization_artifact_refs(run_id), acquired,
+                    expected_current_session=session, journal=journal,
+                )
+            except (EvidenceWriteUncertainty, RuntimeError, InvalidStateError, RegistryBlockedError, OSError):
+                return recovery_required()
             return finalization_recovery_result(root, run_id, "OPEN", "ROLLED_BACK")
         return finalization_recovery_result(root, run_id, "FINALIZED", "RESUMED")
     except RegistryBlockedError as error:
         return publish_result(root, gateway_result(
             "BLOCKED", error.errors[0]["code"], operation="FINALIZATION_RECOVERY", errors=error.errors,
         ), 2)
-    except InvalidStateError as error:
-        return publish_result(root, gateway_result(
-            "INVALID_STATE", error.errors[0]["code"], operation="FINALIZATION_RECOVERY", errors=error.errors,
-        ), 5)
+    except InvalidStateError:
+        return recovery_required()
+    except (EvidenceWriteUncertainty, RuntimeError):
+        return recovery_required()
     except (OSError, KeyError, TypeError, ValueError):
         return publish_result(root, gateway_result(
             "INVALID_STATE", "FINALIZATION_RECOVERY_FAILED", operation="FINALIZATION_RECOVERY",
@@ -5628,6 +5854,7 @@ def prepare_done_claim(root, run_id, claim_ref):
     original_session = None
     rollback_session = None
     finalization_started = False
+    journal = None
 
     def recovery_required_result():
         error = validation_error(
@@ -5648,6 +5875,7 @@ def prepare_done_claim(root, run_id, claim_ref):
                 finalization_artifact_refs(run_id),
                 acquired,
                 expected_current_session=rollback_session,
+                journal=journal,
             )
         except Exception:
             return recovery_required_result()
@@ -5663,6 +5891,21 @@ def prepare_done_claim(root, run_id, claim_ref):
         require_no_reserved_attempts(session)
         original_session = json.loads(json.dumps(session))
         replacement = expected_finalizing_session(original_session)
+
+        source = done_claim_source_path(root, run_id, claim_ref)
+        claim = read_json(source)
+        validate(root, claim, "ai/schemas/done-claim.schema.json")
+        require_generated_summaries_current(root)
+        validate_evidence_closure(root, replacement, exclude_refs={claim_ref})
+        result, reason = done_claim_semantic_result(root, replacement, claim)
+        status = done_claim_exit_for(result)
+        gate = gate_result_artifact(root, run_id, result, reason)
+        if result == "PASS":
+            gate["data"]["taskKey"] = replacement["taskKey"]
+        run_projection = final_run_projection(replacement, result, reason, utc_now())
+        journal = ensure_finalization_journal(
+            root, original_session, replacement, claim_ref,
+        )
         try:
             replace_run_session(
                 root, root / replacement["$id"], replacement, acquired, expected_session=original_session,
@@ -5674,26 +5917,23 @@ def prepare_done_claim(root, run_id, claim_ref):
                 return recovery_required_result()
             if current_session == replacement:
                 finalization_started = True
-            elif current_session != original_session:
+            elif current_session == original_session:
+                try:
+                    remove_exact_finalization_journal(
+                        root, run_id, journal, acquired, expected_session=original_session,
+                    )
+                    journal = None
+                except Exception:
+                    return recovery_required_result()
+            else:
                 return recovery_required_result()
             raise
         finalization_started = True
         session = replacement
         rollback_session = replacement
 
-        source = done_claim_source_path(root, run_id, claim_ref)
-        claim = read_json(source)
-        validate(root, claim, "ai/schemas/done-claim.schema.json")
-        require_generated_summaries_current(root)
-        validate_evidence_closure(root, session)
-        result, reason = done_claim_semantic_result(root, session, claim)
-        status = done_claim_exit_for(result)
-        gate = gate_result_artifact(root, run_id, result, reason)
-        if result == "PASS":
-            gate["data"]["taskKey"] = session["taskKey"]
-        run_projection = final_run_projection(session, result, reason, utc_now())
         sealed_session = sealed_finalization_session(
-            root, session, run_projection, claim, gate,
+            root, session, journal, run_projection, claim, gate,
         )
         try:
             replace_run_session(
@@ -5717,6 +5957,7 @@ def prepare_done_claim(root, run_id, claim_ref):
         rollback_session = sealed_session
         gate = publish_done_gate_manifest_run(
             root, session, claim, gate, session["finalizationReceipt"]["runProjection"],
+            journal["claimInputRef"],
         )
         return publish_result(root, gate, status)
     except RegistryBlockedError as error:

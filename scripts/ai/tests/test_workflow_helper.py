@@ -574,7 +574,10 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
     def setUpClass(cls):
         cls.helper = load_helper()
         cls.schemas = {}
-        for name in ("gateway-result", "command-result", "run-session", "process-attempt", "artifact-manifest"):
+        for name in (
+            "gateway-result", "command-result", "run-session", "process-attempt",
+            "artifact-manifest", "finalization-journal",
+        ):
             with (REPOSITORY_ROOT / "ai" / "schemas" / f"{name}.schema.json").open(encoding="utf-8") as handle:
                 cls.schemas[name] = json.load(handle)
             Draft202012Validator.check_schema(cls.schemas[name])
@@ -603,7 +606,9 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
             return json.load(handle)
 
     def test_phase_1b2_and_phase_2_schema_names_are_allowlisted(self):
-        additions = {"run-session", "process-attempt", "artifact-manifest"}
+        additions = {
+            "run-session", "process-attempt", "artifact-manifest", "finalization-journal",
+        }
         self.assertTrue(additions.issubset(self.helper.SCHEMA_NAMES))
         phase_2a = {"context-map", "workflow-cache", "repo-intake-result"}
         self.assertTrue(phase_2a.issubset(self.helper.SCHEMA_NAMES))
@@ -625,7 +630,7 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
             "github-ci-provenance",
         }
         self.assertTrue(phase_3b.issubset(self.helper.SCHEMA_NAMES))
-        self.assertEqual(len(self.helper.SCHEMA_NAMES), 28)
+        self.assertEqual(len(self.helper.SCHEMA_NAMES), 29)
         self.assertEqual(
             {name for name in self.helper.SCHEMA_NAMES if name in additions},
             additions,
@@ -5964,14 +5969,26 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
     def assert_partial_finalization_absent(self):
         for path in self.partial_finalization_paths():
             self.assertFalse(path.exists(), path)
+        self.assertFalse(
+            (self.root / ".ai-runs/run-1/.state/finalization-journal.json").exists(),
+        )
 
-    def crash_left_finalization(self, *, sealed=False, partial=()):
+    def crash_left_finalization(
+        self, *, sealed=False, partial=(),
+        claim_reference=".ai-runs/run-1/claim-input.json",
+    ):
         self.publish_command_result(exit_code=0)
-        claim_ref = self.write_claim(self.done_claim())
+        claim_ref = claim_reference
+        claim_path = self.root / claim_ref
+        claim_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        claim_path.write_text(json.dumps(self.done_claim()), encoding="utf-8")
         acquired = self.helper.acquire_run_lock(self.root, "run-1")
         try:
             original = self.helper.active_open_session(self.root, "run-1")
             finalizing = self.helper.expected_finalizing_session(original)
+            journal = self.helper.ensure_finalization_journal(
+                self.root, original, finalizing, claim_ref,
+            )
             self.helper.replace_run_session(
                 self.root, self.session_path, finalizing, acquired,
                 expected_session=original,
@@ -5989,7 +6006,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
             current = finalizing
             if sealed:
                 current = self.helper.sealed_finalization_session(
-                    self.root, finalizing, projection, claim, gate,
+                    self.root, finalizing, journal, projection, claim, gate,
                 )
                 self.helper.replace_run_session(
                     self.root, self.session_path, current, acquired,
@@ -6008,7 +6025,9 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
                     "ai/schemas/gateway-result.schema.json",
                 )
             if "manifest" in partial:
-                manifest = self.helper.final_artifact_manifest(self.root, "run-1")
+                manifest = self.helper.final_artifact_manifest(
+                    self.root, "run-1", {claim_ref},
+                )
                 self.helper.publish_final_json(
                     self.root, run / "artifact-manifest.json", manifest,
                     "ai/schemas/artifact-manifest.schema.json",
@@ -6039,6 +6058,9 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual(self.session()["state"], "FINALIZED")
         self.assertIsNotNone(self.session()["finalizationReceipt"])
         self.assertFalse(self.session_path.stat().st_mode & stat.S_IWRITE)
+        journal_path = run / ".state" / "finalization-journal.json"
+        self.assertTrue(journal_path.is_file())
+        self.assertFalse(journal_path.stat().st_mode & stat.S_IWRITE)
         verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
         self.assertEqual((verified["operation"], verified["result"], verify_status), ("PRE_DONE_CLAIM", "PASS", 0))
         self.assertEqual(self.session()["state"], "FINALIZED")
@@ -6065,8 +6087,36 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertIsNotNone(snapshot)
         self.assertIn("preReceiptSession", receipt["required"])
         self.assertIn("preReceiptSessionSha256", receipt["required"])
+        self.assertIn("journalIdentity", receipt["required"])
         self.assertEqual(set(snapshot["required"]), set(session_schema["required"]))
         self.assertEqual(set(snapshot["properties"]), set(session_schema["properties"]))
+
+    def test_finalization_journal_semantically_binds_exact_session_transition(self):
+        result, status = self.finalize()
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        journal_path = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+        original = json.loads(journal_path.read_text(encoding="utf-8"))
+        self.helper.validate_finalization_journal(self.root, original, "run-1")
+        mutations = {
+            "source": lambda value: value["sourceOpenSession"].update({
+                "startedAt": "2026-07-12T00:00:00Z",
+            }),
+            "finalizing": lambda value: value["finalizingSession"].update({
+                "workingDirectory": "alternate",
+            }),
+            "history": lambda value: value.update({"expectedLockRecoveries": [{
+                "recoveryId": "recovery-forged", "runId": "run-1",
+                "recoveredOwnerId": "owner-old", "replacementOwnerId": "owner-new",
+                "previousPid": 999999, "previousAcquiredAt": "2026-07-12T01:00:00Z",
+                "recoveredAt": "2026-07-12T03:30:00Z", "reason": "DEAD_AND_EXPIRED",
+            }]}),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                journal = json.loads(json.dumps(original))
+                mutate(journal)
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate_finalization_journal(self.root, journal, "run-1")
 
     def test_verify_finalized_rejects_pre_receipt_session_reference_mutation_matrix(self):
         result, status = self.finalize()
@@ -6169,7 +6219,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual((retry["result"], retry_status), ("PASS", 0))
         self.assertEqual(retry["data"]["action"], "ALREADY_FINALIZED")
 
-    def test_explicit_recovery_reclaims_stale_lock_without_mutating_sealed_session(self):
+    def test_explicit_recovery_reclaims_stale_lock_with_immutable_history_suffix(self):
         self.crash_left_finalization(sealed=True)
         sealed = self.session()
         lock = self.root / ".ai-runs" / "run-1" / ".state" / "lock"
@@ -6189,7 +6239,150 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
             retained["finalizationReceipt"]["preReceiptSession"],
             sealed["finalizationReceipt"]["preReceiptSession"],
         )
-        self.assertEqual(retained["lockRecoveries"], sealed["lockRecoveries"])
+        self.assertEqual(
+            retained["lockRecoveries"][:-1], sealed["lockRecoveries"],
+        )
+        self.assertEqual(len(retained["lockRecoveries"]), len(sealed["lockRecoveries"]) + 1)
+        suffix = retained["lockRecoveries"][-1]
+        self.assertEqual(suffix["reason"], "DEAD_AND_EXPIRED")
+        self.assertEqual(suffix["recoveredOwnerId"], "11111111-1111-4111-8111-111111111111")
+        self.assertEqual(
+            suffix["replacementOwnerId"],
+            suffix["recoveryId"].removeprefix("lock-recovery-"),
+        )
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+        self.assertEqual((verified["result"], verify_status), ("PASS", 0))
+
+    def test_prepare_publishes_exact_journal_before_finalizing_cas(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = ".ai-runs/run-1/inputs/custom-done-claim.json"
+        claim_path = self.root / claim_ref
+        claim_path.parent.mkdir(mode=0o700)
+        claim_path.write_text(json.dumps(self.done_claim()), encoding="utf-8")
+        original_replace = self.helper.replace_run_session
+        observed = {}
+
+        def inspect_before_cas(root, path, replacement, acquired, expected_session=None):
+            if replacement["state"] == "FINALIZING":
+                journal_path = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+                if journal_path.is_file():
+                    observed.update(json.loads(journal_path.read_text(encoding="utf-8")))
+            return original_replace(root, path, replacement, acquired, expected_session)
+
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(self.helper, "replace_run_session", side_effect=inspect_before_cas),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        self.assertEqual(observed["claimInputRef"], claim_ref)
+        self.assertEqual(observed["sourceOpenSession"]["state"], "OPEN")
+        self.assertEqual(observed["finalizingSession"]["state"], "FINALIZING")
+        self.assertEqual(
+            observed["expectedLockRecoveries"],
+            observed["sourceOpenSession"]["lockRecoveries"],
+        )
+
+    def test_recovery_uses_sealed_custom_claim_input_reference(self):
+        custom_ref = ".ai-runs/run-1/inputs/custom-done-claim.json"
+        self.crash_left_finalization(sealed=True, claim_reference=custom_ref)
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "RESUMED")
+        self.assertTrue((self.root / ".ai-runs/run-1/run.json").is_file())
+
+    def test_recovery_resumes_crash_after_valid_manifest_publication(self):
+        self.crash_left_finalization(
+            sealed=True, partial=("claim", "gate", "manifest"),
+        )
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "RESUMED")
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+        self.assertEqual((verified["result"], verify_status), ("PASS", 0))
+
+    def test_missing_finalization_journal_never_normalizes_to_open(self):
+        self.crash_left_finalization(sealed=True, partial=("claim",))
+        journal_path = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+        journal_path.chmod(0o600)
+        journal_path.unlink()
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+        self.assertEqual(self.session()["state"], "FINALIZED")
+        self.assertFalse((self.root / ".ai-runs/run-1/run.json").exists())
+
+    def test_mutated_finalization_journal_never_normalizes_to_open(self):
+        self.crash_left_finalization(sealed=True, partial=("claim",))
+        journal_path = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+        journal_path.chmod(0o600)
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        journal["claimInputRef"] = ".ai-runs/run-1/alternate-claim-input.json"
+        journal_path.write_text(json.dumps(journal), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+        self.assertEqual(self.session()["state"], "FINALIZED")
+        self.assertTrue(journal_path.exists())
+
+    def test_mutated_receipt_journal_identity_never_normalizes_to_open(self):
+        self.crash_left_finalization(sealed=True, partial=("claim",))
+        session = self.session()
+        session["finalizationReceipt"]["journalIdentity"]["canonicalSha256"] = "0" * 64
+        self.session_path.write_text(json.dumps(session), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+        self.assertEqual(self.session()["state"], "FINALIZED")
+        self.assertTrue(
+            (self.root / ".ai-runs/run-1/.state/finalization-journal.json").exists(),
+        )
+
+    def test_schema_invalid_receipt_never_normalizes_to_open(self):
+        self.crash_left_finalization(sealed=True, partial=("claim",))
+        session = self.session()
+        del session["finalizationReceipt"]["journalIdentity"]
+        self.session_path.write_text(json.dumps(session), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+        self.assertEqual(
+            json.loads(self.session_path.read_text(encoding="utf-8"))["state"],
+            "FINALIZED",
+        )
+
+    def assert_recovery_uncertainty_is_fail_closed(self, exception_type):
+        self.crash_left_finalization(sealed=True)
+        with mock.patch.object(
+            self.helper, "resume_sealed_finalization",
+            side_effect=exception_type("injected recovery uncertainty"),
+        ):
+            recovered, status = self.recover_finalization()
+        self.helper.validate(
+            self.root, recovered, "ai/schemas/gateway-result.schema.json",
+        )
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+
+    def test_recovery_evidence_uncertainty_returns_schema_valid_fail_closed_result(self):
+        self.assert_recovery_uncertainty_is_fail_closed(
+            self.helper.EvidenceWriteUncertainty,
+        )
+
+    def test_recovery_runtime_error_returns_schema_valid_fail_closed_result(self):
+        self.assert_recovery_uncertainty_is_fail_closed(RuntimeError)
 
     def test_explicit_recovery_rolls_back_inconsistent_partial_artifact(self):
         original, _sealed = self.crash_left_finalization(
@@ -6206,6 +6399,33 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual((recovered["result"], status), ("PASS", 0))
         self.assertEqual(recovered["data"]["action"], "ROLLED_BACK")
         self.assertEqual(self.session(), original)
+        self.assert_partial_finalization_absent()
+
+    def test_stale_lock_suffix_survives_exact_rollback_to_open(self):
+        self.crash_left_finalization(sealed=True, partial=("claim",))
+        claim_path = self.root / ".ai-runs/run-1/done-claim.json"
+        claim_path.chmod(0o600)
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        claim["overallResult"] = "FAIL"
+        claim_path.write_text(json.dumps(claim), encoding="utf-8")
+        lock = self.root / ".ai-runs/run-1/.state/lock"
+        lock.mkdir(mode=0o700)
+        (lock / "owner.json").write_text(json.dumps({
+            "ownerId": "22222222-2222-4222-8222-222222222222",
+            "runId": "run-1", "pid": 999999, "acquiredAt": "2000-01-01T00:00:00Z",
+        }), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "ROLLED_BACK")
+        session = self.session()
+        self.assertEqual(session["state"], "OPEN")
+        self.assertEqual(len(session["lockRecoveries"]), 1)
+        self.assertEqual(
+            session["lockRecoveries"][0]["recoveredOwnerId"],
+            "22222222-2222-4222-8222-222222222222",
+        )
         self.assert_partial_finalization_absent()
 
     def test_finalization_recovery_cli_dispatches_documented_operation(self):
@@ -6238,6 +6458,8 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertIn(
             "done-claim-check.sh recover-finalization <run-id>", policy,
         )
+        self.assertIn(".state/finalization-journal.json", policy)
+        self.assertIn("invalid or missing journal/receipt authority remains `BLOCKED`", policy)
 
     def test_recovery_never_rolls_back_published_run_and_repairs_session_read_only(self):
         result, status = self.finalize()

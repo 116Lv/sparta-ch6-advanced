@@ -93,8 +93,17 @@
     "finalizationReceipt": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["preReceiptSession", "preReceiptSessionSha256", "manifestIdentity", "runProjection", "claimIdentity", "gateIdentity", "artifactIdentities"],
+      "required": ["journalIdentity", "preReceiptSession", "preReceiptSessionSha256", "manifestIdentity", "runProjection", "claimIdentity", "gateIdentity", "artifactIdentities"],
       "properties": {
+        "journalIdentity": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "journalId", "canonicalSha256"],
+          "properties": {
+            "path": { "$ref": "#/$defs/repositoryPath" },
+            "journalId": { "$ref": "#/$defs/identifier" },
+            "canonicalSha256": { "$ref": "#/$defs/digest" }
+          }
+        },
         "preReceiptSession": { "$ref": "#/$defs/preReceiptSession" },
         "preReceiptSessionSha256": { "$ref": "#/$defs/digest" },
         "manifestIdentity": {
