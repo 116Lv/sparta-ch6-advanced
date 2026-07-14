@@ -13061,6 +13061,12 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
             json.loads(match.group(1))
             for match in re.finditer(r"printf '%s\\n' '(\{.*\})'", shell_text)
         ]
+        expected_bindings = [
+            "repository", "workflowRef", "workflowSha", "commitSha", "eventName",
+            "workflowRunId", "attempt", "jobId", "artifactId", "artifactDigest",
+            "artifactMembers", "taskKey", "gateInvocationId", "nativeAdapterStatusDigest",
+            "bypassEventSetSha256", "resolutionEventIds",
+        ]
         self.assertEqual(len(fallbacks), 2)
         for fallback in fallbacks:
             with self.subTest(reason=fallback["reason"]):
@@ -13073,9 +13079,30 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
                 self.assertEqual(data.get("nativeEnforcement", {}).get("checkName"), "phase-3b-native-enforcement")
                 self.assertEqual(data.get("nativeEnforcement", {}).get("configurationStatus"), "NOT_CONFIGURED")
                 self.assertIs(data.get("nativeEnforcement", {}).get("requiredCheckConfigured"), False)
+                self.assertEqual(data["durableEvidence"]["requiredBindings"], expected_bindings)
                 for legacy_field in ("requiredCheck", "workflowRefs", "nativeAdapterInstallation"):
                     self.assertNotIn(legacy_field, data)
                 self.helper.validate(self.root, fallback, "ai/schemas/ci-gate-result.schema.json")
+
+    def test_ci_gate_result_schema_requires_exact_ordered_durable_bindings(self):
+        shell_text = (self.root / "scripts/ai/ci-evidence-gate.sh").read_text(encoding="utf-8")
+        fallback = json.loads(re.search(r"printf '%s\\n' '(\{.*\})'", shell_text).group(1))
+        bindings = fallback["data"]["durableEvidence"]["requiredBindings"]
+        self.assertEqual(len(bindings), 16)
+
+        invalid_binding_lists = [
+            bindings[:-1],
+            [*bindings, "unexpectedBinding"],
+            [bindings[1], bindings[0], *bindings[2:]],
+        ]
+        for invalid_bindings in invalid_binding_lists:
+            with self.subTest(bindings=invalid_bindings):
+                candidate = json.loads(json.dumps(fallback))
+                candidate["data"]["durableEvidence"]["requiredBindings"] = invalid_bindings
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        self.root, candidate, "ai/schemas/ci-gate-result.schema.json",
+                    )
 
     def test_ci_gate_invalid_arguments_emit_schema_valid_split_fallback(self):
         result, status = self.helper.ci_evidence_gate(self.root, "bad argument", "gate-ci")
