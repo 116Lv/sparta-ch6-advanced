@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:github-ci-provenance:v1",
+  "schemaVersion": 1,
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema", "schemaVersion", "repository", "workflowRef", "workflowSha",
+    "headSha", "eventName", "runId", "runAttempt", "jobId", "artifactId",
+    "artifactDigest", "members", "taskKey", "gateInvocationId",
+    "nativeEvidenceSha256", "bypassEventSetSha256", "resolutionEventIds",
+    "attestation"
+  ],
+  "properties": {
+    "$schema": { "const": "ai/schemas/github-ci-provenance.schema.json" },
+    "schemaVersion": { "const": 1 },
+    "repository": { "const": "116Lv/sparta-ch6-advanced" },
+    "workflowRef": {
+      "type": "string",
+      "const": "116Lv/sparta-ch6-advanced/.github/workflows/phase-3b-ci-gates.yml@refs/heads/main"
+    },
+    "workflowSha": { "$ref": "#/$defs/gitSha" },
+    "headSha": { "$ref": "#/$defs/gitSha" },
+    "eventName": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z0-9_]+$" },
+    "runId": { "type": "integer", "minimum": 1 },
+    "runAttempt": { "type": "integer", "minimum": 1 },
+    "jobId": { "$ref": "#/$defs/correlation" },
+    "artifactId": { "type": "integer", "minimum": 1 },
+    "artifactDigest": { "$ref": "#/$defs/sha256" },
+    "members": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": { "$ref": "#/$defs/repositoryPath" },
+          "sha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    "taskKey": { "$ref": "#/$defs/correlation" },
+    "gateInvocationId": { "$ref": "#/$defs/correlation" },
+    "nativeEvidenceSha256": { "$ref": "#/$defs/sha256" },
+    "bypassEventSetSha256": { "$ref": "#/$defs/sha256" },
+    "resolutionEventIds": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/correlation" }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subjectDigest", "signerRepository", "verified"],
+      "properties": {
+        "subjectDigest": { "$ref": "#/$defs/sha256" },
+        "signerRepository": { "const": "116Lv/sparta-ch6-advanced" },
+        "verified": { "const": true }
+      }
+    }
+  },
+  "$defs": {
+    "gitSha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "correlation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])"
+    },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.(?:/|$)).+$"
+    }
+  }
+}

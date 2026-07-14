@@ -10991,6 +10991,249 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         self.helper = load_helper()
         self.root = REPOSITORY_ROOT
 
+    def github_provenance_fixture(self):
+        artifact_root = self.root / f".phase3b-provenance-{uuid_module.uuid4()}"
+        artifact_root.mkdir()
+        self.addCleanup(shutil.rmtree, artifact_root, True)
+        member = artifact_root / "phase3b-contract-results.json"
+        member.write_text('{"contract":"PASS"}\n', encoding="utf-8")
+        member_ref = member.relative_to(self.root).as_posix()
+        member_digest = hashlib.sha256(member.read_bytes()).hexdigest()
+        artifact_digest = "a" * 64
+        head_sha = "4" * 40
+        workflow_sha = "5" * 40
+        retained_run = {
+            "repository": "116Lv/sparta-ch6-advanced",
+            "workflowRef": (
+                "116Lv/sparta-ch6-advanced/.github/workflows/"
+                "phase-3b-ci-gates.yml@refs/heads/main"
+            ),
+            "workflowSha": workflow_sha,
+            "commitSha": head_sha,
+            "eventName": "push",
+            "workflowRunId": 123456789,
+            "attempt": 2,
+            "jobId": "phase-3b-repository-contract",
+            "artifactId": 987654321,
+            "artifactDigest": artifact_digest,
+            "artifactMembers": [{"path": member_ref, "sha256": member_digest}],
+            "taskKey": "issue-14",
+            "gateInvocationId": "gate-provenance",
+            "nativeAdapterStatusDigest": "c" * 64,
+            "bypassEventSetSha256": "d" * 64,
+            "resolutionEventIds": ["resolution-1"],
+        }
+        provenance = {
+            "$schema": "ai/schemas/github-ci-provenance.schema.json",
+            "schemaVersion": 1,
+            "repository": retained_run["repository"],
+            "workflowRef": retained_run["workflowRef"],
+            "workflowSha": workflow_sha,
+            "headSha": head_sha,
+            "eventName": retained_run["eventName"],
+            "runId": retained_run["workflowRunId"],
+            "runAttempt": retained_run["attempt"],
+            "jobId": retained_run["jobId"],
+            "artifactId": retained_run["artifactId"],
+            "artifactDigest": artifact_digest,
+            "members": [{"path": member_ref, "sha256": member_digest}],
+            "taskKey": retained_run["taskKey"],
+            "gateInvocationId": retained_run["gateInvocationId"],
+            "nativeEvidenceSha256": retained_run["nativeAdapterStatusDigest"],
+            "bypassEventSetSha256": retained_run["bypassEventSetSha256"],
+            "resolutionEventIds": list(retained_run["resolutionEventIds"]),
+            "attestation": {
+                "subjectDigest": artifact_digest,
+                "signerRepository": retained_run["repository"],
+                "verified": True,
+            },
+        }
+        status = self.helper.validate_repository_instance(
+            self.root, "ai/ci-capability-status.json",
+        )
+        status["currentCi"]["nativeEnforcement"] = {
+            "checkName": "phase-3b-native-enforcement",
+            "configurationStatus": "VERIFIED",
+            "requiredCheckConfigured": True,
+            "reasonCode": "NATIVE_ENFORCEMENT_VERIFIED",
+        }
+        status["currentCi"]["durableEvidence"].update({
+            "status": "AVAILABLE",
+            "reasonCode": "DURABLE_EVIDENCE_AVAILABLE",
+            "artifactRefs": [member_ref],
+            "requiredBindings": list(self.helper.CI_DURABLE_REQUIRED_BINDINGS),
+            "retainedRun": retained_run,
+        })
+        status["currentCi"]["remoteRunner"] = {
+            "status": "PASS",
+            "completionBlocking": False,
+            "reasonCode": "REMOTE_RUNNER_ATTESTED",
+        }
+        status_path = artifact_root / "ci-status.json"
+        status_path.write_text(json.dumps(status, sort_keys=True), encoding="utf-8")
+        return status_path.relative_to(self.root).as_posix(), status, provenance, member
+
+    def test_github_ci_provenance_schema_is_closed_and_approved(self):
+        self.assertIn("github-ci-provenance", self.helper.SCHEMA_NAMES)
+        _status_ref, _status, provenance, _member = self.github_provenance_fixture()
+        self.helper.validate(
+            self.root, provenance, "ai/schemas/github-ci-provenance.schema.json",
+        )
+        provenance["callerCertified"] = True
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                self.root, provenance, "ai/schemas/github-ci-provenance.schema.json",
+            )
+
+    def test_repository_local_retained_run_cannot_self_certify_without_provenance(self):
+        status_ref, _status, _provenance, member = self.github_provenance_fixture()
+        member.write_text(
+            "116Lv/sparta-ch6-advanced phase-3b-repository-contract "
+            "issue-14 gate-provenance PASS\n",
+            encoding="utf-8",
+        )
+        result, exit_status = self.helper.ci_evidence_gate(
+            self.root, "issue-14", "gate-provenance", status_ref,
+        )
+        self.assertEqual((result["result"], result["reason"], exit_status), (
+            "NOT_CONFIGURED", "CI_GITHUB_PROVENANCE_NOT_AVAILABLE", 3,
+        ))
+        self.assertIsNone(result["data"]["githubProvenance"])
+
+    def test_fully_matching_external_github_provenance_can_pass_internal_path(self):
+        status_ref, _status, provenance, _member = self.github_provenance_fixture()
+        result, exit_status = self.helper.ci_evidence_gate(
+            self.root,
+            "issue-14",
+            "gate-provenance",
+            status_ref,
+            github_provenance=self.helper.GitHubCiProvenance.from_verified_envelope(provenance),
+        )
+        self.assertEqual((result["result"], result["reason"], exit_status), (
+            "PASS", None, 0,
+        ))
+        self.assertEqual(result["data"]["githubProvenance"]["runId"], 123456789)
+        self.assertEqual(
+            result["data"]["githubProvenance"]["signerRepository"],
+            "116Lv/sparta-ch6-advanced",
+        )
+        self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+        result["data"]["githubProvenance"] = None
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+
+    def test_raw_repository_authored_provenance_object_cannot_enter_internal_pass_path(self):
+        status_ref, _status, provenance, _member = self.github_provenance_fixture()
+        result, exit_status = self.helper.ci_evidence_gate(
+            self.root,
+            "issue-14",
+            "gate-provenance",
+            status_ref,
+            github_provenance=provenance,
+        )
+        self.assertEqual((result["result"], result["reason"], exit_status), (
+            "BLOCKED", "CI_GITHUB_PROVENANCE_INVALID", 2,
+        ))
+
+    def test_github_provenance_requires_every_exact_run_and_evidence_binding(self):
+        mutations = {
+            "repository": ("repository", "other/example"),
+            "workflowRef": ("workflowRef", "other/example/.github/workflows/ci.yml@refs/heads/main"),
+            "workflowSha": ("workflowSha", "6" * 40),
+            "headSha": ("headSha", "7" * 40),
+            "eventName": ("eventName", "pull_request"),
+            "runId": ("runId", 123456790),
+            "runAttempt": ("runAttempt", 3),
+            "jobId": ("jobId", "unrelated-job"),
+            "artifactId": ("artifactId", 987654322),
+            "artifactDigest": ("artifactDigest", "b" * 64),
+            "nativeEvidenceSha256": ("nativeEvidenceSha256", "e" * 64),
+            "bypassEventSetSha256": ("bypassEventSetSha256", "f" * 64),
+            "resolutionEventIds": ("resolutionEventIds", ["resolution-2"]),
+            "taskKey": ("taskKey", "issue-other"),
+            "gateInvocationId": ("gateInvocationId", "gate-other"),
+        }
+        for label, (field, value) in mutations.items():
+            with self.subTest(binding=label):
+                status_ref, _status, provenance, _member = self.github_provenance_fixture()
+                provenance[field] = value
+                if field == "artifactDigest":
+                    provenance["attestation"]["subjectDigest"] = value
+                result, exit_status = self.helper.ci_evidence_gate(
+                    self.root, "issue-14", "gate-provenance", status_ref,
+                    github_provenance=self.helper.GitHubCiProvenance.from_verified_envelope(provenance),
+                )
+                self.assertEqual((result["result"], result["reason"], exit_status), (
+                    "BLOCKED", "CI_GITHUB_PROVENANCE_MISMATCH", 2,
+                ))
+
+    def test_github_provenance_rejects_member_and_attestation_tampering(self):
+        cases = ("member-digest", "member-content", "unverified", "wrong-subject", "wrong-signer")
+        for case in cases:
+            with self.subTest(case=case):
+                status_ref, _status, provenance, member = self.github_provenance_fixture()
+                expected_reason = "CI_ARTIFACT_MEMBER_TAMPERED"
+                if case == "member-digest":
+                    provenance["members"][0]["sha256"] = "0" * 64
+                elif case == "member-content":
+                    member.write_text('{"contract":"tampered"}\n', encoding="utf-8")
+                elif case == "unverified":
+                    provenance["attestation"]["verified"] = False
+                    expected_reason = "CI_ATTESTATION_UNVERIFIED"
+                elif case == "wrong-subject":
+                    provenance["attestation"]["subjectDigest"] = "0" * 64
+                    expected_reason = "CI_ARTIFACT_ATTESTATION_MISMATCH"
+                else:
+                    provenance["attestation"]["signerRepository"] = "other/example"
+                    expected_reason = "CI_ATTESTATION_SIGNER_MISMATCH"
+                result, exit_status = self.helper.ci_evidence_gate(
+                    self.root, "issue-14", "gate-provenance", status_ref,
+                    github_provenance=self.helper.GitHubCiProvenance.from_verified_envelope(provenance),
+                )
+                self.assertEqual((result["result"], result["reason"], exit_status), (
+                    "BLOCKED", expected_reason, 2,
+                ))
+
+    def test_github_provenance_member_reader_rejects_escape_and_symlink(self):
+        with self.assertRaises(self.helper.InvalidStateError) as traversal:
+            self.helper.read_ci_artifact_member(self.root, "../outside.json")
+        self.assertEqual(
+            traversal.exception.errors[0]["code"], "CI_ARTIFACT_MEMBER_PATH_INVALID",
+        )
+
+        _status_ref, _status, _provenance, member = self.github_provenance_fixture()
+        link = member.with_name("linked-results.json")
+        try:
+            link.symlink_to(member)
+        except OSError:
+            self.skipTest("file symlink creation is unavailable")
+        with self.assertRaises(self.helper.InvalidStateError) as symlink:
+            self.helper.read_ci_artifact_member(
+                self.root, link.relative_to(self.root).as_posix(),
+            )
+        self.assertEqual(
+            symlink.exception.errors[0]["code"], "CI_ARTIFACT_MEMBER_UNSAFE",
+        )
+
+    def test_github_provenance_fallback_reader_detects_open_identity_race(self):
+        _status_ref, _status, _provenance, member = self.github_provenance_fixture()
+        reference = member.relative_to(self.root).as_posix()
+        real_fstat = self.helper.os.fstat
+
+        def changed_identity(descriptor):
+            metadata = real_fstat(descriptor)
+            return SimpleNamespace(
+                st_mode=metadata.st_mode,
+                st_dev=metadata.st_dev,
+                st_ino=metadata.st_ino + 1,
+            )
+
+        with mock.patch.object(self.helper.os, "fstat", side_effect=changed_identity):
+            with self.assertRaises(OSError):
+                self.helper.read_ci_artifact_member_fallback(
+                    self.root, self.helper.ci_artifact_member_parts(reference),
+                )
+
     def test_phase_3b_schemas_policy_and_work_log_are_issue_backed(self):
         self.assertIn("ci-capability-status", self.helper.SCHEMA_NAMES)
         self.assertIn("ci-gate-result", self.helper.SCHEMA_NAMES)
@@ -11020,7 +11263,7 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
     def test_ci_gate_is_fail_closed_without_durable_github_actions_evidence(self):
         result, status = self.helper.ci_evidence_gate(self.root, "issue-12", "gate-ci")
         self.assertEqual((result["result"], result["phase2cLeafResult"], status), ("NOT_CONFIGURED", "BLOCKED", 3))
-        self.assertEqual(result["reason"], "CI_EVIDENCE_NOT_AVAILABLE")
+        self.assertEqual(result["reason"], "CI_GITHUB_PROVENANCE_NOT_AVAILABLE")
         self.assertEqual(result["data"].get("repositoryContract"), {
             "checkName": "phase-3b-repository-contract",
             "workflowRef": ".github/workflows/phase-3b-ci-gates.yml",
@@ -11081,7 +11324,7 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
                 gate_invocation_id = valid if field == "gateInvocationId" else "gate-ci"
                 result, status = self.helper.ci_evidence_gate(self.root, task_key, gate_invocation_id)
                 self.assertEqual((result["result"], result["reason"], status), (
-                    "NOT_CONFIGURED", "CI_EVIDENCE_NOT_AVAILABLE", 3,
+                    "NOT_CONFIGURED", "CI_GITHUB_PROVENANCE_NOT_AVAILABLE", 3,
                 ))
                 self.assertEqual(result["data"][field], valid)
                 self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
@@ -11163,46 +11406,15 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         finally:
             status_path.unlink(missing_ok=True)
     def test_ci_evidence_available_requires_retained_artifact_file(self):
-        status = self.helper.validate_repository_instance(self.root, "ai/ci-capability-status.json")
-        status["currentCi"]["nativeEnforcement"] = {
-            "checkName": "phase-3b-native-enforcement",
-            "configurationStatus": "VERIFIED",
-            "requiredCheckConfigured": True,
-            "reasonCode": "NATIVE_ENFORCEMENT_VERIFIED",
-        }
-        status["currentCi"]["durableEvidence"].update({
-            "status": "AVAILABLE",
-            "reasonCode": "DURABLE_EVIDENCE_AVAILABLE",
-            "artifactRefs": ["ai/evidence/missing-phase3b-ci-artifact.json"],
-            "retainedRun": {
-                "repository": "116Lv/sparta-ch6-advanced",
-                "commitSha": "400c00f35f9d21cbeec44b0f40f49dac564a4bb6",
-                "workflowRunId": 1,
-                "jobId": 1,
-                "attempt": 1,
-                "taskKey": "issue-12",
-                "gateInvocationId": "gate-available",
-                "nativeAdapterStatusDigest": "0000000000000000000000000000000000000000000000000000000000000000",
-                "bypassEventSetSha256": "0000000000000000000000000000000000000000000000000000000000000000",
-                "resolutionEventIds": [],
-            },
-        })
-        status["currentCi"]["remoteRunner"] = {
-            "status": "PASS",
-            "completionBlocking": False,
-            "reasonCode": "REMOTE_RUNNER_ATTESTED",
-        }
-        status_path = self.root / "phase3b-ci-status-missing-artifact.tmp.json"
-        try:
-            status_path.write_text(json.dumps(status, sort_keys=True), encoding="utf-8")
-            result, exit_status = self.helper.ci_evidence_gate(
-                self.root, "issue-12", "gate-available", "phase3b-ci-status-missing-artifact.tmp.json",
-            )
-            self.assertEqual((result["result"], result["reason"], exit_status), (
-                "BLOCKED", "CI_DURABLE_EVIDENCE_ARTIFACT_MISSING", 2,
-            ))
-        finally:
-            status_path.unlink(missing_ok=True)
+        status_ref, _status, provenance, member = self.github_provenance_fixture()
+        member.unlink()
+        result, exit_status = self.helper.ci_evidence_gate(
+            self.root, "issue-14", "gate-provenance", status_ref,
+            github_provenance=self.helper.GitHubCiProvenance.from_verified_envelope(provenance),
+        )
+        self.assertEqual((result["result"], result["reason"], exit_status), (
+            "BLOCKED", "CI_DURABLE_EVIDENCE_ARTIFACT_MISSING", 2,
+        ))
     def test_ci_workflow_and_policy_docs_preserve_product_command_boundary(self):
         workflow = self.root / ".github/workflows/phase-3b-ci-gates.yml"
         self.assertTrue(workflow.is_file())

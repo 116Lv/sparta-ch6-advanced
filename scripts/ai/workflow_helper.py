@@ -111,6 +111,7 @@ SCHEMA_NAMES = (
     "command-result",
     "ci-capability-status",
     "ci-gate-result",
+    "github-ci-provenance",
     "context-map",
     "done-claim",
     "gateway-result",
@@ -7408,9 +7409,212 @@ def native_adapter_phase2c_leaf(root, task_key, gate_invocation_id, runtime_snap
 
 
 CI_DURABLE_REQUIRED_BINDINGS = [
-    "repository", "commitSha", "workflowRunId", "jobId", "attempt", "taskKey",
-    "gateInvocationId", "nativeAdapterStatusDigest", "bypassEventSetSha256", "resolutionEventIds",
+    "repository", "workflowRef", "workflowSha", "commitSha", "eventName",
+    "workflowRunId", "attempt", "jobId", "artifactId", "artifactDigest",
+    "artifactMembers", "taskKey", "gateInvocationId", "nativeAdapterStatusDigest",
+    "bypassEventSetSha256", "resolutionEventIds",
 ]
+
+CI_EXPECTED_REPOSITORY = "116Lv/sparta-ch6-advanced"
+CI_EXPECTED_WORKFLOW_REF = (
+    "116Lv/sparta-ch6-advanced/.github/workflows/"
+    "phase-3b-ci-gates.yml@refs/heads/main"
+)
+
+
+@dataclass(frozen=True)
+class GitHubCiProvenance:
+    """Canonical in-memory value created only after an external verifier succeeds."""
+
+    canonical_json: bytes
+
+    @classmethod
+    def from_verified_envelope(cls, envelope):
+        try:
+            canonical_json = compact(envelope).encode("utf-8")
+        except (TypeError, ValueError) as error:
+            raise ValueError("verified GitHub provenance must be finite JSON data") from error
+        return cls(canonical_json=canonical_json)
+
+    def snapshot(self):
+        return json.loads(
+            self.canonical_json.decode("utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_non_finite_number,
+        )
+
+
+def ci_provenance_error(code, message):
+    raise InvalidStateError([validation_error(code, message=message)])
+
+
+def ci_artifact_member_parts(reference):
+    if not isinstance(reference, str) or not reference or "\\" in reference:
+        ci_provenance_error("CI_ARTIFACT_MEMBER_PATH_INVALID", "artifact member path is invalid")
+    candidate = Path(reference)
+    parts = candidate.parts
+    if candidate.is_absolute() or not parts or any(part in ("", ".", "..") for part in parts):
+        ci_provenance_error("CI_ARTIFACT_MEMBER_PATH_INVALID", "artifact member path is invalid")
+    return parts
+
+
+def read_ci_artifact_member_posix(repository_root, parts):
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(str(repository_root), directory_flags)
+    try:
+        for component in parts[:-1]:
+            child = os.open(component, directory_flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        file_descriptor = os.open(parts[-1], file_flags, dir_fd=descriptor)
+        try:
+            if not stat.S_ISREG(os.fstat(file_descriptor).st_mode):
+                raise OSError("artifact member is not a regular file")
+            chunks = []
+            while True:
+                chunk = os.read(file_descriptor, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            os.close(file_descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def read_ci_artifact_member_fallback(repository_root, parts):
+    paths = []
+    candidate = repository_root
+    for component in parts:
+        candidate = candidate / component
+        metadata = candidate.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            raise OSError("artifact member path contains a symbolic link")
+        paths.append((candidate, metadata))
+    if not stat.S_ISREG(paths[-1][1].st_mode):
+        raise OSError("artifact member is not a regular file")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(str(paths[-1][0]), flags)
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (paths[-1][1].st_dev, paths[-1][1].st_ino)
+        ):
+            raise OSError("artifact member identity changed before open")
+        chunks = []
+        while True:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(descriptor)
+    for path, expected in paths:
+        current = path.lstat()
+        if stat.S_ISLNK(current.st_mode) or (current.st_dev, current.st_ino) != (
+            expected.st_dev, expected.st_ino,
+        ):
+            raise OSError("artifact member path identity changed while reading")
+    return b"".join(chunks)
+
+
+def read_ci_artifact_member(repository_root, reference):
+    repository_root = Path(repository_root).resolve(strict=True)
+    parts = ci_artifact_member_parts(reference)
+    try:
+        if (
+            os.name == "posix"
+            and hasattr(os, "O_DIRECTORY")
+            and hasattr(os, "O_NOFOLLOW")
+            and os.open in os.supports_dir_fd
+        ):
+            return read_ci_artifact_member_posix(repository_root, parts)
+        return read_ci_artifact_member_fallback(repository_root, parts)
+    except OSError as error:
+        ci_provenance_error(
+            "CI_ARTIFACT_MEMBER_UNSAFE",
+            "artifact member could not be read through a pinned regular-file identity",
+        )
+        raise AssertionError("unreachable") from error
+
+
+def github_provenance_identity(provenance):
+    return {
+        "repository": provenance["repository"],
+        "workflowRef": provenance["workflowRef"],
+        "workflowSha": provenance["workflowSha"],
+        "headSha": provenance["headSha"],
+        "eventName": provenance["eventName"],
+        "runId": provenance["runId"],
+        "runAttempt": provenance["runAttempt"],
+        "jobId": provenance["jobId"],
+        "artifactId": provenance["artifactId"],
+        "artifactDigest": provenance["artifactDigest"],
+        "signerRepository": provenance["attestation"]["signerRepository"],
+    }
+
+
+def validate_github_ci_provenance(root, provenance, retained_run, artifact_refs):
+    if not isinstance(provenance, GitHubCiProvenance):
+        ci_provenance_error(
+            "CI_GITHUB_PROVENANCE_INVALID",
+            "raw repository-authored provenance cannot enter the verified internal path",
+        )
+    try:
+        snapshot = provenance.snapshot()
+    except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        ci_provenance_error("CI_GITHUB_PROVENANCE_INVALID", "GitHub provenance is not immutable JSON data")
+        raise AssertionError("unreachable") from error
+    if not isinstance(snapshot, dict):
+        ci_provenance_error("CI_GITHUB_PROVENANCE_INVALID", "GitHub provenance must be an object")
+    attestation = snapshot.get("attestation")
+    if not isinstance(attestation, dict) or attestation.get("verified") is not True:
+        ci_provenance_error("CI_ATTESTATION_UNVERIFIED", "artifact attestation is not externally verified")
+    if attestation.get("subjectDigest") != snapshot.get("artifactDigest"):
+        ci_provenance_error("CI_ARTIFACT_ATTESTATION_MISMATCH", "attestation subject does not bind the artifact digest")
+    if attestation.get("signerRepository") != CI_EXPECTED_REPOSITORY:
+        ci_provenance_error("CI_ATTESTATION_SIGNER_MISMATCH", "attestation signer repository is unexpected")
+
+    exact = {
+        "repository": retained_run["repository"],
+        "workflowRef": retained_run["workflowRef"],
+        "workflowSha": retained_run["workflowSha"],
+        "headSha": retained_run["commitSha"],
+        "eventName": retained_run["eventName"],
+        "runId": retained_run["workflowRunId"],
+        "runAttempt": retained_run["attempt"],
+        "jobId": retained_run["jobId"],
+        "artifactId": retained_run["artifactId"],
+        "artifactDigest": retained_run["artifactDigest"],
+        "taskKey": retained_run["taskKey"],
+        "gateInvocationId": retained_run["gateInvocationId"],
+        "nativeEvidenceSha256": retained_run["nativeAdapterStatusDigest"],
+        "bypassEventSetSha256": retained_run["bypassEventSetSha256"],
+        "resolutionEventIds": retained_run["resolutionEventIds"],
+    }
+    if (
+        retained_run["repository"] != CI_EXPECTED_REPOSITORY
+        or retained_run["workflowRef"] != CI_EXPECTED_WORKFLOW_REF
+        or any(snapshot.get(field) != value for field, value in exact.items())
+    ):
+        ci_provenance_error("CI_GITHUB_PROVENANCE_MISMATCH", "GitHub provenance does not match the retained run claim")
+
+    validate(root, snapshot, "ai/schemas/github-ci-provenance.schema.json")
+    members = snapshot["members"]
+    member_paths = [member["path"] for member in members]
+    if member_paths != artifact_refs:
+        ci_provenance_error("CI_GITHUB_PROVENANCE_MISMATCH", "artifact member paths do not match retained artifact references")
+    for member in members:
+        actual = hashlib.sha256(read_ci_artifact_member(root, member["path"])).hexdigest()
+        if actual != member["sha256"]:
+            ci_provenance_error("CI_ARTIFACT_MEMBER_TAMPERED", "artifact member digest does not match authenticated provenance")
+    if members != retained_run["artifactMembers"]:
+        ci_provenance_error("CI_GITHUB_PROVENANCE_MISMATCH", "artifact member digests do not match the retained run claim")
+    return MappingProxyType(snapshot), github_provenance_identity(snapshot)
 
 
 def ci_evidence_gate_result(result, reason, data):
@@ -7458,6 +7662,7 @@ def ci_evidence_gate_data(status, task_key, gate_invocation_id):
         "nativeAdapterLeaf": status["phase2cLink"],
         "cachePolicy": status["cachePolicy"],
         "phase2CLeafResult": "BLOCKED",
+        "githubProvenance": None,
     }
 
 
@@ -7469,7 +7674,8 @@ def ci_gate_correlation_valid(value):
     )
 
 
-def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-capability-status.json"):
+def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-capability-status.json",
+                     github_provenance=None):
     root = Path(root).resolve()
     task_key_valid = ci_gate_correlation_valid(task_key)
     gate_invocation_id_valid = ci_gate_correlation_valid(gate_invocation_id)
@@ -7500,6 +7706,7 @@ def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-ca
         "nativeAdapterLeaf": {"nativeAdapterCheckId": "native-runtime-adapter", "currentHostResult": "UNSUPPORTED"},
         "cachePolicy": {"reuse": "FORBIDDEN_WITHOUT_MATCHING_RUN_ID", "handoff": "SUMMARY_ONLY"},
         "phase2CLeafResult": "BLOCKED",
+        "githubProvenance": None,
     }
     try:
         if not task_key_valid or not gate_invocation_id_valid:
@@ -7511,6 +7718,10 @@ def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-ca
         evidence = status["currentCi"]["durableEvidence"]
         native_enforcement = status["currentCi"]["nativeEnforcement"]
         remote_runner = status["currentCi"]["remoteRunner"]
+        if github_provenance is None:
+            return ci_evidence_gate_result(
+                "NOT_CONFIGURED", "CI_GITHUB_PROVENANCE_NOT_AVAILABLE", data,
+            ), 3
         if not workflows_configured:
             return ci_evidence_gate_result("NOT_CONFIGURED", "CI_WORKFLOW_NOT_CONFIGURED", data), 3
         if evidence["status"] != "AVAILABLE":
@@ -7528,6 +7739,13 @@ def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-ca
             return ci_evidence_gate_result("BLOCKED", "CI_DURABLE_EVIDENCE_IDENTITY_MISSING", data), 2
         if any(not (root / ref).is_file() for ref in artifact_refs):
             return ci_evidence_gate_result("BLOCKED", "CI_DURABLE_EVIDENCE_ARTIFACT_MISSING", data), 2
+        try:
+            _immutable_provenance, identity = validate_github_ci_provenance(
+                root, github_provenance, retained_run, artifact_refs,
+            )
+        except InvalidStateError as error:
+            return ci_evidence_gate_result("BLOCKED", error.errors[0]["code"], data), 2
+        data["githubProvenance"] = identity
         if (
             native_enforcement["configurationStatus"] != "VERIFIED"
             or not native_enforcement["requiredCheckConfigured"]

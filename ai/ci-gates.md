@@ -18,20 +18,37 @@ Phase 1B-3 remains `INTEGRITY_ONLY` with `completenessEvaluated: false`.
    Docker, HTTP/API, database, migration, seed, deploy, or infrastructure
    commands.
 
-## Durable Evidence Contract
+## Authenticated Provenance And Durable Evidence Contract
 
-A CI evidence PASS requires retained GitHub Actions evidence bound to repository,
-commit SHA, workflow run ID, job ID, run attempt, `taskKey`,
-`gateInvocationId`, native adapter status digest, complete bypass event-set
-SHA-256, and `resolutionEventIds`. The minimum retention is 90 days. Cache reuse
-is forbidden unless the workflow run identity and all bindings match; handoff may
-reuse summaries only, never substitute them for durable CI evidence.
+A CI evidence PASS requires an immutable `GitHubCiProvenance` envelope supplied
+in memory only after an external GitHub/Sigstore verifier authenticates its
+attestation. The public `scripts/ai/ci-evidence-gate.sh` entry point has no
+provenance argument, always calls the helper with `github_provenance=None`, and
+therefore cannot produce PASS from repository files or `retainedRun` state.
+
+The closed provenance envelope binds the expected repository and workflow ref,
+workflow SHA, head SHA, event name, workflow run ID and attempt, job ID,
+artifact ID and digest, every artifact member path and SHA-256, task and gate
+correlation, native evidence SHA-256, complete bypass event-set SHA-256, and
+resolution event IDs. The verified attestation subject must equal the artifact
+digest and its signer repository must be `116Lv/sparta-ch6-advanced`. Artifact
+members are read through pinned, no-follow file identities and rehashed before
+PASS; path escape, symlink substitution, identity races, and content tampering
+are rejected.
+
+Repository `retainedRun` is only a claim compared field-for-field with the
+authenticated provenance. Correct-looking repository files cannot create the
+provenance value and cannot substitute for external verification. The minimum
+retention is 90 days. Cache reuse is forbidden unless the workflow run identity
+and all bindings match; handoff may reuse summaries only, never substitute them
+for durable CI evidence.
 
 The current repository has the repository-contract workflow file, but the
 contract is `CONFIGURED_UNVERIFIED` and native enforcement is `NOT_CONFIGURED`.
 This local run has no completed remote workflow run or retained artifact
-identity. Therefore the local CI evidence gate returns `NOT_CONFIGURED` with
-Phase 2C leaf `BLOCKED` and reason `CI_EVIDENCE_NOT_AVAILABLE`.
+identity or externally authenticated provenance. Therefore the public/local CI
+evidence gate returns `NOT_CONFIGURED` with Phase 2C leaf `BLOCKED` and reason
+`CI_GITHUB_PROVENANCE_NOT_AVAILABLE`.
 
 ## Hook Enforcement Levels
 

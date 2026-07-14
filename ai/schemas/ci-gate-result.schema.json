@@ -47,18 +47,57 @@
           "required": ["reuse", "handoff"],
           "properties": { "reuse": { "const": "FORBIDDEN_WITHOUT_MATCHING_RUN_ID" }, "handoff": { "const": "SUMMARY_ONLY" }, "retentionDays": { "type": "integer", "minimum": 90 } }
         },
-        "phase2CLeafResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_APPLICABLE"] }
+        "phase2CLeafResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_APPLICABLE"] },
+        "githubProvenance": {
+          "anyOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/githubProvenanceIdentity" }
+          ]
+        }
       }
     }
   },
   "allOf": [
-    { "if": { "properties": { "result": { "const": "PASS" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "PASS" }, "reason": { "type": "null" } } } },
+    {
+      "if": { "properties": { "result": { "const": "PASS" } }, "required": ["result"] },
+      "then": {
+        "properties": {
+          "phase2cLeafResult": { "const": "PASS" },
+          "reason": { "type": "null" },
+          "data": {
+            "required": ["githubProvenance"],
+            "properties": {
+              "githubProvenance": { "$ref": "#/$defs/githubProvenanceIdentity" }
+            }
+          }
+        }
+      }
+    },
     { "if": { "properties": { "result": { "const": "NOT_CONFIGURED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "BLOCKED" } } } }
   ],
   "$defs": {
     "identifier": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
     "repositoryPath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "gitSha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "githubProvenanceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "workflowRef", "workflowSha", "headSha", "eventName", "runId", "runAttempt", "jobId", "artifactId", "artifactDigest", "signerRepository"],
+      "properties": {
+        "repository": { "const": "116Lv/sparta-ch6-advanced" },
+        "workflowRef": { "const": "116Lv/sparta-ch6-advanced/.github/workflows/phase-3b-ci-gates.yml@refs/heads/main" },
+        "workflowSha": { "$ref": "#/$defs/gitSha" },
+        "headSha": { "$ref": "#/$defs/gitSha" },
+        "eventName": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "runId": { "type": "integer", "minimum": 1 },
+        "runAttempt": { "type": "integer", "minimum": 1 },
+        "jobId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "artifactId": { "type": "integer", "minimum": 1 },
+        "artifactDigest": { "$ref": "#/$defs/sha256" },
+        "signerRepository": { "const": "116Lv/sparta-ch6-advanced" }
+      }
+    },
     "repositoryContract": {
       "type": "object",
       "additionalProperties": false,
@@ -90,7 +129,7 @@
         "reasonCode": { "$ref": "#/$defs/identifier" },
         "retentionDays": { "type": "integer", "minimum": 90, "maximum": 400 },
         "artifactRefs": { "type": "array", "items": { "$ref": "#/$defs/repositoryPath" } },
-        "requiredBindings": { "type": "array", "minItems": 10, "maxItems": 10, "uniqueItems": true, "items": { "type": "string" } },
+        "requiredBindings": { "type": "array", "minItems": 10, "maxItems": 16, "uniqueItems": true, "items": { "type": "string" } },
         "retainedRun": { "type": ["object", "null"] }
       }
     }
