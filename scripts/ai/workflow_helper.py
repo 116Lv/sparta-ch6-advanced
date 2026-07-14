@@ -3607,8 +3607,8 @@ def acquire_recovery_claim(state, run_id):
                     "RUN_LOCK_RECOVERY_CLAIM_COLLISION", message="ownerless recovery claim quarantine exists",
                 )])
             try:
-                os.rename(claim_path, stale_path)
-            except OSError as rename_error:
+                atomic_rename_noreplace(claim_path, stale_path)
+            except (FileExistsError, EvidenceWriteUncertainty, OSError) as rename_error:
                 raise RegistryBlockedError([validation_error(
                     "RUN_LOCK_RECOVERY_ACTIVE", message="ownerless recovery claim changed",
                 )]) from rename_error
@@ -3628,8 +3628,8 @@ def acquire_recovery_claim(state, run_id):
                         message="late recovery claim owner cannot be restored because the fixed path is occupied",
                     )])
                 try:
-                    os.rename(stale_path, claim_path)
-                except OSError as restore_error:
+                    atomic_rename_noreplace(stale_path, claim_path)
+                except (FileExistsError, EvidenceWriteUncertainty, OSError) as restore_error:
                     raise RegistryBlockedError([validation_error(
                         "RUN_LOCK_RECOVERY_ACTIVE", message="late recovery claim owner restoration raced",
                     )]) from restore_error
@@ -3661,8 +3661,8 @@ def acquire_recovery_claim(state, run_id):
         if stale_path.exists() or stale_path.is_symlink():
             raise RegistryBlockedError([validation_error("RUN_LOCK_RECOVERY_CLAIM_COLLISION", message="stale recovery claim path exists")])
         try:
-            os.rename(claim_path, stale_path)
-        except OSError as rename_error:
+            atomic_rename_noreplace(claim_path, stale_path)
+        except (FileExistsError, EvidenceWriteUncertainty, OSError) as rename_error:
             raise RegistryBlockedError([validation_error("RUN_LOCK_RECOVERY_ACTIVE", message="stale recovery claim rename failed")]) from rename_error
         replacement = create_recovery_claim(claim_path, run_id)
         if not remove_exact_owned_control_directory(stale_path, owner):
@@ -3717,8 +3717,8 @@ def complete_ownerless_initialization_cleanup(state, run_id, claim, quarantine):
                 message="late lock owner cannot be restored because the lock path is occupied",
             )])
         try:
-            os.rename(quarantine, lock)
-        except OSError as restore_error:
+            atomic_rename_noreplace(quarantine, lock)
+        except (FileExistsError, EvidenceWriteUncertainty, OSError) as restore_error:
             raise RegistryBlockedError([validation_error(
                 "RUN_LOCK_HELD", message="late run lock owner restoration raced",
             )]) from restore_error
@@ -3893,8 +3893,8 @@ def recover_run_lock(root, run_id, *, continuing_attempt=None):
                 raise RegistryBlockedError([validation_error("RUN_LOCK_RECOVERY_COLLISION", message="run lock recovery path exists")])
             run_lifecycle_hook("recover.before_quarantine_rename", lock=lock, quarantine=quarantine, owner=stale_owner)
             try:
-                os.rename(lock, quarantine)
-            except OSError as error:
+                atomic_rename_noreplace(lock, quarantine)
+            except (FileExistsError, EvidenceWriteUncertainty, OSError) as error:
                 raise RegistryBlockedError([validation_error("RUN_LOCK_RECOVERY_COLLISION", message="run lock recovery rename failed")]) from error
             quarantine_started = True
             run_lifecycle_hook("recover.after_quarantine_rename", lock=lock, quarantine=quarantine, owner=stale_owner)
@@ -3927,7 +3927,12 @@ def recover_run_lock(root, run_id, *, continuing_attempt=None):
             quarantine = state / f"lock-initialization-quarantine-{uuid.uuid4()}"
             if quarantine.exists() or quarantine.is_symlink():
                 raise RegistryBlockedError([validation_error("RUN_LOCK_RECOVERY_COLLISION", message="initialization quarantine exists")])
-            os.rename(lock, quarantine)
+            try:
+                atomic_rename_noreplace(lock, quarantine)
+            except (FileExistsError, EvidenceWriteUncertainty, OSError) as error:
+                raise RegistryBlockedError([validation_error(
+                    "RUN_LOCK_RECOVERY_COLLISION", message="initialization quarantine rename failed",
+                )]) from error
             quarantine_started = True
             run_lifecycle_hook("recover.ownerless_after_quarantine_rename", lock=lock, quarantine=quarantine)
             return complete_ownerless_initialization_cleanup(state, run_id, claim, quarantine)

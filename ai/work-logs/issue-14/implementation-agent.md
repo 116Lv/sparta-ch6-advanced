@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T15:40:17+09:00
+last_updated: 2026-07-14T18:04:17+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -73,6 +73,73 @@ Implement the approved hardening plans one reviewed task at a time without execu
 # Current State
 
 Ready to begin global Task 1 (Phase 1B-3 local Task 1).
+
+## PR #15 Linux CI Follow-up (2026-07-14)
+
+### Root Cause And RED Evidence
+
+- GitHub Actions run `29317061475` failed 2 of 466 tests. The ledger swap test
+  monkeypatched `helper.os.open`, which also made
+  `native_safe_ledger_backend_supported()` return false before the injected
+  Linux validation-to-open race. This was a test instrumentation defect, not a
+  production ledger defect.
+- Run-lock recovery checked that a fresh quarantine destination was absent and
+  then called plain `os.rename`. POSIX may replace an existing empty destination
+  directory, so the validation-to-rename collision continued instead of failing
+  closed. This was a production TOCTOU defect.
+- Added host-independent owned and ownerless regression tests that require the
+  existing `atomic_rename_noreplace()` boundary. Before production changes, the
+  exact 2-test command failed both tests because `RegistryBlockedError` was not
+  raised; exit `1`, 2 tests, 2 failures in `0.915s`.
+
+### Implementation
+
+- Replaced every run-lock recovery control-directory `os.rename` move/restore
+  with `atomic_rename_noreplace()`, including owned and ownerless lock
+  quarantines, stale/ownerless recovery-claim quarantines, and late-owner
+  restorations.
+- Mapped `FileExistsError`, `EvidenceWriteUncertainty`, and `OSError` to the
+  existing fail-closed `RegistryBlockedError` contracts at each boundary.
+- Moved the existing rename fault injection from `helper.os.rename` to
+  `helper.atomic_rename_noreplace`.
+- In the native ledger directory-swap test only, pinned
+  `native_safe_ledger_backend_supported()` to true while monkeypatching
+  `helper.os.open`, preserving the production capability check.
+
+### Verification
+
+- Focused GREEN command: 5 tests passed in `2.475s`, exit `0`; it included both
+  new no-replace boundary regressions, both original CI failures, and the
+  adjusted atomic-helper fault injection test.
+- Related Phase3A plus RunLifecycleContinuation command: 172 tests passed in
+  `66.272s`, 4 explicit Windows capability skips, exit `0`.
+- Phase1B2 repository-boundary plus Phase3B CI-gate verification first failed
+  before test behavior because the sandbox denied worktree fixture writes (30
+  tests, 44 `PermissionError` errors, 1 skip, `1.969s`). The required rerun
+  outside the sandbox passed all 30 tests in `2.565s` with 1 explicit safe-POSIX
+  artifact-reader capability skip, exit `0`; the denied attempt is not counted
+  as product behavior evidence.
+- Exact whole-module argv `python -m unittest scripts.ai.tests.test_workflow_helper -v`
+  was attempted in direct, redirected, and detached forms. Each process tree was
+  terminated by the Codex command host at about 256 seconds before unittest
+  emitted `Ran ...` and `OK/FAILED`; none of those interrupted attempts is
+  counted as pass or failure evidence. The exact command remains required in the
+  GitHub Actions repository-contract entrypoint and will be verified there after
+  push.
+- Git Bash syntax validation passed all 12 `scripts/ai/**/*.sh` files;
+  cache-free Python AST parsing passed both Python files; all 29 JSON Schemas
+  passed Draft 2020-12 self-check and all 9 canonical `ai/*.json` files parsed.
+- `git diff --check` passed with line-ending conversion warnings only. Test-
+  generated `__pycache__` directories were removed after resolved-path checks.
+- Gradle, product/build tests, server, Docker, HTTP/API, database, migration,
+  seed, deployment, infrastructure, merge, and Issue closure remain NOT RUN.
+
+### Next Handoff
+
+- Independent read-only review of the working-tree diff and this evidence is
+  required before commit. After approval, commit and push the existing branch,
+  then monitor PR #15 repository-contract Actions to an uninterrupted green
+  whole-module result.
 
 # Decisions
 

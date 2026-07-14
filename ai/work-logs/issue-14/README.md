@@ -2,12 +2,12 @@
 issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 tracking_status: issue_backed
-status: done
+status: in_review
 owning_feature: "none"
-current_owner: orchestrator
+current_owner: reviewer
 started_at: 2026-07-14T02:48:51+09:00
-ended_at: 2026-07-14T16:58:31+09:00
-last_updated: 2026-07-14T16:58:31+09:00
+ended_at:
+last_updated: 2026-07-14T18:07:32+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -76,6 +76,10 @@ final helper-module and static verification is recorded below. Workflow status
 `done` describes this isolated implementation lifecycle only; Issue #14 remains
 open and no external enforcement or registry completion is claimed.
 
+PR #15 follow-up is active after Linux Actions run `29317061475` exposed one
+test-instrumentation defect and one run-lock recovery no-replace defect. The
+work remains on the existing isolated branch/worktree; Issue #14 remains open.
+
 ## Routing Outcome
 
 - Owning feature: `none`
@@ -92,6 +96,18 @@ open and no external enforcement or registry completion is claimed.
 - [Reviewer](reviewer.md): approved through Task 17 and final integration review
 
 ## Current State
+
+PR #15 CI follow-up implementation passed independent read-only review with no
+Critical, Important, or Minor findings. Run-lock
+recovery control-directory moves now use the existing atomic no-replace helper,
+and the native ledger swap test pins only the backend capability while injecting
+the `os.open` race. Focused and related-class verification is green; the exact
+whole-module local command was attempted repeatedly but the Codex command host
+terminated the process tree at about 256 seconds before unittest could emit its
+summary, so those interrupted attempts are not claimed as test evidence. The
+same exact command remains the repository-contract Actions entrypoint and will
+be used as the final uninterrupted proof after push. The follow-up is ready to
+commit on the existing branch.
 
 Tasks 1-17 and the whole-branch integration review have approval with no
 remaining Critical, Important, or Minor findings.

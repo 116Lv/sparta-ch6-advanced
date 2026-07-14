@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: reviewer
 started_at: 2026-07-14T03:02:02+09:00
 ended_at:
-last_updated: 2026-07-14T03:05:47+09:00
+last_updated: 2026-07-14T18:07:32+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -68,6 +68,41 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 - Result: NOT RUN
 
 # Blockers
+
+## PR #15 Linux CI Follow-up Review (2026-07-14)
+
+### Scope
+
+- Read-only review of the uncommitted diff against
+  `65a2471f0b181a16661fd34eadc033dbf9dee471`.
+- Checked the native ledger test-only capability pin, host-independent RED
+  regressions, all recovery control-directory rename/restore boundaries,
+  fail-closed exception mapping, adjusted fault injection, and work-log claims.
+
+### Strengths
+
+- The ledger test pins backend support only inside the real native branch while
+  injecting `helper.os.open`; production capability logic is unchanged.
+- Owned and ownerless tests require the atomic helper boundary and preserve the
+  lock plus claim-cleanup fail-closed expectations.
+- All six recovery control-directory moves/restorations consistently reuse
+  `atomic_rename_noreplace()`, including the Linux
+  `renameat2(RENAME_NOREPLACE)` implementation.
+- `FileExistsError`, `EvidenceWriteUncertainty`, and `OSError` remain mapped to
+  existing registry-blocked contracts; fault injection targets the new atomic
+  boundary.
+- No skips or assertion weakening were added. Logs correctly avoid claiming
+  the 256-second host-terminated whole-suite attempts as passes.
+
+### Issues And Assessment
+
+- Critical: none.
+- Important: none.
+- Minor: none.
+- Ready to commit: yes.
+- Tests were not rerun by the reviewer; the review checked the implementation
+  diff and recorded focused, related-class, shell, AST, schema, JSON, and diff
+  evidence. Repository state was not mutated by the review.
 
 - None
 

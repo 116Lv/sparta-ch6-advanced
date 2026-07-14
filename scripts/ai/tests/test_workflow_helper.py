@@ -3643,6 +3643,28 @@ class RunLifecycleContinuationTests(unittest.TestCase):
                 finally:
                     self.root = original_root
 
+    def test_recovery_quarantine_rename_uses_atomic_noreplace_boundary(self):
+        run = self.start()
+        lock, stale_owner = self.write_lock_owner(run)
+        observed = []
+
+        def atomic_rename_noreplace(source, destination):
+            observed.append((Path(source), Path(destination)))
+            raise FileExistsError(destination)
+
+        with mock.patch.object(
+            self.helper,
+            "atomic_rename_noreplace",
+            side_effect=atomic_rename_noreplace,
+        ):
+            with self.assertRaises(self.helper.RegistryBlockedError):
+                self.helper.recover_run_lock(self.root, "run-1")
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0][0], lock)
+        self.assertEqual(json.loads((lock / "owner.json").read_text(encoding="utf-8")), stale_owner)
+        self.assertFalse((run / ".state" / "lock-recovery-claim").exists())
+
     def test_pre_quarantine_recovery_faults_release_still_owned_claim(self):
         scenarios = ("after-claim", "rename-error")
         for scenario in scenarios:
@@ -3653,7 +3675,7 @@ class RunLifecycleContinuationTests(unittest.TestCase):
                     shutil.copytree(original_root / "ai", self.root / "ai")
                     run = self.start()
                     lock, stale_owner = self.write_lock_owner(run)
-                    original_rename = self.helper.os.rename
+                    original_rename = self.helper.atomic_rename_noreplace
 
                     def hook(name, **_context):
                         if scenario == "after-claim" and name == "recover.after_claim":
@@ -3664,7 +3686,7 @@ class RunLifecycleContinuationTests(unittest.TestCase):
                             raise OSError("injected quarantine rename failure")
                         return original_rename(source, destination)
 
-                    with mock.patch.object(self.helper, "run_lifecycle_hook", side_effect=hook), mock.patch.object(self.helper.os, "rename", side_effect=rename):
+                    with mock.patch.object(self.helper, "run_lifecycle_hook", side_effect=hook), mock.patch.object(self.helper, "atomic_rename_noreplace", side_effect=rename):
                         with self.assertRaises((OSError, self.helper.RegistryBlockedError)):
                             self.helper.recover_run_lock(self.root, "run-1")
                     self.assertFalse((run / ".state" / "lock-recovery-claim").exists())
@@ -3830,6 +3852,31 @@ class RunLifecycleContinuationTests(unittest.TestCase):
         self.assertFalse(lock.exists())
         acquired = self.helper.acquire_run_lock(self.root, "run-1")
         self.assertTrue(self.helper.release_run_lock(acquired))
+
+    def test_ownerless_recovery_quarantine_rename_uses_atomic_noreplace_boundary(self):
+        run = self.start()
+        lock = run / ".state" / "lock"
+        lock.mkdir()
+        expired = time.time() - self.helper.RUN_LOCK_MAX_RECENT_SECONDS - 10
+        os.utime(lock, (expired, expired))
+        observed = []
+
+        def atomic_rename_noreplace(source, destination):
+            observed.append((Path(source), Path(destination)))
+            raise FileExistsError(destination)
+
+        with mock.patch.object(
+            self.helper,
+            "atomic_rename_noreplace",
+            side_effect=atomic_rename_noreplace,
+        ):
+            with self.assertRaises(self.helper.RegistryBlockedError):
+                self.helper.recover_run_lock(self.root, "run-1")
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0][0], lock)
+        self.assertTrue(lock.is_dir())
+        self.assertFalse((run / ".state" / "lock-recovery-claim").exists())
 
     def test_ownerless_main_cleanup_resumes_after_initialization_quarantine_crash(self):
         run = self.start()
@@ -10845,7 +10892,11 @@ print(json.dumps({"result": result, "status": status}))
                     return real_open(path, flags, mode)
                 return real_open(path, flags, mode, dir_fd=dir_fd)
 
-            with mock.patch.object(self.helper.os, "open", side_effect=swap_before_directory_open):
+            with mock.patch.object(
+                self.helper,
+                "native_safe_ledger_backend_supported",
+                return_value=True,
+            ), mock.patch.object(self.helper.os, "open", side_effect=swap_before_directory_open):
                 with self.assertRaises(OSError):
                     self.helper.consume_native_attestation(ledger_root, identity)
             self.assertTrue(swapped)
