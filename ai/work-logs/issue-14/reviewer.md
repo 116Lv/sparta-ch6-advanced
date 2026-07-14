@@ -543,3 +543,40 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Ready to merge: With fixes.
 - No Critical issue was found, but the four Important integration findings should be closed before merge.
+
+## Task 13 Final Projection Integration Re-review (2026-07-14)
+
+### Review History
+
+- The initial integration review found the finalized `run.json` projection under-bound: schema-valid mutations could pass because the retained authority did not cover every derived run field, complete claim/gate outcomes, manifest identity, or artifact identities.
+- Review loop 1: `9692fba` (`fix(ai): bind complete final run projection`) added the closed receipt projection and artifact identities. Re-review then found no public crash recovery and no complete pre-receipt session anchor.
+- Review loop 2: `4035894` (`fix(ai): recover interrupted finalization safely`) added explicit recovery and the complete session snapshot anchor. Re-review found recovery still depended on mutable/current state, omitted the custom claim input, mishandled crash-left manifests and stale-lock history, and could leak runtime/write uncertainty.
+- Review loop 3: `9a225e8` (`fix(ai): anchor finalization recovery journal`) added independent journal authority and bounded recovery. Re-review found that the active session did not bind the exact journal, OPEN-plus-active-journal work could proceed, prepare uncertainty was incomplete, and failed FINALIZED recovery did not consistently restore read-only control files.
+- Review loop 4: `779c947` (`fix(ai): bind sessions to finalization journals`) bound the normalized journal identity into FINALIZING/FINALIZED sessions and closed structured uncertainty handling. Re-review found two remaining Important gaps: final JSON became visible before read-only sealing, and rollback restored OPEN before a fallible journal deletion/fsync cleanup.
+- Review loop 5: `050ba82` (`fix(ai): seal final evidence before visibility`) made every final JSON temporary read-only and mode-verified before its exclusive link, repaired all six final/control modes during successful recovery, and replaced the fixed deletable marker with immutable per-attempt UUID journals. The OPEN compare-and-swap now clears only the active identity; prior journals remain read-only audit history, and legacy fixed markers fail closed.
+
+### Final Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+- None. Both final-loop Important findings are closed by `050ba82`.
+
+#### Minor (Nice to Have)
+
+- None.
+
+### Verification
+
+- Tests were not re-run during this final read-only approval review.
+- Reviewed evidence commit `110dd20`, which records five focused regressions passing in `9.660s` and the committed-HEAD bounded helper/schema suite passing 98 tests in `120.527s` with exit `0`.
+- The recorded cache-free Python AST checks, touched-schema JSON parsing, and `git diff --check` also exited `0`. No Gradle, product, server, Docker, HTTP/API, database, migration, deployment, GitHub mutation, or real repository `.ai-runs` operation was run.
+
+### Assessment
+
+- Task quality: Approved.
+- Ready to merge: Yes for the Task 13 final-projection/finalization integration scope.
+- Reasoning: The five review loops close the complete projection authority, crash recovery, independent and session-bound journal identity, uncertainty reconciliation, pre-visibility immutability, recovery mode repair, and rollback cleanup-window findings. Final scoped review found Critical 0, Important 0, and Minor 0.
