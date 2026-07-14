@@ -2,12 +2,12 @@
 issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 tracking_status: issue_backed
-status: in_progress
+status: in_review
 owning_feature: "none"
-current_owner: implementation-agent
+current_owner: reviewer
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T10:04:12+09:00
+last_updated: 2026-07-14T10:23:11+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -72,12 +72,12 @@ Issue #14 tracks the isolated implementation and review of the four approved tru
 
 ## Agent Logs
 
-- [Implementation Agent](implementation-agent.md): in_progress
+- [Implementation Agent](implementation-agent.md): complete
 - [Reviewer](reviewer.md): in_progress
 
 ## Current State
 
-All Phase 1B-3, Phase 2, Phase 3A, and Phase 3B contract/enforcement split work are approved. GitHub provenance review found one Critical authority-origin defect and two Important trusted-context/member-read defects requiring fixes.
+All Phase 1B-3, Phase 2, Phase 3A, and Phase 3B contract/enforcement split work are approved. The GitHub provenance authority, trusted-context, and member-read findings are fixed and awaiting re-review.
 
 ## Decisions
 
@@ -96,12 +96,12 @@ All Phase 1B-3, Phase 2, Phase 3A, and Phase 3B contract/enforcement split work 
 
 ## Next Handoff
 
-- Next role: implementation-agent
+- Next role: reviewer
 - Required reading:
   - [Trust-boundary design](../../docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md)
   - [Phase 3B execution plan](../../docs/superpowers/plans/2026-07-14-phase-3b-ci-provenance-hardening.md)
 - Context links:
   - [Implementation role log](implementation-agent.md)
   - [Reviewer role log](reviewer.md)
-- Remaining work: Close production provenance PASS until a real external verifier integration exists; separate trusted expected context from retainedRun; fail closed without safe pinned member reads; then re-review.
-- Evidence required: RED/GREEN forgery, unrelated-run replay, and unsafe-backend tests plus expanded regressions.
+- Remaining work: Re-review the Task 11 authority/context/backend fixes.
+- Evidence required: Confirm production PASS is unreachable, lower verification uses independent current-run context, and unsafe member backends fail closed.
