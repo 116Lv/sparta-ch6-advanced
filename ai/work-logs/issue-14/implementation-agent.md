@@ -1520,3 +1520,29 @@ independent re-review remains with the parent.
   infrastructure, GitHub state, push, PR, merge, Issue closure, or real
   `.ai-runs` operation changed or ran. Native enforcement and the external
   verifier remain `NOT_CONFIGURED`; independent re-review remains next.
+
+### Task 12 Exact Post-Fix Contract Suite Evidence (2026-07-14)
+
+- The parent copied the repository into a writable temporary verification
+  directory and ran the exact entrypoint-owned helper command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper -v`.
+- The first exact execution exited `1` after `193.501s`: 417 tests ran with 1
+  failure and 20 platform skips. The temporary copy had excluded the linked
+  worktree `.git` pointer, so repository commit identity failed closed with
+  `VERIFICATION_REPOSITORY_COMMIT_NOT_CONFIGURED`. This was an environment
+  construction failure; it is preserved as failed evidence and does not
+  support a PASS claim.
+- After restoring the same linked-worktree `.git` pointer in the writable copy,
+  the identical exact command exited `0` after `191.541s`: all 417 tests passed
+  with the same 20 explicit platform-capability skips.
+- This exact successful rerun, together with the semantic GREEN and eight
+  mutation regressions, closes the reviewer finding that commented, dead,
+  duplicate, or selective helper paths could satisfy the prior test and closes
+  the pending exact post-fix full-module evidence gap. The earlier exhaustive
+  416-test partition remains historical pre-fix evidence and is not substituted
+  for this 417-test exact rerun.
+- The verification executed helper tests only. It did not run Gradle, product
+  commands, servers, Docker, HTTP/API, databases, migrations, seeds, deploys,
+  GitHub Actions/state mutation, push, PR, merge, Issue closure, or real
+  `.ai-runs`. Native enforcement and the external verifier remain
+  `NOT_CONFIGURED`; independent re-review remains next.
