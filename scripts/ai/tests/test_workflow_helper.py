@@ -5965,6 +5965,64 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         for path in self.partial_finalization_paths():
             self.assertFalse(path.exists(), path)
 
+    def crash_left_finalization(self, *, sealed=False, partial=()):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        acquired = self.helper.acquire_run_lock(self.root, "run-1")
+        try:
+            original = self.helper.active_open_session(self.root, "run-1")
+            finalizing = self.helper.expected_finalizing_session(original)
+            self.helper.replace_run_session(
+                self.root, self.session_path, finalizing, acquired,
+                expected_session=original,
+            )
+            claim = self.helper.read_json(self.root / claim_ref)
+            result, reason = self.helper.done_claim_semantic_result(
+                self.root, finalizing, claim,
+            )
+            gate = self.helper.gate_result_artifact(self.root, "run-1", result, reason)
+            if result == "PASS":
+                gate["data"]["taskKey"] = finalizing["taskKey"]
+            projection = self.helper.final_run_projection(
+                finalizing, result, reason, "2026-07-12T03:20:00Z",
+            )
+            current = finalizing
+            if sealed:
+                current = self.helper.sealed_finalization_session(
+                    self.root, finalizing, projection, claim, gate,
+                )
+                self.helper.replace_run_session(
+                    self.root, self.session_path, current, acquired,
+                    expected_session=finalizing,
+                )
+            run = self.root / ".ai-runs" / "run-1"
+            if "claim" in partial:
+                self.helper.publish_final_json(
+                    self.root, run / "done-claim.json", claim,
+                    "ai/schemas/done-claim.schema.json",
+                )
+            if "gate" in partial:
+                (run / "gate-results").mkdir(mode=0o700, exist_ok=True)
+                self.helper.publish_final_json(
+                    self.root, run / "gate-results" / "pre-done-claim.json", gate,
+                    "ai/schemas/gateway-result.schema.json",
+                )
+            if "manifest" in partial:
+                manifest = self.helper.final_artifact_manifest(self.root, "run-1")
+                self.helper.publish_final_json(
+                    self.root, run / "artifact-manifest.json", manifest,
+                    "ai/schemas/artifact-manifest.schema.json",
+                )
+            return original, current
+        finally:
+            self.helper.release_run_lock(acquired)
+
+    def recover_finalization(self):
+        recover = getattr(self.helper, "recover_finalization", None)
+        self.assertIsNotNone(recover, "explicit finalization recovery operation is missing")
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            return recover(self.root, "run-1")
+
     def test_valid_all_pass_claim_finalizes_integrity_only_run(self):
         self.publish_command_result(exit_code=0)
         with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
@@ -5996,6 +6054,203 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
 
         self.assertEqual(set(receipt_projection["required"]), set(run_schema["required"]))
         self.assertEqual(set(receipt_projection["properties"]), set(run_schema["properties"]))
+
+    def test_finalization_receipt_binds_complete_pre_receipt_session_schema(self):
+        session_schema = json.loads(
+            (self.root / "ai/schemas/run-session.schema.json").read_text(encoding="utf-8")
+        )
+        receipt = session_schema["$defs"]["finalizationReceipt"]
+        snapshot = session_schema["$defs"].get("preReceiptSession")
+
+        self.assertIsNotNone(snapshot)
+        self.assertIn("preReceiptSession", receipt["required"])
+        self.assertIn("preReceiptSessionSha256", receipt["required"])
+        self.assertEqual(set(snapshot["required"]), set(session_schema["required"]))
+        self.assertEqual(set(snapshot["properties"]), set(session_schema["properties"]))
+
+    def test_verify_finalized_rejects_pre_receipt_session_reference_mutation_matrix(self):
+        result, status = self.finalize()
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        original = self.session()
+        reservation = json.loads(json.dumps(original["reservations"][0]))
+        reservation.update({
+            "attemptId": "attempt-phantom",
+            "commandResultRef": ".ai-runs/run-1/commands/verify.unit/attempt-phantom.json",
+            "processAttemptRef": ".ai-runs/run-1/process-attempts/verify.unit/attempt-phantom.json",
+        })
+        recovery = {
+            "recoveryId": "recovery-phantom", "runId": "run-1",
+            "recoveredOwnerId": "owner-old", "replacementOwnerId": "owner-new",
+            "previousPid": 999999, "previousAcquiredAt": "2026-07-12T01:00:00Z",
+            "recoveredAt": "2026-07-12T03:30:00Z", "reason": "DEAD_AND_EXPIRED",
+        }
+        mutations = {
+            "process-add": lambda value: value["processAttemptRefs"].append(
+                ".ai-runs/run-1/process-attempts/verify.unit/attempt-phantom.json"
+            ),
+            "process-remove": lambda value: value.update({"processAttemptRefs": []}),
+            "gate-add": lambda value: value["gateResultRefs"].append(
+                ".ai-runs/run-1/gate-results/phantom.json"
+            ),
+            "reservation-add": lambda value: value["reservations"].append(reservation),
+            "reservation-remove": lambda value: value.update({"reservations": []}),
+            "lock-recovery-add": lambda value: value["lockRecoveries"].append(recovery),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                payload = json.loads(json.dumps(original))
+                mutate(payload)
+                self.session_path.chmod(0o600)
+                self.session_path.write_text(json.dumps(payload), encoding="utf-8")
+                verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+                self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.session_path.chmod(0o600)
+        self.session_path.write_text(json.dumps(original), encoding="utf-8")
+
+    def test_verify_finalized_rejects_pre_receipt_lock_recovery_reorder(self):
+        self.publish_command_result(exit_code=0)
+        session = self.session()
+        session["lockRecoveries"] = [
+            {
+                "recoveryId": f"recovery-{suffix}", "runId": "run-1",
+                "recoveredOwnerId": f"owner-old-{suffix}",
+                "replacementOwnerId": f"owner-new-{suffix}", "previousPid": pid,
+                "previousAcquiredAt": f"2026-07-12T0{index}:00:00Z",
+                "recoveredAt": f"2026-07-12T0{index}:30:00Z", "reason": "DEAD_AND_EXPIRED",
+            }
+            for index, (suffix, pid) in enumerate((("one", 999998), ("two", 999999)), start=1)
+        ]
+        self.session_path.write_text(json.dumps(session), encoding="utf-8")
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            result, status = self.helper.prepare_done_claim(
+                self.root, "run-1", self.write_claim(self.done_claim()),
+            )
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        payload = self.session()
+        payload["lockRecoveries"].reverse()
+        self.session_path.chmod(0o600)
+        self.session_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_explicit_recovery_rolls_back_crash_after_first_session_cas_and_is_idempotent(self):
+        original, _finalizing = self.crash_left_finalization(
+            sealed=False, partial=("claim",),
+        )
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["operation"], recovered["result"], status), (
+            "FINALIZATION_RECOVERY", "PASS", 0,
+        ))
+        self.assertEqual(recovered["data"]["action"], "ROLLED_BACK")
+        self.assertEqual(self.session(), original)
+        self.assert_partial_finalization_absent()
+        retry, retry_status = self.recover_finalization()
+        self.assertEqual((retry["result"], retry_status), ("PASS", 0))
+        self.assertEqual(retry["data"]["action"], "ALREADY_OPEN")
+
+    def test_explicit_recovery_resumes_crash_after_receipt_cas_with_partial_artifacts(self):
+        self.crash_left_finalization(sealed=True, partial=("claim", "gate"))
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["operation"], recovered["result"], status), (
+            "FINALIZATION_RECOVERY", "PASS", 0,
+        ))
+        self.assertEqual(recovered["data"]["action"], "RESUMED")
+        self.assertTrue((self.root / ".ai-runs" / "run-1" / "run.json").is_file())
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+        self.assertEqual((verified["result"], verify_status), ("PASS", 0))
+        retry, retry_status = self.recover_finalization()
+        self.assertEqual((retry["result"], retry_status), ("PASS", 0))
+        self.assertEqual(retry["data"]["action"], "ALREADY_FINALIZED")
+
+    def test_explicit_recovery_reclaims_stale_lock_without_mutating_sealed_session(self):
+        self.crash_left_finalization(sealed=True)
+        sealed = self.session()
+        lock = self.root / ".ai-runs" / "run-1" / ".state" / "lock"
+        lock.mkdir(mode=0o700)
+        (lock / "owner.json").write_text(json.dumps({
+            "ownerId": "11111111-1111-4111-8111-111111111111",
+            "runId": "run-1", "pid": 999999,
+            "acquiredAt": "2000-01-01T00:00:00Z",
+        }), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "RESUMED")
+        retained = self.session()
+        self.assertEqual(
+            retained["finalizationReceipt"]["preReceiptSession"],
+            sealed["finalizationReceipt"]["preReceiptSession"],
+        )
+        self.assertEqual(retained["lockRecoveries"], sealed["lockRecoveries"])
+
+    def test_explicit_recovery_rolls_back_inconsistent_partial_artifact(self):
+        original, _sealed = self.crash_left_finalization(
+            sealed=True, partial=("claim",),
+        )
+        claim_path = self.root / ".ai-runs" / "run-1" / "done-claim.json"
+        claim_path.chmod(0o600)
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        claim["overallResult"] = "FAIL"
+        claim_path.write_text(json.dumps(claim), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "ROLLED_BACK")
+        self.assertEqual(self.session(), original)
+        self.assert_partial_finalization_absent()
+
+    def test_finalization_recovery_cli_dispatches_documented_operation(self):
+        with (
+            mock.patch.object(self.helper, "recover_finalization", return_value=(
+                self.helper.gateway_result(
+                    "PASS", None,
+                    {"runId": "run-1", "state": "OPEN", "action": "ALREADY_OPEN"},
+                    operation="FINALIZATION_RECOVERY",
+                ),
+                0,
+            )) as recover,
+            mock.patch.object(
+                sys, "argv",
+                [
+                    "workflow_helper.py", "finalization-recover", "--repository-root",
+                    str(self.root), "--run-id", "run-1",
+                ],
+            ),
+            mock.patch("builtins.print"),
+        ):
+            status = self.helper.main()
+
+        self.assertEqual(status, 0)
+        recover.assert_called_once()
+        shell = (REPOSITORY_ROOT / "scripts/ai/done-claim-check.sh").read_text(encoding="utf-8")
+        self.assertIn("recover-finalization", shell)
+        self.assertIn("finalization-recover", shell)
+        policy = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "done-claim-check.sh recover-finalization <run-id>", policy,
+        )
+
+    def test_recovery_never_rolls_back_published_run_and_repairs_session_read_only(self):
+        result, status = self.finalize()
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        self.session_path.chmod(0o600)
+
+        recovered, recovery_status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], recovery_status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "ALREADY_FINALIZED")
+        self.assertTrue((self.root / ".ai-runs" / "run-1" / "run.json").is_file())
+        self.assertEqual(self.session()["state"], "FINALIZED")
+        self.assertFalse(self.session_path.stat().st_mode & stat.S_IWRITE)
 
     def test_check_evidence_must_be_top_level_and_bound_to_session(self):
         self.publish_command_result(exit_code=0)

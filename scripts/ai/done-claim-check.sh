@@ -14,6 +14,11 @@ invalid_prepare() {
   exit 4
 }
 
+invalid_recovery() {
+  printf '%s\n' '{"$schema":"ai/schemas/gateway-result.schema.json","$id":"ai/gateway-result.json","schemaVersion":1,"operation":"FINALIZATION_RECOVERY","result":"POLICY_VIOLATION","reason":"INVALID_FINALIZATION_RECOVERY_ARGUMENTS","errors":[],"data":null}'
+  exit 4
+}
+
 run_helper() {
   probe='import sys; from jsonschema import Draft202012Validator, FormatChecker; print(f"{sys.version_info.major}|{Draft202012Validator.__name__}|{FormatChecker.__name__}")'
   for candidate_name in python3 python; do
@@ -28,7 +33,11 @@ run_helper() {
       3\|Draft202012Validator\|FormatChecker) exec "$candidate" "$HELPER" "$@" ;;
     esac
   done
-  printf '%s\n' '{"$schema":"ai/schemas/gateway-result.schema.json","$id":"ai/gateway-result.json","schemaVersion":1,"operation":"PRE_DONE_CLAIM","result":"NOT_CONFIGURED","reason":"helper runtime unavailable","errors":[],"data":null}'
+  if [ "${FINALIZATION_RECOVERY:-0}" = 1 ]; then
+    printf '%s\n' '{"$schema":"ai/schemas/gateway-result.schema.json","$id":"ai/gateway-result.json","schemaVersion":1,"operation":"FINALIZATION_RECOVERY","result":"NOT_CONFIGURED","reason":"helper runtime unavailable","errors":[],"data":null}'
+  else
+    printf '%s\n' '{"$schema":"ai/schemas/gateway-result.schema.json","$id":"ai/gateway-result.json","schemaVersion":1,"operation":"PRE_DONE_CLAIM","result":"NOT_CONFIGURED","reason":"helper runtime unavailable","errors":[],"data":null}'
+  fi
   exit 3
 }
 
@@ -38,6 +47,14 @@ fi
 
 if [ "$#" -eq 2 ] && [ "$1" = verify-finalized ]; then
   run_helper verify-finalized --repository-root "$ROOT" --run-id "$2"
+fi
+
+if [ "$#" -eq 2 ] && [ "$1" = recover-finalization ]; then
+  FINALIZATION_RECOVERY=1 run_helper finalization-recover --repository-root "$ROOT" --run-id "$2"
+fi
+
+if [ "$#" -gt 0 ] && [ "$1" = recover-finalization ]; then
+  invalid_recovery
 fi
 
 invalid_prepare

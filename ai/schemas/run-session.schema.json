@@ -93,8 +93,10 @@
     "finalizationReceipt": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["manifestIdentity", "runProjection", "claimIdentity", "gateIdentity", "artifactIdentities"],
+      "required": ["preReceiptSession", "preReceiptSessionSha256", "manifestIdentity", "runProjection", "claimIdentity", "gateIdentity", "artifactIdentities"],
       "properties": {
+        "preReceiptSession": { "$ref": "#/$defs/preReceiptSession" },
+        "preReceiptSessionSha256": { "$ref": "#/$defs/digest" },
         "manifestIdentity": {
           "type": "object", "additionalProperties": false, "required": ["$id", "runId"],
           "properties": { "$id": { "$ref": "#/$defs/repositoryPath" }, "runId": { "$ref": "#/$defs/identifier" } }
@@ -130,6 +132,31 @@
             "properties": { "path": { "$ref": "#/$defs/repositoryPath" }, "kind": { "$ref": "#/$defs/artifactKind" } }
           }
         }
+      }
+    },
+    "preReceiptSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "workingDirectory", "environment", "state", "commandResultRefs", "processAttemptRefs", "approvalRefs", "policyViolationRefs", "gateResultRefs", "reservations", "lockRecoveries", "redactionApplied", "finalizationReceipt"],
+      "properties": {
+        "$schema": { "const": "ai/schemas/run-session.schema.json" },
+        "$id": { "$ref": "#/$defs/repositoryPath" },
+        "schemaVersion": { "const": 1 },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "taskKey": { "type": "string", "minLength": 1 },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "workingDirectory": { "$ref": "#/$defs/repositoryPath" },
+        "environment": { "enum": ["LOCAL", "CI"] },
+        "state": { "const": "FINALIZING" },
+        "commandResultRefs": { "$ref": "#/$defs/referenceList" },
+        "processAttemptRefs": { "$ref": "#/$defs/referenceList" },
+        "approvalRefs": { "$ref": "#/$defs/referenceList" },
+        "policyViolationRefs": { "$ref": "#/$defs/referenceList" },
+        "gateResultRefs": { "$ref": "#/$defs/referenceList" },
+        "reservations": { "type": "array", "items": { "$ref": "#/$defs/reservation" } },
+        "lockRecoveries": { "type": "array", "items": { "$ref": "#/$defs/lockRecovery" } },
+        "redactionApplied": { "type": "boolean" },
+        "finalizationReceipt": { "type": "null" }
       }
     },
     "reservation": {
