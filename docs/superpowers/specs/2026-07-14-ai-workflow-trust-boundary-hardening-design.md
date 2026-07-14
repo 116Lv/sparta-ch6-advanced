@@ -161,6 +161,13 @@ timestamp, expiry/freshness bound, evidence reference, evidence SHA-256, and
 evidence schema identity. The loader validates the referenced evidence content
 and digest before returning a verified leaf.
 
+Each gate evaluation bounded-reads the canonical verification policy exactly
+once. Strict JSON parsing, schema validation, and the policy SHA-256 all consume
+that same byte snapshot; one recursively immutable policy value and its digest
+then flow through the native leaf and every external leaf validation. The gate
+never reopens the policy path, so replacement cannot combine one policy's
+applicability semantics with another policy's identity.
+
 The gate never creates a PASS from only canonical policy. Missing explicit
 evidence for a required leaf is `NOT_CONFIGURED` mapped to `BLOCKED`. A required
 leaf may be `NOT_APPLICABLE` only when canonical policy explicitly marks that

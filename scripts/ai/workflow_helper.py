@@ -6938,6 +6938,34 @@ def read_bounded_verification_json(path, max_bytes, too_large_code, too_large_me
     return encoded, value
 
 
+def deep_freeze(value):
+    if isinstance(value, Mapping):
+        return MappingProxyType({
+            key: deep_freeze(item)
+            for key, item in value.items()
+        })
+    if isinstance(value, (list, tuple)):
+        return tuple(deep_freeze(item) for item in value)
+    return value
+
+
+def load_verification_policy_snapshot(root):
+    policy_path = resolve_repository_file(root, "ai/verification-policy.json")
+    encoded, policy = read_bounded_verification_json(
+        policy_path,
+        MAX_PARAMETER_FILE_BYTES,
+        "VERIFICATION_POLICY_TOO_LARGE",
+        "verification policy exceeds the bounded read limit",
+    )
+    if not isinstance(policy, dict):
+        raise InvalidStateError([validation_error(
+            "INVALID_INSTANCE_ROOT",
+            message="workflow JSON root must be an object",
+        )])
+    validate(root, policy, "ai/schemas/verification-policy.schema.json")
+    return deep_freeze(policy), hashlib.sha256(encoded).hexdigest()
+
+
 def read_verification_leaf_evidence(path):
     return read_bounded_verification_json(
         path,
@@ -7084,29 +7112,47 @@ def verified_leaf_result(root, loaded_leaf, expected, policy_sha256):
     return verified
 
 
-def load_verified_leaf_results(root, loaded_leaves, task_key, gate_invocation_id, commit_sha, policy):
+def verify_external_leaf(root, loaded_leaf, task_key, gate_invocation_id, commit_sha,
+                         policy, policy_sha256):
     policy_checks = {check["id"]: check for check in policy["checks"]}
-    policy_sha256 = digest(resolve_repository_file(root, "ai/verification-policy.json"))
+    leaf = loaded_leaf["leaf"]
+    check_id = leaf.get("checkId") if isinstance(leaf, dict) else None
+    policy_check = policy_checks.get(check_id)
+    if policy_check is None:
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_RESULTS_INVALID",
+            message="verification leaf check identity is unknown or duplicated",
+        )])
+    expected = {
+        "checkId": check_id,
+        "taskKey": task_key,
+        "gateInvocationId": gate_invocation_id,
+        "commitSha": commit_sha,
+        "producerId": policy_check["producerId"],
+        "evidenceSchema": policy_check["evidenceSchema"],
+    }
+    return verified_leaf_result(root, loaded_leaf, expected, policy_sha256)
+
+
+def load_verified_leaf_results(root, loaded_leaves, task_key, gate_invocation_id, commit_sha,
+                               policy, policy_sha256):
     by_id = {}
     for loaded_leaf in loaded_leaves:
         leaf = loaded_leaf["leaf"]
         check_id = leaf.get("checkId") if isinstance(leaf, dict) else None
-        policy_check = policy_checks.get(check_id)
-        if policy_check is None or check_id in by_id:
+        if check_id in by_id:
             raise InvalidStateError([validation_error(
                 "VERIFICATION_LEAF_RESULTS_INVALID",
                 message="verification leaf check identity is unknown or duplicated",
             )])
-        expected = {
-            "checkId": check_id,
-            "taskKey": task_key,
-            "gateInvocationId": gate_invocation_id,
-            "commitSha": commit_sha,
-            "producerId": policy_check["producerId"],
-            "evidenceSchema": policy_check["evidenceSchema"],
-        }
-        by_id[check_id] = verified_leaf_result(
-            root, loaded_leaf, expected, policy_sha256,
+        by_id[check_id] = verify_external_leaf(
+            root,
+            loaded_leaf,
+            task_key,
+            gate_invocation_id,
+            commit_sha,
+            policy,
+            policy_sha256,
         )
     return by_id
 
@@ -7195,14 +7241,7 @@ NATIVE_RFC3339_TIMESTAMP = re.compile(
 
 
 def native_deep_freeze(value):
-    if isinstance(value, Mapping):
-        return MappingProxyType({
-            key: native_deep_freeze(item)
-            for key, item in value.items()
-        })
-    if isinstance(value, (list, tuple)):
-        return tuple(native_deep_freeze(item) for item in value)
-    return value
+    return deep_freeze(value)
 
 
 @dataclass(frozen=True)
@@ -8228,7 +8267,8 @@ def run_native_adapter_gate_cli(arguments):
 
 
 def native_adapter_phase2c_leaf(root, task_key, gate_invocation_id, runtime_snapshot_ref=None,
-                                bypass_attempts_ref=None):
+                                bypass_attempts_ref=None, verification_policy=None,
+                                policy_sha256=None):
     adapter_result, _ = native_adapter_gate(
         root,
         task_key,
@@ -8236,7 +8276,7 @@ def native_adapter_phase2c_leaf(root, task_key, gate_invocation_id, runtime_snap
         runtime_snapshot_ref,
         bypass_attempts_ref,
     )
-    return {
+    leaf = {
         "checkId": NATIVE_ADAPTER_CHECK_ID,
         "result": adapter_result["phase2cLeafResult"],
         "evidenceRef": "ai/native-runtime-adapters.json",
@@ -8245,6 +8285,25 @@ def native_adapter_phase2c_leaf(root, task_key, gate_invocation_id, runtime_snap
         "producerId": NATIVE_ADAPTER_CHECK_ID,
         "reason": adapter_result["reason"],
     }
+    if (verification_policy is None) != (policy_sha256 is None):
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_POLICY_IDENTITY_INVALID",
+            message="verification policy value and digest must be supplied together",
+        )])
+    if verification_policy is not None:
+        policy_checks = {
+            check["id"]: check
+            for check in verification_policy["checks"]
+        }
+        native_policy_check = policy_checks.get(NATIVE_ADAPTER_CHECK_ID)
+        if native_policy_check is None:
+            raise InvalidStateError([validation_error(
+                "VERIFICATION_POLICY_CHECK_INVALID",
+                message="verification policy does not define the internal native check",
+            )])
+        leaf["producerId"] = native_policy_check["producerId"]
+        leaf["policySha256"] = policy_sha256
+    return leaf
 
 
 
@@ -8608,9 +8667,7 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                       gate_invocation_id=None, runtime_snapshot_ref=None, bypass_attempts_ref=None):
     root = Path(root).resolve()
     try:
-        policy_path = root / "ai" / "verification-policy.json"
-        policy = validate_repository_instance(root, policy_path)
-        policy_sha256 = digest(policy_path)
+        policy, policy_sha256 = load_verification_policy_snapshot(root)
         change_types = {item["id"]: item for item in policy["changeTypes"]}
         checks = {item["id"]: item for item in policy["checks"]}
         if change_type not in change_types:
@@ -8636,6 +8693,7 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                 gate_invocation_id,
                 commit_sha,
                 policy,
+                policy_sha256,
             )
         native_leaf = native_adapter_phase2c_leaf(
             root,
@@ -8643,16 +8701,10 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
             gate_invocation_id,
             runtime_snapshot_ref,
             bypass_attempts_ref,
+            policy,
+            policy_sha256,
         )
-        native_policy_check = checks.get(NATIVE_ADAPTER_CHECK_ID)
-        if native_policy_check is None:
-            raise InvalidStateError([validation_error(
-                "VERIFICATION_POLICY_CHECK_INVALID",
-                message="verification policy does not define the internal native check",
-            )])
-        native_leaf["producerId"] = native_policy_check["producerId"]
         native_leaf["commitSha"] = commit_sha
-        native_leaf["policySha256"] = policy_sha256
         if not all(
             isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
             for value in (task_key, gate_invocation_id)

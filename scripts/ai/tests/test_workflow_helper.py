@@ -8253,6 +8253,72 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         )
         self.helper.validate(self.root, result, "ai/schemas/verification-gate-result.schema.json")
 
+    def test_verification_policy_snapshot_is_bounded_validated_and_deeply_immutable(self):
+        policy, policy_sha256 = self.helper.load_verification_policy_snapshot(self.root)
+
+        self.assertEqual(
+            policy_sha256,
+            hashlib.sha256((self.root / "ai" / "verification-policy.json").read_bytes()).hexdigest(),
+        )
+        self.assertEqual(policy["$id"], "ai/verification-policy.json")
+        with self.assertRaises(TypeError):
+            policy["updatedAt"] = "2026-07-15T00:00:00Z"
+        with self.assertRaises(TypeError):
+            policy["checks"][0]["producerId"] = "replacement-producer"
+        with self.assertRaises(AttributeError):
+            policy["checks"].append({})
+
+    def test_gate_reads_policy_once_and_binds_one_identity_after_replacement(self):
+        review_ref = self.write_bound_leaf("review-gate", name="policy-race-review")
+        done_ref = self.write_bound_leaf("done-claim-gate", name="policy-race-done")
+        refs = self.write_leaf_result_refs(
+            [review_ref, done_ref], name="policy-race-refs.json",
+        )
+        policy_path = self.root / "ai" / "verification-policy.json"
+        accepted_bytes = policy_path.read_bytes()
+        accepted_policy = json.loads(accepted_bytes.decode("utf-8"))
+        replacement_policy = json.loads(json.dumps(accepted_policy))
+        documentation_change = next(
+            item for item in replacement_policy["changeTypes"]
+            if item["id"] == "documentation-only"
+        )
+        documentation_change["requiredChecks"].append("verify.static")
+        documentation_change["optionalChecks"].remove("verify.static")
+        replacement_bytes = json.dumps(replacement_policy, sort_keys=True).encode("utf-8")
+        accepted_sha256 = hashlib.sha256(accepted_bytes).hexdigest()
+        replacement_sha256 = hashlib.sha256(replacement_bytes).hexdigest()
+        self.assertNotEqual(accepted_sha256, replacement_sha256)
+        original_open = Path.open
+        policy_open_count = 0
+
+        def race_open(path, *args, **kwargs):
+            nonlocal policy_open_count
+            if Path(path) == policy_path:
+                policy_open_count += 1
+                payload = accepted_bytes if policy_open_count == 1 else replacement_bytes
+                return io.BytesIO(payload)
+            return original_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.helper.Path, "open", autospec=True, side_effect=race_open):
+            result, status = self.helper.verification_gate(
+                self.root,
+                "documentation-only",
+                "review",
+                refs,
+                task_key="issue-10",
+                gate_invocation_id="gate-review",
+            )
+
+        self.assertEqual(policy_open_count, 1)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "PASS", "REPOSITORY_ONLY_HOST_UNSUPPORTED", 0,
+        ))
+        checks = {check["checkId"]: check for check in result["data"]["checks"]}
+        for check_id in ("native-runtime-adapter", "review-gate", "done-claim-gate"):
+            with self.subTest(check_id=check_id):
+                self.assertEqual(checks[check_id]["policySha256"], accepted_sha256)
+                self.assertNotEqual(checks[check_id]["policySha256"], replacement_sha256)
+
     def test_gate_result_schema_distinguishes_verified_and_synthesized_checks(self):
         leaf_ref = self.write_bound_leaf("review-gate", name="identity-shape-review")
         result, status = self.run_gate_with_refs("documentation-only", "review", [leaf_ref])
@@ -11186,7 +11252,13 @@ print(json.dumps({"result": result, "status": status}))
         calls = []
 
         def counted_leaf(*args, **kwargs):
-            calls.append((args[3:], kwargs))
+            calls.append({
+                "runtimeSnapshotRef": args[3],
+                "bypassAttemptsRef": args[4],
+                "policy": args[5],
+                "policySha256": args[6],
+                "kwargs": kwargs,
+            })
             return original_leaf(*args, **kwargs)
 
         self.helper.native_adapter_phase2c_leaf = counted_leaf
@@ -11203,7 +11275,16 @@ print(json.dumps({"result": result, "status": status}))
         )
 
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
-        self.assertEqual(calls, [((snapshot_ref, bypass_ref), {})])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual((calls[0]["runtimeSnapshotRef"], calls[0]["bypassAttemptsRef"]), (
+            snapshot_ref, bypass_ref,
+        ))
+        self.assertEqual(calls[0]["kwargs"], {})
+        self.assertEqual(
+            calls[0]["policySha256"],
+            hashlib.sha256((self.root / "ai" / "verification-policy.json").read_bytes()).hexdigest(),
+        )
+        self.assertEqual(calls[0]["policy"]["$id"], "ai/verification-policy.json")
 
     def test_verification_gate_evaluates_native_leaf_once_without_optional_inputs_before_inapplicability(self):
         forged_root = self.copy_repository_fixture()
@@ -11219,7 +11300,14 @@ print(json.dumps({"result": result, "status": status}))
         calls = []
 
         def counted_leaf(*args, **kwargs):
-            calls.append((args[0], args[3:], kwargs))
+            calls.append((
+                args[0],
+                args[3],
+                args[4],
+                args[5]["$id"],
+                args[6],
+                kwargs,
+            ))
             return original_leaf(*args, **kwargs)
 
         self.helper.native_adapter_phase2c_leaf = counted_leaf
@@ -11257,10 +11345,13 @@ print(json.dumps({"result": result, "status": status}))
             "BLOCKED", "VERIFICATION_GATE_BLOCKED", 2,
         ))
         self.assertEqual(self.native_check(blocked_result)["reason"], "NATIVE_ADAPTER_EVALUATION_INVALID")
+        policy_sha256 = hashlib.sha256(
+            (self.root / "ai" / "verification-policy.json").read_bytes()
+        ).hexdigest()
         self.assertEqual(calls, [
-            (self.root, (None, None), {}),
-            (self.root, (None, None), {}),
-            (forged_root, (None, None), {}),
+            (self.root, None, None, "ai/verification-policy.json", policy_sha256, {}),
+            (self.root, None, None, "ai/verification-policy.json", policy_sha256, {}),
+            (forged_root, None, None, "ai/verification-policy.json", policy_sha256, {}),
         ])
 
     def test_native_adapter_phase2c_leaf_validates_correlation_fail_closed(self):
