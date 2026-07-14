@@ -66,6 +66,252 @@ def canonical_posix_fixture_bytes(path):
     return content.replace(b"\r\n", b"\n")
 
 
+def require_contract(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def normalized_contract_lines(text, *, preserve_shebang=False):
+    lines = []
+    for raw_line in text.splitlines():
+        require_contract("\t" not in raw_line, "contract text must not contain tabs")
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#") and not (
+            preserve_shebang and stripped.startswith("#!")
+        ):
+            continue
+        lines.append(raw_line.rstrip())
+    return tuple(lines)
+
+
+def validate_contract_entry_script(text):
+    executable = tuple(
+        line.strip()
+        for line in normalized_contract_lines(text, preserve_shebang=True)
+    )
+    expected = (
+        "#!/usr/bin/env bash",
+        "set -eu",
+        "PATH=/usr/bin:/bin:$PATH",
+        'SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
+        'REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)',
+        'cd "$REPOSITORY_ROOT"',
+        "python -m unittest scripts.ai.tests.test_workflow_helper -v",
+        '/usr/bin/bash "$SCRIPT_DIR/test-runtime-preflight.sh"',
+        '/usr/bin/bash "$SCRIPT_DIR/test-command-runner.sh"',
+    )
+    require_contract(
+        executable == expected,
+        f"contract entry executable sequence mismatch: {executable!r}",
+    )
+
+
+def yaml_contract_field(content):
+    require_contract(":" in content, f"invalid workflow field: {content!r}")
+    key, value = content.split(":", 1)
+    require_contract(
+        re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", key) is not None,
+        f"invalid workflow key: {key!r}",
+    )
+    return key, value.strip()
+
+
+def workflow_block(lines, start, parent_indent):
+    block = []
+    index = start
+    block_indent = parent_indent + 2
+    while index < len(lines):
+        line = lines[index]
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= parent_indent:
+            break
+        require_contract(
+            indent >= block_indent,
+            f"workflow block indentation is invalid: {line!r}",
+        )
+        block.append(line[block_indent:].rstrip())
+        index += 1
+    return tuple(block), index
+
+
+def workflow_nested_mapping(lines, start, parent_indent):
+    result = {}
+    index = start
+    child_indent = parent_indent + 2
+    while index < len(lines):
+        line = lines[index]
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= parent_indent:
+            break
+        require_contract(
+            indent == child_indent,
+            f"workflow nested mapping indentation is invalid: {line!r}",
+        )
+        key, value = yaml_contract_field(line[child_indent:])
+        require_contract(key not in result, f"duplicate workflow field: {key}")
+        if value == "|":
+            value, index = workflow_block(lines, index + 1, child_indent)
+        else:
+            require_contract(value != "", f"unsupported nested workflow mapping: {key}")
+            index += 1
+        result[key] = value
+    return result, index
+
+
+def workflow_step_model(lines):
+    require_contract(lines, "workflow step must not be empty")
+    first = lines[0]
+    require_contract(
+        first.startswith("      - "),
+        f"workflow step must start at the expected indentation: {first!r}",
+    )
+    result = {}
+    key, value = yaml_contract_field(first[8:])
+    require_contract(value != "", f"workflow step first field requires a value: {key}")
+    result[key] = value
+    index = 1
+    while index < len(lines):
+        line = lines[index]
+        indent = len(line) - len(line.lstrip(" "))
+        require_contract(indent == 8, f"workflow step indentation is invalid: {line!r}")
+        key, value = yaml_contract_field(line[8:])
+        require_contract(key not in result, f"duplicate workflow step field: {key}")
+        if value == "|":
+            value, index = workflow_block(lines, index + 1, 8)
+        elif value == "":
+            value, index = workflow_nested_mapping(lines, index + 1, 8)
+        else:
+            index += 1
+        result[key] = value
+    return result
+
+
+def phase3b_workflow_model(text):
+    lines = normalized_contract_lines(text)
+    workflow_names = [line[6:].strip() for line in lines if line.startswith("name: ")]
+    require_contract(
+        workflow_names == ["phase-3b-repository-contract"],
+        f"workflow name mismatch: {workflow_names!r}",
+    )
+    jobs_indexes = [index for index, line in enumerate(lines) if line == "jobs:"]
+    require_contract(len(jobs_indexes) == 1, "one jobs mapping is required")
+    jobs_index = jobs_indexes[0]
+    jobs_end = next(
+        (
+            index for index in range(jobs_index + 1, len(lines))
+            if len(lines[index]) - len(lines[index].lstrip(" ")) == 0
+        ),
+        len(lines),
+    )
+    job_lines = lines[jobs_index + 1:jobs_end]
+    job_headers = [
+        (index, line[2:-1])
+        for index, line in enumerate(job_lines)
+        if line.startswith("  ") and not line.startswith("    ") and line.endswith(":")
+    ]
+    require_contract(
+        job_headers == [(0, "phase-3b-repository-contract")],
+        f"workflow must contain only the repository contract job: {job_headers!r}",
+    )
+    steps_indexes = [index for index, line in enumerate(job_lines) if line == "    steps:"]
+    require_contract(steps_indexes == [4], f"workflow steps location mismatch: {steps_indexes!r}")
+    steps_index = steps_indexes[0]
+    metadata = {}
+    for line in job_lines[1:steps_index]:
+        require_contract(line.startswith("    "), f"job metadata indentation is invalid: {line!r}")
+        key, value = yaml_contract_field(line[4:])
+        require_contract(value != "" and key not in metadata, f"invalid job metadata field: {key}")
+        metadata[key] = value
+    require_contract(
+        metadata == {
+            "name": "phase-3b-repository-contract",
+            "runs-on": "ubuntu-latest",
+            "timeout-minutes": "10",
+        },
+        f"repository contract job metadata mismatch: {metadata!r}",
+    )
+    step_lines = job_lines[steps_index + 1:]
+    starts = [
+        index for index, line in enumerate(step_lines)
+        if line.startswith("      - ")
+    ]
+    require_contract(starts and starts[0] == 0, "workflow steps must start with a list item")
+    steps = []
+    for position, start in enumerate(starts):
+        end = starts[position + 1] if position + 1 < len(starts) else len(step_lines)
+        steps.append(workflow_step_model(step_lines[start:end]))
+    return metadata, steps
+
+
+def validate_phase3b_contract_workflow(text):
+    _metadata, steps = phase3b_workflow_model(text)
+    dependency_probe = (
+        "python - <<'PY'",
+        "from importlib.metadata import version",
+        "from jsonschema import Draft202012Validator, FormatChecker",
+        "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey",
+        "assert version('jsonschema') == '4.25.1'",
+        "assert version('cryptography') == '45.0.5'",
+        "PY",
+        "/usr/bin/python3 - <<'PY'",
+        "from importlib.metadata import version",
+        "from jsonschema import Draft202012Validator, FormatChecker",
+        "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey",
+        "assert version('jsonschema') == '4.25.1'",
+        "assert version('cryptography') == '45.0.5'",
+        "PY",
+    )
+    expected_steps = [
+        {"uses": "actions/checkout@v4"},
+        {"uses": "actions/setup-python@v5", "with": {"python-version": "'3.12'"}},
+        {
+            "name": "Install helper dependencies",
+            "run": (
+                "python -m pip install jsonschema==4.25.1 cryptography==45.0.5",
+                "/usr/bin/python3 -m pip install --break-system-packages "
+                "jsonschema==4.25.1 cryptography==45.0.5",
+            ),
+        },
+        {"name": "Verify helper dependency provenance", "run": dependency_probe},
+        {
+            "name": "Run complete repository contract tests",
+            "shell": "bash",
+            "run": (
+                "set -o pipefail",
+                "bash scripts/ai/tests/run-contract-tests.sh 2>&1 | "
+                "tee phase3b-contract-test-output.txt",
+            ),
+        },
+        {
+            "uses": "actions/upload-artifact@v4",
+            "if": "${{ !cancelled() }}",
+            "with": {
+                "name": "phase3b-repository-contract-diagnostics",
+                "path": ("phase3b-contract-test-output.txt",),
+                "if-no-files-found": "error",
+                "retention-days": "90",
+            },
+        },
+    ]
+    require_contract(steps == expected_steps, f"workflow action-step model mismatch: {steps!r}")
+    run_lines = tuple(
+        line
+        for step in steps
+        for line in step.get("run", ())
+    )
+    entry_pipeline = (
+        "bash scripts/ai/tests/run-contract-tests.sh 2>&1 | "
+        "tee phase3b-contract-test-output.txt"
+    )
+    require_contract(run_lines.count(entry_pipeline) == 1, "entrypoint must run exactly once")
+    require_contract(
+        all("unittest" not in line and "test_workflow_helper" not in line for line in run_lines),
+        "workflow must not contain a separate or selective helper runner",
+    )
+
+
 def preflight_pass():
     return {
         "$schema": "ai/schemas/gateway-result.schema.json",
@@ -11581,36 +11827,12 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         entry_text = (
             self.root / "scripts/ai/tests/run-contract-tests.sh"
         ).read_text(encoding="utf-8")
-        expected_commands = [
-            "python -m unittest scripts.ai.tests.test_workflow_helper -v",
-            '/usr/bin/bash "$SCRIPT_DIR/test-runtime-preflight.sh"',
-            '/usr/bin/bash "$SCRIPT_DIR/test-command-runner.sh"',
-        ]
-        self.assertTrue(entry_text.startswith("#!/usr/bin/env bash\nset -eu\n"))
-        self.assertIn("PATH=/usr/bin:/bin:$PATH\n", entry_text)
-        self.assertIn(
-            'SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n',
-            entry_text,
-        )
-        self.assertIn(
-            'REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)\n',
-            entry_text,
-        )
-        self.assertIn('cd "$REPOSITORY_ROOT"\n', entry_text)
-        self.assertEqual(entry_text.count(expected_commands[0]), 1)
-        positions = [entry_text.index(command) for command in expected_commands]
-        self.assertEqual(positions, sorted(positions))
+        validate_contract_entry_script(entry_text)
 
         workflow_text = (
             self.root / ".github/workflows/phase-3b-ci-gates.yml"
         ).read_text(encoding="utf-8")
-        entry_command = "bash scripts/ai/tests/run-contract-tests.sh"
-        self.assertEqual(workflow_text.count(entry_command), 1)
-        self.assertNotIn("python -m unittest", workflow_text)
-        self.assertNotIn("test_workflow_helper.", workflow_text)
-        self.assertNotIn("phase3b-helper-test-output.txt", workflow_text)
-        self.assertEqual(workflow_text.count("phase3b-contract-test-output.txt"), 2)
-        self.assertIn("set -o pipefail\n", workflow_text)
+        validate_phase3b_contract_workflow(workflow_text)
 
         design_text = (
             self.root
@@ -11632,29 +11854,72 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
             design_text,
         )
 
+    def test_contract_structure_validators_reject_non_executable_and_extra_paths(self):
+        shell_validator = globals().get("validate_contract_entry_script")
+        workflow_validator = globals().get("validate_phase3b_contract_workflow")
+        self.assertIsNotNone(shell_validator)
+        self.assertIsNotNone(workflow_validator)
+
+        entry_text = (
+            self.root / "scripts/ai/tests/run-contract-tests.sh"
+        ).read_text(encoding="utf-8")
+        unittest_command = "python -m unittest scripts.ai.tests.test_workflow_helper -v"
+        shell_mutations = {
+            "commented": entry_text.replace(
+                unittest_command, f"# {unittest_command}",
+            ),
+            "dead-branch": entry_text.replace(
+                unittest_command,
+                f"if false; then\n  {unittest_command}\nfi",
+            ),
+            "duplicate": entry_text.replace(
+                unittest_command, f"{unittest_command}\n{unittest_command}",
+            ),
+            "selective": entry_text.replace(
+                unittest_command,
+                "python -m unittest "
+                "scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v",
+            ),
+        }
+        shell_validator(f"# allowed comment\n\n{entry_text}\n# trailing comment\n")
+        for label, mutation in shell_mutations.items():
+            with self.subTest(surface="entry", mutation=label):
+                with self.assertRaises(AssertionError):
+                    shell_validator(mutation)
+
+        workflow_text = (
+            self.root / ".github/workflows/phase-3b-ci-gates.yml"
+        ).read_text(encoding="utf-8")
+        entry_pipeline = (
+            "bash scripts/ai/tests/run-contract-tests.sh 2>&1 | "
+            "tee phase3b-contract-test-output.txt"
+        )
+        workflow_mutations = {
+            "commented": workflow_text.replace(
+                entry_pipeline, f"# {entry_pipeline}",
+            ),
+            "dead-branch": workflow_text.replace(
+                entry_pipeline,
+                f"if false; then\n            {entry_pipeline}\n          fi",
+            ),
+            "duplicate": workflow_text.replace(
+                entry_pipeline, f"{entry_pipeline}\n          {entry_pipeline}",
+            ),
+            "selective": workflow_text.replace(
+                entry_pipeline,
+                "python -m unittest "
+                "scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v\n"
+                f"          {entry_pipeline}",
+            ),
+        }
+        workflow_validator(f"# allowed comment\n\n{workflow_text}\n# trailing comment\n")
+        for label, mutation in workflow_mutations.items():
+            with self.subTest(surface="workflow", mutation=label):
+                with self.assertRaises(AssertionError):
+                    workflow_validator(mutation)
+
     def test_ci_workflow_provisions_contract_runtime_and_uploads_diagnostics(self):
         workflow_text = (
             self.root / ".github/workflows/phase-3b-ci-gates.yml"
         ).read_text(encoding="utf-8")
-        packages = "jsonschema==4.25.1 cryptography==45.0.5"
-        setup_install = f"python -m pip install {packages}"
-        contract_install_command = (
-            f"/usr/bin/python3 -m pip install --break-system-packages {packages}"
-        )
-        self.assertIn(setup_install, workflow_text)
-        self.assertIn(contract_install_command, workflow_text)
-        self.assertEqual(
-            workflow_text.count("assert version('jsonschema') == '4.25.1'"), 2,
-        )
-        self.assertEqual(
-            workflow_text.count("assert version('cryptography') == '45.0.5'"), 2,
-        )
-        contract_install = workflow_text.index(contract_install_command)
-        contract_run = workflow_text.index("bash scripts/ai/tests/run-contract-tests.sh")
-        self.assertLess(contract_install, contract_run)
-        self.assertNotIn("phase3b-helper-test-output.txt", workflow_text)
-        self.assertEqual(workflow_text.count("phase3b-contract-test-output.txt"), 2)
-        self.assertIn("name: phase3b-repository-contract-diagnostics", workflow_text)
-        self.assertNotIn("phase3b-ci-gate-result.json", workflow_text)
-        self.assertNotIn("ai/ci-capability-status.json", workflow_text)
-        self.assertIn("if-no-files-found: error", workflow_text)
+        validate_phase3b_contract_workflow(workflow_text)
