@@ -411,3 +411,38 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: Final static re-review confirms exact correlation validation, schema-valid invalid normalization without oversized raw-value leakage, wrapper consistency, and closure of the prior identity and documentation findings. No Critical, Important, or Minor issues remain for Task 10.
+
+## Task 11 Final Re-review (2026-07-14)
+
+### Spec Compliance
+
+- Verdict: Spec compliant.
+- The production/public CI evidence gate has no constructible-object PASS path and remains unconditionally `NOT_CONFIGURED` while external GitHub/Sigstore verification is absent.
+- The lower pure verifier is not presented as production authority. Provenance and repository `retainedRun` independently bind every run, workflow, artifact, correlation, native, bypass, resolution, signer, and subject field to a separate immutable trusted current-run context.
+- Production artifact-member reads require safe POSIX handle-relative `dir_fd` and `O_NOFOLLOW` pinning for every path component. Non-POSIX production hosts fail closed because the unsafe pathname fallback was removed.
+- Exact member identity and digest semantics, non-null provenance identity for schema-valid PASS results, fail-closed result shapes, the Task 10 identity split, and the Task 12 scope boundary remain preserved.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None. The initial forgeable `GitHubCiProvenance` authority and constructible-object production PASS finding was closed in `d8834f9` by removing the production PASS path.
+
+#### Important (Should Fix)
+
+- None. The prior attacker-controlled local expected-identity and old/unrelated-run replay finding was closed in `d8834f9` by independently comparing both claims with a separate trusted current-run context.
+- None. The prior non-POSIX pathname fallback race finding was closed in `d8834f9` by requiring the pinned POSIX backend and failing closed when it is unavailable.
+
+#### Minor (Nice to Have)
+
+- None.
+
+### Verification
+
+- Tests were not re-run during the final read-only re-review.
+- Reviewed the committed evidence recording 153 passing Phase 2C/3A/3B tests and 3 explicit platform-capability skips.
+
+### Assessment
+
+- Task quality: Approved.
+- Reasoning: Final static re-review confirms closure of the external-authority, trusted-current-run, replay, and artifact-member TOCTOU findings. No Critical, Important, or Minor issues remain for Task 11.
