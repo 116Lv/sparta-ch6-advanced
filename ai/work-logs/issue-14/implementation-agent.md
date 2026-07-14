@@ -1576,3 +1576,22 @@ independent re-review remains with the parent.
   infrastructure, GitHub state, push, PR, merge, Issue closure, or real
   `.ai-runs` operation changed or ran. Native enforcement and the external
   verifier remain `NOT_CONFIGURED`; independent re-review remains next.
+
+### Task 12 Final Exact Contract Suite Evidence (2026-07-14)
+
+- After `fa9e415` and its evidence commit `7c464dc`, the parent created a fresh
+  writable temporary repository copy that included the linked-worktree `.git`
+  pointer from the outset. No source changed after this copy was created.
+- The parent ran the exact full helper command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper -v`.
+  It exited `0`: 418 tests ran in `192.707s`, all passed, and 20 explicit
+  platform-capability tests were skipped (`OK (skipped=20)`).
+- This is the final Task 12 exact-suite validation for the closed workflow
+  top-level model. It supersedes the successful 417-test evidence that
+  predated `fa9e415`; the earlier 416-test partition and 417-test runs remain
+  preserved only as historical evidence.
+- The exact validation executed helper tests only. It did not run Gradle,
+  product commands, servers, Docker, HTTP/API, databases, migrations, seeds,
+  deploys, GitHub Actions/state mutation, push, PR, merge, Issue closure, or
+  real `.ai-runs`. Native enforcement and the external verifier remain
+  `NOT_CONFIGURED`; independent re-review remains next.
