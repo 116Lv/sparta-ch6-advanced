@@ -7,7 +7,7 @@ owning_feature: "none"
 current_owner: reviewer
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T16:42:00+09:00
+last_updated: 2026-07-14T16:43:00+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -68,8 +68,8 @@ migration_history: []
 
 Issue #14 tracks the isolated implementation and review of the four approved
 trust-hardening plans and the integration findings discovered afterward. Tasks
-1-16 are approved. Resume at Task 17 cleanup review, then run the fresh final
-integration review and exact final verification recorded in the handoff below.
+1-17 are independently approved. Resume at the fresh final integration review
+and exact final verification recorded in the handoff below.
 
 ## Routing Outcome
 
@@ -84,16 +84,15 @@ integration review and exact final verification recorded in the handoff below.
 ## Agent Logs
 
 - [Implementation Agent](implementation-agent.md): complete through Task 17 implementation
-- [Reviewer](reviewer.md): approved through Task 16; Task 17 review pending
+- [Reviewer](reviewer.md): approved through Task 17; final integration review pending
 
 ## Current State
 
-Tasks 1-12 and Integration Fixes 1-4 (Tasks 13-16) have independent scoped
-approval with no remaining scoped findings. Task 17 implementation commit
-`12b6d7e` synchronizes the two fail-closed CI shell fallbacks to the canonical
-ordered 16-binding contract, makes the result schema enforce that exact order,
-and refreshes this recovery record. Independent Task 17 review, a new
-whole-branch integration review, and fresh exact final verification remain
+Tasks 1-17 have independent scoped approval with no remaining scoped findings.
+Task 17 implementation commit `12b6d7e` synchronizes the two fail-closed CI
+shell fallbacks to the canonical ordered 16-binding contract, makes the result
+schema enforce that exact order, and refreshes this recovery record. A new
+whole-branch integration review and fresh exact final verification remain
 pending.
 
 Repository contract results must remain distinct from authoritative native and
@@ -148,11 +147,10 @@ Issue closure, registry `VERIFIED`, or unqualified overall `DONE`.
 - Context links:
   - [Implementation role log](implementation-agent.md)
   - [Reviewer role log](reviewer.md)
-- Remaining work: independently review Task 17's exact ordered fallback/schema
-  contract and recovery-log synchronization; fix any findings; repeat the full
-  integration review; then run and record the exact final helper-module suite,
+- Remaining work: repeat the full integration review; fix any findings; then
+  run and record the exact final helper-module suite,
   shell syntax, schema/static, diff, and generated-artifact checks.
-- Evidence required: Task 17 review approval, final integration approval, and a
-  fresh exact full-module final run from the final committed HEAD. Keep the
+- Evidence required: final integration approval and a fresh exact full-module
+  final run from the final committed HEAD. Keep the
   branch/worktree isolated and leave Issue #14 open; do not push, create a PR,
   merge, or mutate external enforcement configuration.

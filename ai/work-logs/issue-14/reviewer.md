@@ -622,3 +622,18 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 - Tests were not re-run during this final read-only approval review. Reviewed evidence commit `2540d62`, which records the focused GREEN run passing 4 tests in `1.685s` and the Phase 3A class passing 110 tests in `31.951s` with 2 explicit Windows capability skips.
 - All six semantic BLOCK paths precede ledger mutation; the same-nonce corrected retry and atomic one-PASS/one-replay concurrency behavior are covered. No new TOCTOU, authority, or ordering gap was found.
 - Task quality: Approved. Final scoped review found Critical 0, Important 0, and Minor 0.
+
+## Task 17 CI Fallback And Recovery Summary Re-review (2026-07-14)
+
+### Issues
+
+- Critical: None.
+- Important: None.
+- Minor: None. Both shell fallbacks now emit the exact canonical ordered 16 bindings, and the result schema enforces exact length, positional membership, uniqueness, and no extras.
+
+### Verification And Assessment
+
+- Tests were not re-run during this final read-only approval review. Reviewed implementation commit `12b6d7e` and evidence commit `3b3ba15`.
+- Tests cover both fallback literals plus missing, extra, and reordered mutations; fail-closed classifications remain unchanged.
+- The Issue #14 summary and work-log index remain `in_review`, accurately distinguish repository-contract state from external enforcement, qualify pre-final evidence, and make no unsupported `DONE`, `VERIFIED`, or Issue-closure claim.
+- Task quality: Approved. Final scoped review found Critical 0, Important 0, and Minor 0.
