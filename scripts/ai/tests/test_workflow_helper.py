@@ -9700,6 +9700,12 @@ print(json.dumps({"result": result, "status": status}))
             {"NOT_CONFIGURED"},
         )
 
+    def native_ledger_record_count(self, host_trust):
+        durable_records = len(list(host_trust.ledger_root.iterdir()))
+        stub_records = len(self.test_native_ledger_records)
+        self.assertFalse(durable_records and stub_records)
+        return durable_records or stub_records
+
     def supported_policy_with_fingerprint(self, fingerprint):
         policy = self.supported_host_policy()
         policy["supportedHosts"][0].update({
@@ -10515,6 +10521,133 @@ print(json.dumps({"result": result, "status": status}))
             "BLOCKED", "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE", 2,
         ))
         self.assert_trusted_not_enforced(unavailable)
+
+    def test_post_signature_semantic_blocks_do_not_consume_native_attestation(self):
+        cases = []
+
+        incomplete, fingerprint, private_key = self.signed_snapshot(
+            gate_invocation_id="gate-ledger-incomplete-enforcement",
+        )
+        incomplete["surfaces"][0].update({
+            "status": "NOT_CONFIGURED",
+            "reasonCode": "ADAPTER_CONFIGURATION_REQUIRED",
+            "callbackProof": None,
+        })
+        cases.append((
+            "incomplete-enforcement",
+            self.resign_snapshot(incomplete, private_key),
+            fingerprint,
+            [],
+            "NATIVE_ADAPTER_ENFORCEMENT_INCOMPLETE",
+        ))
+
+        wrong_count, fingerprint, private_key = self.signed_snapshot(
+            gate_invocation_id="gate-ledger-event-count",
+        )
+        wrong_count["bypassEventCount"] = 1
+        cases.append((
+            "event-count",
+            self.resign_snapshot(wrong_count, private_key),
+            fingerprint,
+            [],
+            "NATIVE_BYPASS_EVENT_SET_MISMATCH",
+        ))
+
+        wrong_set, fingerprint, private_key = self.signed_snapshot(
+            gate_invocation_id="gate-ledger-event-set",
+        )
+        wrong_set["bypassEventSetSha256"] = "f" * 64
+        cases.append((
+            "event-set",
+            self.resign_snapshot(wrong_set, private_key),
+            fingerprint,
+            [],
+            "NATIVE_BYPASS_EVENT_SET_MISMATCH",
+        ))
+
+        for name, resolution_ids, expected_reason in (
+            ("resolution-missing", [], "NATIVE_BYPASS_RESOLUTION_BINDING_MISSING"),
+            ("resolution-mismatch", ["event-wrong"], "NATIVE_BYPASS_RESOLUTION_BINDING_MISMATCH"),
+            (
+                "resolution-extra",
+                ["event-resolution-2", "event-extra"],
+                "NATIVE_BYPASS_RESOLUTION_BINDING_EXTRA",
+            ),
+        ):
+            gate_invocation_id = f"gate-ledger-{name}"
+            attempts = self.resolved_transition_attempts(gate_invocation_id)
+            snapshot, fingerprint, _ = self.signed_snapshot(
+                gate_invocation_id=gate_invocation_id,
+                resolution_event_ids=resolution_ids,
+                bypass_attempts=attempts,
+            )
+            cases.append((name, snapshot, fingerprint, attempts, expected_reason))
+
+        for name, snapshot, fingerprint, attempts, expected_reason in cases:
+            with self.subTest(name=name):
+                self.test_native_ledger_records.clear()
+                host_trust = self.external_host_trust(fingerprint)
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    snapshot["gateInvocationId"],
+                    runtime_snapshot_ref=self.write_fixture(
+                        f"runtime-post-signature-{name}.json", snapshot,
+                    ),
+                    bypass_attempts_ref=(
+                        None if not attempts else self.write_fixture(
+                            f"attempts-post-signature-{name}.json",
+                            {"attempts": attempts},
+                        )
+                    ),
+                    host_trust=host_trust,
+                )
+
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", expected_reason, 2,
+                ))
+                self.assertEqual(self.native_ledger_record_count(host_trust), 0)
+
+    def test_valid_retry_with_same_nonce_passes_after_semantic_block(self):
+        gate_invocation_id = "gate-ledger-valid-retry"
+        valid_snapshot, fingerprint, private_key = self.signed_snapshot(
+            gate_invocation_id=gate_invocation_id,
+        )
+        invalid_snapshot = json.loads(json.dumps(valid_snapshot))
+        invalid_snapshot["surfaces"][0].update({
+            "status": "NOT_CONFIGURED",
+            "reasonCode": "ADAPTER_CONFIGURATION_REQUIRED",
+            "callbackProof": None,
+        })
+        self.resign_snapshot(invalid_snapshot, private_key)
+        host_trust = self.external_host_trust(fingerprint)
+
+        invalid, invalid_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            gate_invocation_id,
+            runtime_snapshot_ref=self.write_fixture(
+                "runtime-semantic-block-before-retry.json", invalid_snapshot,
+            ),
+            host_trust=host_trust,
+        )
+        retry, retry_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            gate_invocation_id,
+            runtime_snapshot_ref=self.write_fixture(
+                "runtime-valid-after-semantic-block.json", valid_snapshot,
+            ),
+            host_trust=host_trust,
+        )
+
+        self.assertEqual((invalid["result"], invalid["reason"], invalid_status), (
+            "BLOCKED", "NATIVE_ADAPTER_ENFORCEMENT_INCOMPLETE", 2,
+        ))
+        self.assertEqual((retry["result"], retry["reason"], retry_status), (
+            "PASS", None, 0,
+        ))
+        self.assertEqual(self.native_ledger_record_count(host_trust), 1)
 
     def test_signed_attestation_replay_is_blocked_across_processes(self):
         backend_supported = getattr(

@@ -8135,6 +8135,37 @@ def native_snapshot_freshness_reason(observed_at):
     return None
 
 
+def consume_trusted_native_snapshot(root, snapshot, supported_host, task_key,
+                                    gate_invocation_id, ledger_root):
+    challenge_key = (
+        str(Path(root).resolve()),
+        supported_host["producerId"],
+        task_key,
+        gate_invocation_id,
+    )
+    resolved_ledger_root = resolve_external_host_trust_path(
+        root, ledger_root, directory=True,
+    )
+    repository_identity = os.path.normcase(str(Path(root).resolve(strict=True))).encode("utf-8")
+    identity = {
+        "repositorySha256": hashlib.sha256(repository_identity).hexdigest(),
+        "producerId": snapshot["producerId"],
+        "taskKey": snapshot["taskKey"],
+        "gateInvocationId": snapshot["gateInvocationId"],
+        "attestationId": snapshot["$id"],
+        "nonce": snapshot["gateInvocationId"],
+        "eventSetSha256": snapshot["bypassEventSetSha256"],
+    }
+    try:
+        consume_native_attestation(resolved_ledger_root, identity)
+    except NativeReplayError:
+        return "NATIVE_ADAPTER_CHALLENGE_REPLAYED"
+    if challenge_key in NATIVE_CONSUMED_CHALLENGES:
+        return "NATIVE_ADAPTER_CHALLENGE_REPLAYED"
+    NATIVE_CONSUMED_CHALLENGES.add(challenge_key)
+    return None
+
+
 def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, task_key,
                                   gate_invocation_id, ledger_root):
     baseline_surfaces = native_host_baseline_surfaces(supported_host)
@@ -8199,32 +8230,6 @@ def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, 
     ):
         return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CALLBACK_FAILED"
 
-    challenge_key = (
-        str(Path(root).resolve()),
-        supported_host["producerId"],
-        task_key,
-        gate_invocation_id,
-    )
-    resolved_ledger_root = resolve_external_host_trust_path(
-        root, ledger_root, directory=True,
-    )
-    repository_identity = os.path.normcase(str(Path(root).resolve(strict=True))).encode("utf-8")
-    identity = {
-        "repositorySha256": hashlib.sha256(repository_identity).hexdigest(),
-        "producerId": snapshot["producerId"],
-        "taskKey": snapshot["taskKey"],
-        "gateInvocationId": snapshot["gateInvocationId"],
-        "attestationId": snapshot["$id"],
-        "nonce": snapshot["gateInvocationId"],
-        "eventSetSha256": snapshot["bypassEventSetSha256"],
-    }
-    try:
-        consume_native_attestation(resolved_ledger_root, identity)
-    except NativeReplayError:
-        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CHALLENGE_REPLAYED"
-    if challenge_key in NATIVE_CONSUMED_CHALLENGES:
-        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CHALLENGE_REPLAYED"
-    NATIVE_CONSUMED_CHALLENGES.add(challenge_key)
     return claimed_surfaces, claimed_surfaces, None
 
 
@@ -8389,6 +8394,27 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
             return publish_native_adapter_gate_result(
                 root,
                 native_adapter_gate_result("BLOCKED", resolution_binding_reason, snapshot_data),
+                2,
+            )
+        replay_reason = consume_trusted_native_snapshot(
+            root,
+            snapshot,
+            supported_host,
+            task_key,
+            gate_invocation_id,
+            host_trust.ledger_root,
+        )
+        if replay_reason is not None:
+            replay_data = native_adapter_data(
+                current_host,
+                snapshot_claimed_surfaces,
+                baseline_surfaces,
+                attempt_refs,
+                False,
+            )
+            return publish_native_adapter_gate_result(
+                root,
+                native_adapter_gate_result("BLOCKED", replay_reason, replay_data),
                 2,
             )
         return publish_native_adapter_gate_result(
