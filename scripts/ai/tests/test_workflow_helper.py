@@ -7359,8 +7359,17 @@ class Phase2AContextCacheTests(unittest.TestCase):
                     "changeType": "documentation-only",
                     "entryPoint": "review",
                     "policySha256": "a" * 64,
-                    "producerIds": ["review-gate"],
-                    "evidence": [{"path": "ai/agent-handoff.json", "sha256": "b" * 64}],
+                    "checkBindings": [{
+                        "checkId": "review-gate",
+                        "producerId": "review-gate",
+                        "leafResultRef": "ai/fixtures/phase-2c/review-gate.json",
+                        "leafResultSha256": "b" * 64,
+                        "evidence": {
+                            "path": "ai/agent-handoff.json",
+                            "sha256": "c" * 64,
+                            "schema": "ai/schemas/gateway-result.schema.json",
+                        },
+                    }],
                     "environmentFingerprint": None,
                     "expiresAt": "2026-07-14T00:05:00Z",
                 },
@@ -7374,7 +7383,7 @@ class Phase2AContextCacheTests(unittest.TestCase):
         self.helper.validate(REPOSITORY_ROOT, cache, "ai/schemas/workflow-cache.schema.json")
 
         newline_digest = json.loads(json.dumps(cache))
-        newline_digest["entries"][0]["key"]["evidence"][0]["sha256"] += "\n"
+        newline_digest["entries"][0]["key"]["checkBindings"][0]["leafResultSha256"] += "\n"
         with self.assertRaises(self.helper.InvalidStateError):
             self.helper.validate(
                 REPOSITORY_ROOT,
@@ -7475,8 +7484,97 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
         self.assertEqual(invalidation["unmapped"], "UNCERTAIN")
 
     def verification_cache_entry(self):
-        evidence_path = self.root / "ai" / "cache-evidence.json"
-        evidence_path.write_text("{}\n", encoding="utf-8")
+        policy_path = self.root / "ai" / "verification-policy.json"
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        policy_sha256 = hashlib.sha256(policy_path.read_bytes()).hexdigest()
+        commit_sha = "0123456789abcdef0123456789abcdef01234567"
+        task_key = "issue-10"
+        gate_invocation_id = "gate-review"
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        produced_at = now - dt.timedelta(minutes=1)
+        checks = {item["id"]: item for item in policy["checks"]}
+        change = next(item for item in policy["changeTypes"] if item["id"] == "documentation-only")
+        check_bindings = []
+        for check_id in change["requiredChecks"] + change["optionalChecks"]:
+            check = checks[check_id]
+            if check_id == "native-runtime-adapter":
+                leaf = {
+                    "$schema": "ai/schemas/native-adapter-result.schema.json",
+                    "$id": "ai/native-adapter-result.json",
+                    "schemaVersion": 1,
+                    "operation": "NATIVE_ADAPTER_GATE",
+                    "result": "UNSUPPORTED",
+                    "phase2cLeafResult": "NOT_APPLICABLE",
+                    "reason": "The current host has no supported native adapter.",
+                    "data": {
+                        "hostId": "codex-desktop",
+                        "hostVersion": None,
+                        "versionProvenance": "UNPROBED",
+                        "claimedSurfaces": [
+                            {"surface": surface, "status": "UNSUPPORTED", "reasonCode": "HOST_UNSUPPORTED"}
+                            for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+                        ],
+                        "trustedSurfaces": [
+                            {"surface": surface, "status": "UNSUPPORTED", "reasonCode": "HOST_UNSUPPORTED"}
+                            for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+                        ],
+                        "bypassAttemptRefs": [],
+                        "repositoryOnlyQualification": True,
+                        "phase2CLeafResult": "NOT_APPLICABLE",
+                    },
+                }
+                leaf_path = self.root / "ai" / "cache-native-adapter-result.json"
+                leaf_path.write_text(json.dumps(leaf, sort_keys=True), encoding="utf-8")
+                evidence = {
+                    "path": leaf_path.relative_to(self.root).as_posix(),
+                    "sha256": hashlib.sha256(leaf_path.read_bytes()).hexdigest(),
+                    "schema": check["evidenceSchema"],
+                }
+            else:
+                evidence_path = self.root / "ai" / f"cache-{check_id}-evidence.json"
+                if check["evidenceSchema"] == "ai/schemas/gateway-result.schema.json":
+                    evidence_value = preflight_pass()
+                else:
+                    evidence_value = json.loads(
+                        (self.root / "ai" / "fixtures" / "phase-1a" / "valid" / "command-result.json")
+                        .read_text(encoding="utf-8")
+                    )
+                evidence_path.write_text(json.dumps(evidence_value, sort_keys=True), encoding="utf-8")
+                evidence = {
+                    "path": evidence_path.relative_to(self.root).as_posix(),
+                    "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+                    "schema": check["evidenceSchema"],
+                }
+                leaf_path = self.root / "ai" / f"cache-{check_id}-leaf.json"
+                leaf_ref = leaf_path.relative_to(self.root).as_posix()
+                leaf = {
+                    "$schema": "ai/schemas/verification-leaf-result.schema.json",
+                    "$id": leaf_ref,
+                    "schemaVersion": 1,
+                    "checkId": check_id,
+                    "result": "PASS",
+                    "taskKey": task_key,
+                    "gateInvocationId": gate_invocation_id,
+                    "commitSha": commit_sha,
+                    "policySha256": policy_sha256,
+                    "producerId": check["producerId"],
+                    "producedAt": produced_at.isoformat().replace("+00:00", "Z"),
+                    "expiresAt": (produced_at + dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                    "evidence": {
+                        "ref": evidence["path"],
+                        "sha256": evidence["sha256"],
+                        "schema": evidence["schema"],
+                    },
+                    "reason": None,
+                }
+                leaf_path.write_text(json.dumps(leaf, sort_keys=True), encoding="utf-8")
+            check_bindings.append({
+                "checkId": check_id,
+                "producerId": check["producerId"],
+                "leafResultRef": leaf_path.relative_to(self.root).as_posix(),
+                "leafResultSha256": hashlib.sha256(leaf_path.read_bytes()).hexdigest(),
+                "evidence": evidence,
+            })
         return {
             "id": "review-decision",
             "kind": "VERIFICATION_DECISION",
@@ -7487,23 +7585,50 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
                 "commitSha": "0123456789abcdef0123456789abcdef01234567",
                 "changeType": "documentation-only",
                 "entryPoint": "review",
-                "policySha256": hashlib.sha256(
-                    (self.root / "ai" / "verification-policy.json").read_bytes()
-                ).hexdigest(),
-                "producerIds": ["review-gate"],
-                "evidence": [{
-                    "path": "ai/cache-evidence.json",
-                    "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
-                }],
+                "policySha256": policy_sha256,
+                "checkBindings": check_bindings,
                 "environmentFingerprint": None,
                 "expiresAt": (
                     dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=4)
                 ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             },
             "summary": "Bound review decision fixture.",
-            "evidenceRefs": ["ai/cache-evidence.json"],
+            "evidenceRefs": [
+                binding["evidence"]["path"] for binding in check_bindings
+            ],
             "createdAt": "2026-07-14T00:00:00Z",
         }
+
+    def legacy_review_only_cache_entry(self):
+        evidence_path = self.root / "ai" / "cache-arbitrary.json"
+        evidence_path.write_text("{}\n", encoding="utf-8")
+        entry = self.verification_cache_entry()
+        entry["key"].pop("checkBindings")
+        entry["key"]["producerIds"] = ["review-gate"]
+        entry["key"]["evidence"] = [{
+            "path": evidence_path.relative_to(self.root).as_posix(),
+            "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+        }]
+        entry["evidenceRefs"] = [evidence_path.relative_to(self.root).as_posix()]
+        return entry
+
+    def test_verification_cache_review_only_arbitrary_evidence_is_never_fresh(self):
+        entry = self.legacy_review_only_cache_entry()
+        with mock.patch.object(
+                self.helper, "repository_commit_sha", return_value=entry["key"]["commitSha"]):
+            actual = self.helper.cache_invalidation_report(
+                self.root, {"entries": [entry]},
+            )[0]
+        self.assertEqual(actual["status"], "STALE")
+
+    def test_verification_cache_exact_full_consumed_check_set_is_fresh(self):
+        entry = self.verification_cache_entry()
+        with mock.patch.object(
+                self.helper, "repository_commit_sha", return_value=entry["key"]["commitSha"]):
+            actual = self.helper.cache_invalidation_report(
+                self.root, {"entries": [entry]},
+            )[0]
+        self.assertEqual(actual["status"], "FRESH")
 
     def test_verification_cache_identity_covers_every_decision_input(self):
         entry = self.verification_cache_entry()
@@ -7515,7 +7640,6 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
             "changeType": "documentation-only-other",
             "entryPoint": "done-claim",
             "policySha256": "c" * 64,
-            "producerIds": ["done-claim-gate"],
             "environmentFingerprint": "d" * 64,
             "expiresAt": "2099-01-01T00:00:00Z",
         }
@@ -7525,9 +7649,25 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertNotEqual(self.helper.cache_entry_identity(candidate), baseline)
 
-        evidence_candidate = json.loads(json.dumps(entry))
-        evidence_candidate["key"]["evidence"][0]["sha256"] = "e" * 64
-        self.assertNotEqual(self.helper.cache_entry_identity(evidence_candidate), baseline)
+        for field in ("checkId", "producerId", "leafResultRef", "leafResultSha256"):
+            candidate = json.loads(json.dumps(entry))
+            candidate["key"]["checkBindings"][0][field] = (
+                "done-claim-gate" if field in ("checkId", "producerId")
+                else "ai/other.json" if field == "leafResultRef"
+                else "e" * 64
+            )
+            with self.subTest(binding_field=field):
+                self.assertNotEqual(self.helper.cache_entry_identity(candidate), baseline)
+
+        for field, value in (
+            ("path", "ai/other-evidence.json"),
+            ("sha256", "e" * 64),
+            ("schema", "ai/schemas/command-result.schema.json"),
+        ):
+            candidate = json.loads(json.dumps(entry))
+            candidate["key"]["checkBindings"][0]["evidence"][field] = value
+            with self.subTest(evidence_field=field):
+                self.assertNotEqual(self.helper.cache_entry_identity(candidate), baseline)
 
     def test_verification_cache_report_fails_closed_for_stale_or_unmapped_identity(self):
         entry = self.verification_cache_entry()
@@ -7541,7 +7681,6 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
                 ("commit", "commitSha", "fedcba9876543210fedcba9876543210fedcba98", "STALE"),
                 ("task key", "taskKey", "", "UNCERTAIN"),
                 ("gate ID", "gateInvocationId", "", "UNCERTAIN"),
-                ("producer", "producerIds", ["done-claim-gate"], "STALE"),
                 ("change type", "changeType", "unknown-change", "UNCERTAIN"),
                 ("entry point", "entryPoint", "api-smoke", "UNCERTAIN"),
                 ("environment", "environmentFingerprint", "d" * 64, "UNCERTAIN"),
@@ -7556,12 +7695,80 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
                     )[0]
                     self.assertEqual(actual["status"], expected_status)
 
-            candidate = json.loads(json.dumps(entry))
-            candidate["key"]["evidence"][0]["sha256"] = "e" * 64
+            binding_cases = []
+            missing = json.loads(json.dumps(entry))
+            missing["key"]["checkBindings"].pop()
+            binding_cases.append(("missing", missing, "STALE"))
+            extra = json.loads(json.dumps(entry))
+            extra["key"]["checkBindings"].append(
+                json.loads(json.dumps(extra["key"]["checkBindings"][0]))
+            )
+            binding_cases.append(("extra", extra, "STALE"))
+            duplicate = json.loads(json.dumps(entry))
+            duplicate["key"]["checkBindings"][-1] = json.loads(json.dumps(
+                duplicate["key"]["checkBindings"][0]
+            ))
+            binding_cases.append(("duplicate", duplicate, "STALE"))
+            reordered = json.loads(json.dumps(entry))
+            reordered["key"]["checkBindings"][0:2] = reversed(
+                reordered["key"]["checkBindings"][0:2]
+            )
+            binding_cases.append(("reordered", reordered, "STALE"))
+            for name, path, value in (
+                ("wrong check", (0, "checkId"), "done-claim-gate"),
+                ("wrong producer", (0, "producerId"), "done-claim-gate"),
+                ("wrong leaf digest", (0, "leafResultSha256"), "e" * 64),
+                ("wrong evidence digest", (0, "evidence", "sha256"), "e" * 64),
+                ("wrong evidence schema", (4, "evidence", "schema"), "ai/schemas/gateway-result.schema.json"),
+            ):
+                candidate = json.loads(json.dumps(entry))
+                target = candidate["key"]["checkBindings"][path[0]]
+                if len(path) == 2:
+                    target[path[1]] = value
+                else:
+                    target[path[1]][path[2]] = value
+                binding_cases.append((name, candidate, "STALE"))
+            arbitrary_evidence = json.loads(json.dumps(entry))
+            arbitrary_path = self.root / "ai" / "cache-arbitrary-bound-evidence.json"
+            arbitrary_path.write_text("{}\n", encoding="utf-8")
+            arbitrary_binding = arbitrary_evidence["key"]["checkBindings"][1]
+            arbitrary_binding["evidence"].update({
+                "path": arbitrary_path.relative_to(self.root).as_posix(),
+                "sha256": hashlib.sha256(arbitrary_path.read_bytes()).hexdigest(),
+            })
+            original_leaf_path = self.root / arbitrary_binding["leafResultRef"]
+            arbitrary_leaf = json.loads(original_leaf_path.read_text(encoding="utf-8"))
+            arbitrary_leaf_path = self.root / "ai" / "cache-arbitrary-bound-leaf.json"
+            arbitrary_binding["leafResultRef"] = arbitrary_leaf_path.relative_to(self.root).as_posix()
+            arbitrary_leaf["$id"] = arbitrary_binding["leafResultRef"]
+            arbitrary_leaf["evidence"].update({
+                "ref": arbitrary_binding["evidence"]["path"],
+                "sha256": arbitrary_binding["evidence"]["sha256"],
+            })
+            arbitrary_leaf_path.write_text(
+                json.dumps(arbitrary_leaf, sort_keys=True), encoding="utf-8",
+            )
+            arbitrary_binding["leafResultSha256"] = hashlib.sha256(
+                arbitrary_leaf_path.read_bytes()
+            ).hexdigest()
+            binding_cases.append(("schema-invalid arbitrary evidence", arbitrary_evidence, "STALE"))
+            unavailable_leaf = json.loads(json.dumps(entry))
+            unavailable_leaf["key"]["checkBindings"][1]["leafResultRef"] = "ai/missing-leaf.json"
+            binding_cases.append(("unavailable leaf", unavailable_leaf, "UNCERTAIN"))
+            for name, candidate, expected_status in binding_cases:
+                with self.subTest(binding=name):
+                    actual = self.helper.cache_invalidation_report(
+                        self.root, {"entries": [candidate]},
+                    )[0]
+                    self.assertEqual(actual["status"], expected_status)
+
+            unavailable_evidence = json.loads(json.dumps(entry))
+            evidence_path = self.root / unavailable_evidence["key"]["checkBindings"][1]["evidence"]["path"]
+            evidence_path.unlink()
             actual = self.helper.cache_invalidation_report(
-                self.root, {"entries": [candidate]},
+                self.root, {"entries": [unavailable_evidence]},
             )[0]
-            self.assertEqual(actual["status"], "STALE")
+            self.assertEqual(actual["status"], "UNCERTAIN")
 
     def test_verification_cache_stale_findings_precede_compound_uncertainty(self):
         entry = self.verification_cache_entry()
@@ -7575,7 +7782,7 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
 
         unmapped_and_evidence_mismatch = json.loads(json.dumps(entry))
         unmapped_and_evidence_mismatch["key"]["changeType"] = "unknown-change"
-        unmapped_and_evidence_mismatch["key"]["evidence"][0]["sha256"] = "e" * 64
+        unmapped_and_evidence_mismatch["key"]["checkBindings"][0]["evidence"]["sha256"] = "e" * 64
         cases.append(("unmapped classification plus evidence mismatch", unmapped_and_evidence_mismatch))
 
         unmapped_and_expired = json.loads(json.dumps(entry))
@@ -7632,13 +7839,10 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
 
     def test_verification_cache_evidence_read_faults_continue_to_safe_stale_checks(self):
         entry = self.verification_cache_entry()
-        first_path = self.root / entry["key"]["evidence"][0]["path"]
-        second_path = self.root / "ai" / "cache-evidence-2.json"
-        second_path.write_text('{"second":true}\n', encoding="utf-8")
-        entry["key"]["evidence"].append({
-            "path": "ai/cache-evidence-2.json",
-            "sha256": hashlib.sha256(second_path.read_bytes()).hexdigest(),
-        })
+        first_binding = entry["key"]["checkBindings"][1]
+        second_binding = entry["key"]["checkBindings"][2]
+        first_path = self.root / first_binding["evidence"]["path"]
+        second_path = self.root / second_binding["evidence"]["path"]
         commit_sha = entry["key"]["commitSha"]
         original_open = Path.open
 
@@ -7657,7 +7861,7 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
             if expired:
                 candidate["key"]["expiresAt"] = "2000-01-01T00:00:00Z"
             if second_mismatch:
-                candidate["key"]["evidence"][1]["sha256"] = "e" * 64
+                candidate["key"]["checkBindings"][2]["evidence"]["sha256"] = "e" * 64
             remaining_evidence_opens = 0
 
             def fault_open(path, *args, **kwargs):

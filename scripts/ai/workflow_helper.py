@@ -6584,8 +6584,18 @@ def cache_entry_identity(entry):
             key["changeType"],
             key["entryPoint"],
             key["policySha256"],
-            tuple(sorted(key["producerIds"])),
-            tuple(sorted((item["path"], item["sha256"]) for item in key["evidence"])),
+            tuple(
+                (
+                    item["checkId"],
+                    item["producerId"],
+                    item["leafResultRef"],
+                    item["leafResultSha256"],
+                    item["evidence"]["path"],
+                    item["evidence"]["sha256"],
+                    item["evidence"]["schema"],
+                )
+                for item in key["checkBindings"]
+            ),
             key["environmentFingerprint"],
             key["expiresAt"],
         )
@@ -6614,21 +6624,163 @@ def validate_handoff_skill_set(handoff, catalog):
         )])
 
 
-def verification_cache_producers(policy, change_type, entry_point):
+def verification_cache_checks(policy, change_type, entry_point):
     changes = {item["id"]: item for item in policy.get("changeTypes", [])}
     checks = {item["id"]: item for item in policy.get("checks", [])}
     change = changes.get(change_type)
     if change is None or entry_point not in change.get("entryPoints", []):
         return None
-    selected_ids = change.get("requiredChecks", []) + change.get("optionalChecks", [])
+    selected_ids = list(dict.fromkeys(
+        change.get("requiredChecks", []) + change.get("optionalChecks", [])
+    ))
     selected = []
     for check_id in selected_ids:
         check = checks.get(check_id)
         if check is None:
             return None
-        if check.get("entryPoint") == entry_point:
-            selected.append(check["producerId"])
+        selected.append({
+            "checkId": check_id,
+            "producerId": check["producerId"],
+            "evidenceSchema": check["evidenceSchema"],
+        })
     return selected or None
+
+
+def verification_cache_file(root, reference, reader):
+    if (
+        not isinstance(reference, str)
+        or VERIFICATION_REPOSITORY_PATH.fullmatch(reference) is None
+    ):
+        raise ValueError("cache binding path is unsafe")
+    path = resolve_repository_file(root, reference)
+    encoded, value = reader(path)
+    return encoded, value
+
+
+def verification_cache_path_unavailable(error):
+    return bool(error.errors) and all(
+        item.get("code") in {"PATH_OUTSIDE_REPOSITORY", "PATH_NOT_FILE"}
+        for item in error.errors
+    )
+
+
+def validate_verification_cache_binding(root, binding, expected, key):
+    stale_reasons = []
+    uncertain_reasons = []
+    if not isinstance(binding, dict):
+        return ["Cache check binding is malformed."], []
+    if binding.get("checkId") != expected["checkId"]:
+        stale_reasons.append("Cache check order or identity changed.")
+    if binding.get("producerId") != expected["producerId"]:
+        stale_reasons.append("Cache check producer changed.")
+
+    leaf_ref = binding.get("leafResultRef")
+    leaf_value = None
+    leaf_bytes = None
+    try:
+        leaf_bytes, leaf_value = verification_cache_file(
+            root, leaf_ref, read_verification_leaf_result,
+        )
+    except InvalidStateError as error:
+        if verification_cache_path_unavailable(error):
+            uncertain_reasons.append("Cache leaf result is missing, unmapped, or unavailable.")
+        else:
+            stale_reasons.append("Cache leaf result content is invalid.")
+    except (OSError, TypeError, ValueError):
+        uncertain_reasons.append("Cache leaf result is missing, unmapped, or unavailable.")
+    else:
+        if hashlib.sha256(leaf_bytes).hexdigest() != binding.get("leafResultSha256"):
+            stale_reasons.append("Cache leaf result digest changed.")
+        expected_leaf_schema = (
+            "ai/schemas/native-adapter-result.schema.json"
+            if expected["checkId"] == NATIVE_ADAPTER_CHECK_ID
+            else "ai/schemas/verification-leaf-result.schema.json"
+        )
+        try:
+            validate(root, leaf_value, expected_leaf_schema)
+        except InvalidStateError:
+            stale_reasons.append("Cache leaf result schema validation failed.")
+        else:
+            if expected["checkId"] == NATIVE_ADAPTER_CHECK_ID:
+                if leaf_value.get("$id") != "ai/native-adapter-result.json":
+                    stale_reasons.append("Cache native leaf identity changed.")
+            else:
+                correlations = {
+                    "$id": leaf_ref,
+                    "checkId": expected["checkId"],
+                    "producerId": expected["producerId"],
+                    "commitSha": key.get("commitSha"),
+                    "policySha256": key.get("policySha256"),
+                }
+                for field in ("taskKey", "gateInvocationId"):
+                    value = key.get(field)
+                    if isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value):
+                        correlations[field] = value
+                if any(leaf_value.get(field) != value for field, value in correlations.items()):
+                    stale_reasons.append("Cache leaf result correlation changed.")
+                try:
+                    produced_at = parse_rfc3339_timestamp(leaf_value["producedAt"])[0]
+                    leaf_expires_at = parse_rfc3339_timestamp(leaf_value["expiresAt"])[0]
+                except (KeyError, TypeError, ValueError):
+                    stale_reasons.append("Cache leaf result freshness is invalid.")
+                else:
+                    now = dt.datetime.now(dt.timezone.utc)
+                    if (
+                        not produced_at <= now <= leaf_expires_at
+                        or leaf_expires_at - produced_at > VERIFICATION_LEAF_MAX_AGE
+                    ):
+                        stale_reasons.append("Cache leaf result expired.")
+
+    evidence = binding.get("evidence")
+    if not isinstance(evidence, dict):
+        stale_reasons.append("Cache evidence binding is missing.")
+        return stale_reasons, uncertain_reasons
+    if evidence.get("schema") != expected["evidenceSchema"]:
+        stale_reasons.append("Cache evidence schema changed.")
+    if leaf_value is not None:
+        if expected["checkId"] == NATIVE_ADAPTER_CHECK_ID:
+            expected_evidence = {
+                "path": leaf_ref,
+                "sha256": binding.get("leafResultSha256"),
+                "schema": expected["evidenceSchema"],
+            }
+        else:
+            leaf_evidence = leaf_value.get("evidence")
+            expected_evidence = None if not isinstance(leaf_evidence, dict) else {
+                "path": leaf_evidence.get("ref"),
+                "sha256": leaf_evidence.get("sha256"),
+                "schema": leaf_evidence.get("schema"),
+            }
+        if evidence != expected_evidence:
+            stale_reasons.append("Cache evidence is not bound to its leaf result.")
+
+    try:
+        if (
+            expected["checkId"] == NATIVE_ADAPTER_CHECK_ID
+            and evidence.get("path") == leaf_ref
+            and leaf_bytes is not None
+        ):
+            evidence_bytes, evidence_value = leaf_bytes, leaf_value
+        else:
+            evidence_bytes, evidence_value = verification_cache_file(
+                root, evidence.get("path"), read_verification_leaf_evidence,
+            )
+    except InvalidStateError as error:
+        if verification_cache_path_unavailable(error):
+            uncertain_reasons.append("Cache evidence path is missing, unmapped, or unavailable.")
+        else:
+            stale_reasons.append("Cache evidence content is invalid.")
+    except (OSError, TypeError, ValueError):
+        uncertain_reasons.append("Cache evidence path is missing, unmapped, or unavailable.")
+    else:
+        if hashlib.sha256(evidence_bytes).hexdigest() != evidence.get("sha256"):
+            stale_reasons.append("Cache evidence digest changed.")
+        if evidence.get("schema") == expected["evidenceSchema"]:
+            try:
+                validate(root, evidence_value, expected["evidenceSchema"])
+            except InvalidStateError:
+                stale_reasons.append("Cache evidence schema validation failed.")
+    return stale_reasons, uncertain_reasons
 
 
 def load_verification_cache_policy(root):
@@ -6654,26 +6806,69 @@ def verification_cache_invalidation(root, entry, policy, policy_sha256, commit_s
     ):
         uncertain_reasons.append("Cache task or gate correlation is missing or unmapped.")
 
-    expected_producers = (
-        verification_cache_producers(policy, key.get("changeType"), key.get("entryPoint"))
+    expected_checks = (
+        verification_cache_checks(policy, key.get("changeType"), key.get("entryPoint"))
         if policy is not None
         else None
     )
     if policy is None:
         uncertain_reasons.append("Current verification cache policy is unavailable.")
-    elif expected_producers is None:
+    elif expected_checks is None:
         uncertain_reasons.append("Cache change type or entry point is missing or unmapped.")
+        bindings = key.get("checkBindings", [])
+        policy_checks = {
+            item["id"]: {
+                "checkId": item["id"],
+                "producerId": item["producerId"],
+                "evidenceSchema": item["evidenceSchema"],
+            }
+            for item in policy.get("checks", [])
+        }
+        if isinstance(bindings, list):
+            for binding in bindings:
+                check_id = binding.get("checkId") if isinstance(binding, dict) else None
+                expected = policy_checks.get(check_id)
+                if expected is None:
+                    uncertain_reasons.append("Cache check binding is unmapped.")
+                    continue
+                binding_stale, binding_uncertain = validate_verification_cache_binding(
+                    root, binding, expected, key,
+                )
+                stale_reasons.extend(binding_stale)
+                uncertain_reasons.extend(binding_uncertain)
     else:
-        producer_ids = key.get("producerIds", [])
-        try:
-            producer_mismatch = (
-                len(producer_ids) != len(set(producer_ids))
-                or set(producer_ids) != set(expected_producers)
+        bindings = key.get("checkBindings")
+        expected_identity = [
+            (item["checkId"], item["producerId"])
+            for item in expected_checks
+        ]
+        if not isinstance(bindings, list):
+            stale_reasons.append("Cache full check binding set is missing.")
+            bindings = []
+        actual_identity = [
+            (item.get("checkId"), item.get("producerId"))
+            if isinstance(item, dict) else None
+            for item in bindings
+        ]
+        if actual_identity != expected_identity:
+            stale_reasons.append("Cache consumed check set or order changed.")
+        expected_evidence_refs = [
+            item.get("evidence", {}).get("path")
+            if isinstance(item, dict) and isinstance(item.get("evidence"), dict)
+            else None
+            for item in bindings
+        ]
+        if entry.get("evidenceRefs") != expected_evidence_refs:
+            stale_reasons.append("Cache evidence references do not match check bindings.")
+        for index, binding in enumerate(bindings):
+            if index >= len(expected_checks):
+                stale_reasons.append("Cache contains an extra check binding.")
+                continue
+            binding_stale, binding_uncertain = validate_verification_cache_binding(
+                root, binding, expected_checks[index], key,
             )
-        except TypeError:
-            producer_mismatch = True
-        if producer_mismatch:
-            stale_reasons.append("Cache producer set changed.")
+            stale_reasons.extend(binding_stale)
+            uncertain_reasons.extend(binding_uncertain)
     if key.get("environmentFingerprint") is not None:
         uncertain_reasons.append("Cache environment fingerprint has no authoritative current mapping.")
     if commit_sha is None:
@@ -6685,30 +6880,6 @@ def verification_cache_invalidation(root, entry, policy, policy_sha256, commit_s
             uncertain_reasons.append("Current verification policy digest is unavailable.")
     elif key.get("policySha256") != policy_sha256:
         stale_reasons.append("Cache verification policy digest changed.")
-
-    repository_root = Path(root).resolve(strict=True)
-    evidence = key.get("evidence", [])
-    if not isinstance(evidence, list) or not evidence:
-        uncertain_reasons.append("Cache evidence mapping is missing.")
-        evidence = []
-    for item in evidence:
-        try:
-            relative = item["path"]
-            if (
-                not isinstance(relative, str)
-                or not VERIFICATION_REPOSITORY_PATH.fullmatch(relative)
-            ):
-                raise ValueError("cache evidence path is unsafe")
-            path = (repository_root / relative).resolve(strict=True)
-            path.relative_to(repository_root)
-            if not path.is_file():
-                raise OSError("cache evidence is not a regular file")
-            evidence_sha256 = digest(path)
-        except (KeyError, OSError, TypeError, ValueError):
-            uncertain_reasons.append("Cache evidence path is missing, unmapped, or unavailable.")
-            continue
-        if evidence_sha256 != item.get("sha256"):
-            stale_reasons.append("Cache evidence digest changed.")
 
     try:
         expires_at = parse_rfc3339_timestamp(key["expiresAt"])[0]

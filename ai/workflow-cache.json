@@ -52,7 +52,7 @@
     },
     {
       "id": "phase-2-verification-cache-identity",
-      "summary": "Verification-decision cache reuse requires complete task, gate, commit, change type, entry point, policy, producer, evidence, environment, and expiry identity; no canonical reusable PASS decision is materialized without durable inputs.",
+      "summary": "Verification-decision cache reuse requires the exact ordered required-plus-optional check set with check/producer-indexed leaf-result and schema-bound evidence digests, plus task, gate, commit, change type, entry point, policy, environment, and expiry identity; no canonical reusable PASS decision is materialized without durable inputs.",
       "createdAt": "2026-07-14T00:00:00Z"
     }
   ],

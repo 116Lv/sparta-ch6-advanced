@@ -176,11 +176,16 @@ code; a caller cannot choose it. Optional failures remain visible as `FAIL` and
 make the aggregate `FAIL`. Optional `NOT_CONFIGURED` or policy-authorized
 inapplicability may remain `NOT_APPLICABLE`.
 
-Cache keys cover every input used to reach the decision: evidence content and
-schema digests, verification policy digest, change type, entry point, task/gate
-correlation, commit, producer, and relevant environment fingerprint. Any
-missing, changed, expired, or unmapped input is STALE or UNCERTAIN and cannot
-reuse PASS.
+Cache keys cover every input used to reach the decision. The exact ordered
+required-plus-optional check sequence for the selected change type is identical
+to the sequence aggregated by `verification_gate`; the current entry point is
+correlation and applicability identity, not a producer filter. Every
+check/producer-indexed binding includes the verified leaf-result reference and
+digest plus the evidence path, digest, and canonical schema. Policy digest,
+change type, entry point, task/gate correlation, commit, environment input, and
+expiry remain bound. Missing, extra, duplicate, reordered, wrong-producer,
+wrong-schema, changed, expired, unavailable, or unmapped inputs are STALE or
+UNCERTAIN and cannot reuse PASS.
 
 Skill catalog semantic validation requires every approved skill ID exactly once.
 Handoff semantic validation requires every distinct skill selected by the

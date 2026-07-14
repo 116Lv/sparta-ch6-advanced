@@ -97,8 +97,7 @@
             "changeType",
             "entryPoint",
             "policySha256",
-            "producerIds",
-            "evidence",
+            "checkBindings",
             "environmentFingerprint",
             "expiresAt"
           ],
@@ -109,17 +108,11 @@
             "changeType": { "type": "string", "minLength": 1 },
             "entryPoint": { "type": "string", "minLength": 1 },
             "policySha256": { "$ref": "#/$defs/sha256" },
-            "producerIds": {
+            "checkBindings": {
               "type": "array",
               "minItems": 1,
               "uniqueItems": true,
-              "items": { "$ref": "#/$defs/producerId" }
-            },
-            "evidence": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": { "$ref": "#/$defs/pathDigest" }
+              "items": { "$ref": "#/$defs/checkBinding" }
             },
             "environmentFingerprint": {
               "oneOf": [
@@ -163,13 +156,32 @@
         "verify.e2e"
       ]
     },
-    "pathDigest": {
+    "checkBinding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "sha256"],
+      "required": ["checkId", "producerId", "leafResultRef", "leafResultSha256", "evidence"],
+      "properties": {
+        "checkId": { "$ref": "#/$defs/producerId" },
+        "producerId": { "$ref": "#/$defs/producerId" },
+        "leafResultRef": { "$ref": "#/$defs/repositoryPath" },
+        "leafResultSha256": { "$ref": "#/$defs/sha256" },
+        "evidence": { "$ref": "#/$defs/evidenceBinding" }
+      }
+    },
+    "evidenceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "schema"],
       "properties": {
         "path": { "$ref": "#/$defs/repositoryPath" },
-        "sha256": { "$ref": "#/$defs/sha256" }
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "schema": {
+          "enum": [
+            "ai/schemas/gateway-result.schema.json",
+            "ai/schemas/command-result.schema.json",
+            "ai/schemas/native-adapter-result.schema.json"
+          ]
+        }
       }
     },
     "timestamp": {
