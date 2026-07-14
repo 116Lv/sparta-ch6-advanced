@@ -7461,13 +7461,18 @@ def ci_evidence_gate_data(status, task_key, gate_invocation_id):
     }
 
 
+def ci_gate_correlation_valid(value):
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= 128
+        and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value) is not None
+    )
+
+
 def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-capability-status.json"):
     root = Path(root).resolve()
-    task_key_valid = isinstance(task_key, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(task_key)
-    gate_invocation_id_valid = (
-        isinstance(gate_invocation_id, str)
-        and NATIVE_ADAPTER_IDENTIFIER.fullmatch(gate_invocation_id)
-    )
+    task_key_valid = ci_gate_correlation_valid(task_key)
+    gate_invocation_id_valid = ci_gate_correlation_valid(gate_invocation_id)
     fallback_data = {
         "taskKey": task_key if task_key_valid else "invalid",
         "gateInvocationId": gate_invocation_id if gate_invocation_id_valid else "invalid",

@@ -11073,6 +11073,38 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         self.assertEqual(result["data"]["nativeEnforcement"]["checkName"], "phase-3b-native-enforcement")
         self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
 
+    def test_ci_gate_correlation_length_matches_result_schema_boundary(self):
+        valid = "a" * 128
+        for field in ("taskKey", "gateInvocationId"):
+            with self.subTest(field=field, length=128):
+                task_key = valid if field == "taskKey" else "issue-12"
+                gate_invocation_id = valid if field == "gateInvocationId" else "gate-ci"
+                result, status = self.helper.ci_evidence_gate(self.root, task_key, gate_invocation_id)
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "NOT_CONFIGURED", "CI_EVIDENCE_NOT_AVAILABLE", 3,
+                ))
+                self.assertEqual(result["data"][field], valid)
+                self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+
+        oversized = "b" * 129
+        for field in ("taskKey", "gateInvocationId"):
+            with self.subTest(field=field, length=129):
+                task_key = oversized if field == "taskKey" else "issue-12"
+                gate_invocation_id = oversized if field == "gateInvocationId" else "gate-ci"
+                result, status = self.helper.ci_evidence_gate(self.root, task_key, gate_invocation_id)
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "INVALID_CI_GATE_ARGUMENTS", 2,
+                ))
+                self.assertEqual(result["data"][field], "invalid")
+                self.assertNotIn(oversized, json.dumps(result, sort_keys=True))
+                self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+
+        shell_text = (self.root / "scripts/ai/ci-evidence-gate.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            '--task-key "$task_key" --gate-invocation-id "$gate_invocation_id"',
+            shell_text,
+        )
+
     def test_ci_policy_document_reports_exact_split_status(self):
         policy = (self.root / "ai/ci-gates.md").read_text(encoding="utf-8")
         self.assertIn(
