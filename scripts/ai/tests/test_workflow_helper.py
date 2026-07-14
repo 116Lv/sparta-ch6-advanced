@@ -198,6 +198,20 @@ def phase3b_workflow_model(text):
     jobs_indexes = [index for index, line in enumerate(lines) if line == "jobs:"]
     require_contract(len(jobs_indexes) == 1, "one jobs mapping is required")
     jobs_index = jobs_indexes[0]
+    expected_top_level = (
+        "name: phase-3b-repository-contract",
+        "on:",
+        "  pull_request:",
+        "  push:",
+        "    branches:",
+        "      - main",
+        "permissions:",
+        "  contents: read",
+    )
+    require_contract(
+        lines[:jobs_index] == expected_top_level,
+        f"workflow top-level model mismatch: {lines[:jobs_index]!r}",
+    )
     jobs_end = next(
         (
             index for index in range(jobs_index + 1, len(lines))
@@ -205,6 +219,7 @@ def phase3b_workflow_model(text):
         ),
         len(lines),
     )
+    require_contract(jobs_end == len(lines), "workflow has an unapproved trailing top-level key")
     job_lines = lines[jobs_index + 1:jobs_end]
     job_headers = [
         (index, line[2:-1])
@@ -11917,6 +11932,35 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
             with self.subTest(surface="workflow", mutation=label):
                 with self.assertRaises(AssertionError):
                     workflow_validator(mutation)
+
+    def test_contract_workflow_rejects_unapproved_top_level_authority(self):
+        workflow_text = (
+            self.root / ".github/workflows/phase-3b-ci-gates.yml"
+        ).read_text(encoding="utf-8")
+        trigger_block = "on:\n  pull_request:\n  push:\n    branches:\n      - main\n\n"
+        permission_block = "permissions:\n  contents: read\n\n"
+        mutations = {
+            "bash-env": workflow_text.replace(
+                permission_block,
+                "env:\n  BASH_ENV: scripts/ai/tests/untrusted-env.sh\n\n"
+                + permission_block,
+            ),
+            "extra-key": workflow_text.replace(
+                permission_block,
+                "concurrency: phase-3b-untrusted\n\n" + permission_block,
+            ),
+            "trigger-removed": workflow_text.replace(trigger_block, ""),
+            "trigger-changed": workflow_text.replace("      - main\n", "      - develop\n"),
+            "trigger-disabled": workflow_text.replace(trigger_block, "on: {}\n\n"),
+            "permission-escalated": workflow_text.replace(
+                "  contents: read\n", "  contents: write\n",
+            ),
+            "permission-removed": workflow_text.replace(permission_block, ""),
+        }
+        for label, mutation in mutations.items():
+            with self.subTest(mutation=label):
+                with self.assertRaises(AssertionError):
+                    validate_phase3b_contract_workflow(mutation)
 
     def test_ci_workflow_provisions_contract_runtime_and_uploads_diagnostics(self):
         workflow_text = (
