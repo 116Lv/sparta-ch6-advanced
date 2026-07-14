@@ -10,7 +10,7 @@
     "$schema": { "const": "ai/schemas/gateway-result.schema.json" },
     "$id": { "const": "ai/gateway-result.json" },
     "schemaVersion": { "const": 1 },
-    "operation": { "enum": ["PREFLIGHT", "RESOLVE", "RUN_START", "PRE_COMMAND", "POST_COMMAND", "PRE_DONE_CLAIM"] },
+    "operation": { "enum": ["PREFLIGHT", "RESOLVE", "RUN_START", "PRE_COMMAND", "POST_COMMAND", "PRE_DONE_CLAIM", "FINALIZATION_RECOVERY"] },
     "result": { "enum": ["PASS", "FAIL", "BLOCKED", "INVALID_STATE", "NOT_CONFIGURED", "POLICY_VIOLATION"] },
     "reason": { "type": ["string", "null"] },
     "errors": {
@@ -80,7 +80,14 @@
         "data": { "$ref": "#/$defs/preDoneClaimData" }
       }
     },
-    { "properties": { "operation": { "const": "PRE_DONE_CLAIM" }, "result": { "enum": ["FAIL", "BLOCKED", "NOT_CONFIGURED", "POLICY_VIOLATION", "INVALID_STATE"] }, "reason": { "type": "string", "minLength": 1 }, "data": { "type": "null" } } }
+    { "properties": { "operation": { "const": "PRE_DONE_CLAIM" }, "result": { "enum": ["FAIL", "BLOCKED", "NOT_CONFIGURED", "POLICY_VIOLATION", "INVALID_STATE"] }, "reason": { "type": "string", "minLength": 1 }, "data": { "type": "null" } } },
+    {
+      "properties": {
+        "operation": { "const": "FINALIZATION_RECOVERY" }, "result": { "const": "PASS" }, "reason": { "type": "null" }, "errors": { "maxItems": 0 },
+        "data": { "$ref": "#/$defs/finalizationRecoveryData" }
+      }
+    },
+    { "properties": { "operation": { "const": "FINALIZATION_RECOVERY" }, "result": { "enum": ["BLOCKED", "NOT_CONFIGURED", "POLICY_VIOLATION", "INVALID_STATE"] }, "reason": { "type": "string", "minLength": 1 }, "data": { "type": "null" } } }
   ],
   "$defs": {
     "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
@@ -91,6 +98,7 @@
     "runStartData": { "type": "object", "additionalProperties": false, "required": ["runId", "taskKey", "sessionRef"], "properties": { "runId": { "$ref": "#/$defs/identifier" }, "taskKey": { "type": "string", "minLength": 1 }, "sessionRef": { "$ref": "#/$defs/repositoryPath" } } },
     "preCommandData": { "type": "object", "additionalProperties": false, "required": ["runId", "commandId", "attemptId", "argvHash", "inputFingerprint", "environmentFingerprint", "workingDirectory", "argv"], "properties": { "runId": { "$ref": "#/$defs/identifier" }, "commandId": { "$ref": "#/$defs/commandId" }, "attemptId": { "$ref": "#/$defs/identifier" }, "argvHash": { "$ref": "#/$defs/digest" }, "inputFingerprint": { "$ref": "#/$defs/digest" }, "environmentFingerprint": { "$ref": "#/$defs/digest" }, "workingDirectory": { "$ref": "#/$defs/repositoryPath" }, "argv": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } } } },
     "postCommandData": { "type": "object", "additionalProperties": false, "required": ["runId", "commandId", "attemptId", "processExitCode", "processAttemptRef", "commandResultRef"], "properties": { "runId": { "$ref": "#/$defs/identifier" }, "commandId": { "$ref": "#/$defs/commandId" }, "attemptId": { "$ref": "#/$defs/identifier" }, "processExitCode": { "type": ["integer", "null"] }, "processAttemptRef": { "$ref": "#/$defs/repositoryPath" }, "commandResultRef": { "$ref": "#/$defs/repositoryPath" } } },
-    "preDoneClaimData": { "type": "object", "additionalProperties": false, "required": ["runId", "taskKey", "doneClaimRef", "manifestRef", "runRef", "gateResultRef", "completenessEvaluated", "scope"], "properties": { "runId": { "$ref": "#/$defs/identifier" }, "taskKey": { "type": "string", "minLength": 1 }, "doneClaimRef": { "$ref": "#/$defs/repositoryPath" }, "manifestRef": { "$ref": "#/$defs/repositoryPath" }, "runRef": { "$ref": "#/$defs/repositoryPath" }, "gateResultRef": { "$ref": "#/$defs/repositoryPath" }, "completenessEvaluated": { "const": false }, "scope": { "const": "INTEGRITY_ONLY" } } }
+    "preDoneClaimData": { "type": "object", "additionalProperties": false, "required": ["runId", "taskKey", "doneClaimRef", "manifestRef", "runRef", "gateResultRef", "completenessEvaluated", "scope"], "properties": { "runId": { "$ref": "#/$defs/identifier" }, "taskKey": { "type": "string", "minLength": 1 }, "doneClaimRef": { "$ref": "#/$defs/repositoryPath" }, "manifestRef": { "$ref": "#/$defs/repositoryPath" }, "runRef": { "$ref": "#/$defs/repositoryPath" }, "gateResultRef": { "$ref": "#/$defs/repositoryPath" }, "completenessEvaluated": { "const": false }, "scope": { "const": "INTEGRITY_ONLY" } } },
+    "finalizationRecoveryData": { "type": "object", "additionalProperties": false, "required": ["runId", "state", "action"], "properties": { "runId": { "$ref": "#/$defs/identifier" }, "state": { "enum": ["OPEN", "FINALIZED"] }, "action": { "enum": ["ROLLED_BACK", "RESUMED", "ALREADY_OPEN", "ALREADY_FINALIZED"] } } }
   }
 }

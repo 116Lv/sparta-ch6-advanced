@@ -40,15 +40,57 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["checkId", "required", "rawResult", "mappedResult", "reason", "evidenceRef"],
+            "required": ["checkId", "required", "rawResult", "mappedResult", "reason", "evidenceRef", "leafResultRef", "leafResultSha256", "producerId", "commitSha", "policySha256"],
             "properties": {
               "checkId": { "type": "string" },
               "required": { "type": "boolean" },
               "rawResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"] },
               "mappedResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"] },
               "reason": { "type": ["string", "null"] },
-              "evidenceRef": { "type": ["string", "null"] }
-            }
+              "evidenceRef": { "type": ["string", "null"] },
+              "leafResultRef": { "type": ["string", "null"], "minLength": 1 },
+              "leafResultSha256": {
+                "type": ["string", "null"],
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "producerId": { "type": ["string", "null"], "minLength": 1 },
+              "commitSha": {
+                "type": ["string", "null"],
+                "minLength": 40,
+                "maxLength": 40,
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "policySha256": {
+                "type": ["string", "null"],
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "leafResultRef": { "type": "string" },
+                  "leafResultSha256": { "type": "string" },
+                  "producerId": { "type": "string" },
+                  "commitSha": { "type": "string" },
+                  "policySha256": { "type": "string" }
+                }
+              },
+              {
+                "properties": {
+                  "rawResult": { "enum": ["BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"] },
+                  "mappedResult": { "enum": ["BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"] },
+                  "leafResultRef": { "type": "null" },
+                  "leafResultSha256": { "type": "null" },
+                  "producerId": { "type": "null" },
+                  "commitSha": { "type": "null" },
+                  "policySha256": { "type": "null" }
+                }
+              }
+            ]
           }
         },
         "createdAiRuns": { "const": false }

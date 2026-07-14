@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:finalization-journal:v1",
+  "schemaVersion": 1,
+  "title": "AI Workflow Finalization Journal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "$id", "schemaVersion", "journalId", "runId", "sourceOpenSession", "finalizingSession", "claimInputRef", "expectedLockRecoveries"],
+  "properties": {
+    "$schema": { "const": "ai/schemas/finalization-journal.schema.json" },
+    "$id": { "allOf": [{ "$ref": "#/$defs/repositoryPath" }, { "pattern": "^\\.ai-runs/[A-Za-z0-9][A-Za-z0-9._-]*/\\.state/finalization-journals/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\\.json$" }] },
+    "schemaVersion": { "const": 1 },
+    "journalId": { "type": "string", "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$" },
+    "runId": { "$ref": "#/$defs/identifier" },
+    "sourceOpenSession": { "allOf": [{ "$ref": "#/$defs/sessionProjection" }, { "properties": { "state": { "const": "OPEN" } } }] },
+    "finalizingSession": { "allOf": [{ "$ref": "#/$defs/sessionProjection" }, { "properties": { "state": { "const": "FINALIZING" } } }] },
+    "claimInputRef": { "$ref": "#/$defs/repositoryPath" },
+    "expectedLockRecoveries": { "type": "array", "items": { "$ref": "#/$defs/lockRecovery" } }
+  },
+  "$defs": {
+    "timestamp": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$" },
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "commandId": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$" },
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "repositoryPath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\\s\\S]*\\\\)(?![\\s\\S]*(?:^|/)\\.\\.(?:/|$)).+$" },
+    "referenceList": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/repositoryPath" } },
+    "sessionProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "workingDirectory", "environment", "state", "commandResultRefs", "processAttemptRefs", "approvalRefs", "policyViolationRefs", "gateResultRefs", "reservations", "lockRecoveries", "redactionApplied", "finalizationJournalIdentity", "finalizationReceipt"],
+      "properties": {
+        "$schema": { "const": "ai/schemas/run-session.schema.json" },
+        "$id": { "$ref": "#/$defs/repositoryPath" },
+        "schemaVersion": { "const": 1 },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "taskKey": { "type": "string", "minLength": 1 },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "workingDirectory": { "$ref": "#/$defs/repositoryPath" },
+        "environment": { "enum": ["LOCAL", "CI"] },
+        "state": { "enum": ["OPEN", "FINALIZING"] },
+        "commandResultRefs": { "$ref": "#/$defs/referenceList" },
+        "processAttemptRefs": { "$ref": "#/$defs/referenceList" },
+        "approvalRefs": { "$ref": "#/$defs/referenceList" },
+        "policyViolationRefs": { "$ref": "#/$defs/referenceList" },
+        "gateResultRefs": { "$ref": "#/$defs/referenceList" },
+        "reservations": { "type": "array", "items": { "$ref": "#/$defs/reservation" } },
+        "lockRecoveries": { "type": "array", "items": { "$ref": "#/$defs/lockRecovery" } },
+        "redactionApplied": { "type": "boolean" },
+        "finalizationJournalIdentity": {
+          "oneOf": [{ "$ref": "#/$defs/finalizationJournalIdentity" }, { "type": "null" }]
+        },
+        "finalizationReceipt": { "type": "null" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "OPEN" } }, "required": ["state"] },
+          "then": { "properties": { "finalizationJournalIdentity": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "state": { "const": "FINALIZING" } }, "required": ["state"] },
+          "then": { "properties": { "finalizationJournalIdentity": { "$ref": "#/$defs/finalizationJournalIdentity" } } }
+        }
+      ]
+    },
+    "finalizationJournalIdentity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "journalId", "canonicalSha256"],
+      "properties": {
+        "path": { "allOf": [{ "$ref": "#/$defs/repositoryPath" }, { "pattern": "^\\.ai-runs/[A-Za-z0-9][A-Za-z0-9._-]*/\\.state/finalization-journals/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\\.json$" }] },
+        "journalId": { "type": "string", "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$" },
+        "canonicalSha256": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "reservation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["attemptId", "commandId", "argvHash", "inputFingerprint", "environmentFingerprint", "reservedAt", "state", "commandResultRef", "processAttemptRef", "terminalAt", "rerunReasonHash", "rerunOfAttemptId"],
+      "properties": {
+        "attemptId": { "$ref": "#/$defs/identifier" }, "commandId": { "$ref": "#/$defs/commandId" },
+        "argvHash": { "$ref": "#/$defs/digest" }, "inputFingerprint": { "$ref": "#/$defs/digest" }, "environmentFingerprint": { "$ref": "#/$defs/digest" },
+        "reservedAt": { "$ref": "#/$defs/timestamp" }, "state": { "enum": ["RESERVED", "PASS", "FAIL", "BLOCKED"] },
+        "commandResultRef": { "oneOf": [{ "$ref": "#/$defs/repositoryPath" }, { "type": "null" }] },
+        "processAttemptRef": { "oneOf": [{ "$ref": "#/$defs/repositoryPath" }, { "type": "null" }] },
+        "terminalAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "rerunReasonHash": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "rerunOfAttemptId": { "oneOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] }
+      }
+    },
+    "lockRecovery": {
+      "type": "object", "additionalProperties": false,
+      "required": ["recoveryId", "runId", "recoveredOwnerId", "replacementOwnerId", "previousPid", "previousAcquiredAt", "recoveredAt", "reason"],
+      "properties": {
+        "recoveryId": { "$ref": "#/$defs/identifier" }, "runId": { "$ref": "#/$defs/identifier" },
+        "recoveredOwnerId": { "$ref": "#/$defs/identifier" }, "replacementOwnerId": { "$ref": "#/$defs/identifier" },
+        "previousPid": { "type": "integer", "minimum": 1 }, "previousAcquiredAt": { "$ref": "#/$defs/timestamp" },
+        "recoveredAt": { "$ref": "#/$defs/timestamp" }, "reason": { "const": "DEAD_AND_EXPIRED" }
+      }
+    }
+  }
+}

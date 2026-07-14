@@ -18,7 +18,7 @@
 
 Canonical source: `ai/project-state.json`
 Schema version: `1`
-Updated at: `2026-07-10T14:17:27Z`
+Updated at: `2026-07-14T00:00:00Z`
 
 This section was manually bootstrapped from canonical JSON during Phase 1A.
 Automatic generation and stale-state validation begin in Phase 1B or later.
@@ -66,7 +66,7 @@ This section cannot be changed independently of its canonical JSON source.
 | Environment | Configuration Status | Notes |
 |---|---|---|
 | LOCAL | VERIFIED | Local Python 3 helper runtime passed the recorded Phase 1B preflight. |
-| CI | NOT_CONFIGURED | No CI workflow exists; CI enforcement is Phase 3 scope. |
+| CI | CONFIGURED_UNVERIFIED | phase-3b-repository-contract workflow exists; native enforcement remains NOT_CONFIGURED. |
 
 ### Helper Runtime State
 

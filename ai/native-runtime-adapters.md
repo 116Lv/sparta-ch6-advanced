@@ -40,9 +40,14 @@ operations; it never executes a product command and never grants repository
 gateway authority.
 
 The host producer owns authoritative host-version probing, pre-operation hook
-registration, one-use challenge handling, callback execution, and signing.
-The repository evaluator owns schema validation, trust verification,
-claimed/trusted normalization, bypass lifecycle checks, and Phase 2C mapping.
+registration, one-use challenge handling, callback execution, signing, and an
+external durable replay ledger. The internal evaluator accepts those facts only
+through immutable `HostNativeTrust`; its descriptor, probe, and ledger root
+must resolve outside the repository. The public repository CLI cannot inject
+host trust, a supported-host policy, a probe, or a ledger and therefore remains
+on the canonical unsupported-host path. The repository evaluator owns schema
+validation, trust verification, claimed/trusted normalization, bypass lifecycle
+checks, and Phase 2C mapping.
 
 ## Signed Snapshot Trust
 
@@ -70,12 +75,16 @@ Trust requires all of the following:
   supplied deduplicated bypass record;
 - the signed `resolutionEventIds` exactly equal the current valid later-gate
   `RESOLVED` event IDs, including an empty array when no resolution is claimed;
-- the in-process one-use challenge has not already been consumed.
+- the signed attestation identity is atomically consumed in the external
+  host-owned replay ledger before trusted surfaces can pass; the in-process
+  one-use set remains defense in depth only.
 
 The optional crypto dependency is fail-closed: unavailable Ed25519 support is
-`BLOCKED`. The evaluator accepts no private key. Tests create temporary keys and
-fixtures only; key material, replay state, and runtime evidence are not written
-to durable repository state.
+`BLOCKED`. The evaluator accepts no private key. Safe handle-relative ledger
+publication and directory durability are required; an unavailable safe backend
+or uncertain write, sync, close, or cleanup fails closed. Tests create temporary
+external ledgers, keys, and fixtures only; key material, replay state, and
+runtime evidence are not written to durable repository state.
 
 ## Claimed And Trusted Status
 
@@ -129,26 +138,33 @@ Native `FILE_READ`, `SEARCH`, and `TOOL_CALL` records match their operation and
 omit command intent. Shell-mediated logical operations retain `COMMAND` as the
 surface and carry a command intent matching the logical operation.
 
-Each observed event starts as `DETECTED`. Repeated delivery of the same
-`eventId` is idempotent; `deduplicationKey` groups events but never removes the
-original. A later `RESOLVED` event must use the same task, a later observation,
-a different gate invocation, and a closed allowlisted resolution reason. A
-detection from the current gate remains unresolved even if a current-gate
-resolution follows it. A valid later-gate transition can clear only on a
-supported, authoritatively probed host with a fresh trusted all-`ENFORCED`
-snapshot whose signed task, complete event count and canonical event-set
-digest match the gate inputs and whose signed `resolutionEventIds` match every current
-resolution event. Missing snapshots and missing, mismatched, duplicate,
-oversized, or extra bindings block; canonical unsupported-host resolution
-claims also block. Any ordinary unresolved attempt blocks before snapshot
-trust evaluation, and Phase 3A does not persist or publish durable bypass
-evidence.
+Each observed event starts as `DETECTED`. Its `detectionEventId`,
+`detectionGateInvocationId`, and `detectionEventSha256` fields are null.
+Repeated delivery of the same `eventId` is idempotent; `deduplicationKey` groups
+events but never removes the original. A later `RESOLVED` event must use the
+same task, a later observation, a different gate invocation, a closed
+allowlisted resolution reason, and non-null original-detection binding fields.
+The evaluator locates exactly one prior `DETECTED` event whose immutable event
+ID, task, original gate invocation, deduplication identity, and canonical event
+digest all match the resolution. An absent, duplicate, later, unrelated, or
+digest-mismatched detection cannot be cleared, and any other detection in the
+group remains unresolved. A detection from the current gate remains unresolved
+even if a current-gate resolution follows it.
+
+A valid later-gate transition can clear only on a supported, authoritatively
+probed host with a fresh trusted all-`ENFORCED` snapshot whose signed task,
+complete event count and canonical event-set digest match the gate inputs and
+whose signed `resolutionEventIds` match every current resolution event. Missing
+snapshots and missing, mismatched, duplicate, oversized, or extra signed
+bindings block; canonical unsupported-host resolution claims also block. Any
+ordinary unresolved attempt blocks before snapshot trust evaluation, and Phase
+3A does not persist or publish durable bypass evidence.
 
 ## Phase 3B Ownership
 
 Phase 3B owns CI adapter installation, remote-runner guarantees, durable CI
-evidence, challenge durability across processes, required-check wiring,
-cross-host parity, retention, and attestation. Phase 3A supplies the local
+evidence, CI ledger provisioning and retention, required-check wiring,
+cross-host parity, and attestation. Phase 3A supplies the local external-ledger
 contract and fail-closed evaluator only. Phase 1B-3 remains `INTEGRITY_ONLY`,
 and no native result promotes registry commands to `VERIFIED`, closes an Issue,
 or authorizes an unqualified overall `DONE` claim.

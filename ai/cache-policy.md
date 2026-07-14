@@ -10,9 +10,15 @@ Product commands remain NOT RUN. Phase 2A does not evaluate verification complet
 
 File-read entries are keyed by normalized repository-relative path and SHA-256 content digest. Command evidence summaries are keyed by command ID, argv hash, working directory, declared input fingerprints, and allowlisted environment fingerprint from the supported command gateway.
 
+Verification-decision entries use a distinct closed key containing task key, gate invocation ID, checked-out commit SHA, change type, entry point, verification-policy SHA-256, and the exact ordered check set that `verification_gate` consumes from the selected change type's required checks followed by optional checks. The entry point remains correlation identity and applicability input; it does not filter that consumed set. Each producer/check-indexed binding contains the verified leaf-result reference and SHA-256 plus its evidence path, SHA-256, and canonical schema. The key also binds the relevant environment fingerprint and expiry. Task and gate identifiers are mandatory lookup identity, but repo intake does not claim an external authority for them. A non-null environment fingerprint is `UNCERTAIN` until an authoritative current environment mapping exists.
+
 ## Freshness Rules
 
-A cache entry is `FRESH` only when every declared path still exists as expected and every recorded digest matches. A changed mapped file makes the entry `STALE`. A missing or unmapped input makes the entry `UNCERTAIN` unless a specific route can prove it irrelevant.
+A cache entry is `FRESH` only when every declared path still exists as expected and every recorded digest matches. Verification-decision reuse additionally requires the current commit and policy digest, exact ordered canonical check/producer set, every leaf-result and evidence digest, every canonical evidence schema, leaf correlation and freshness, and unexpired decision to match. Missing, extra, duplicate, reordered, wrong-producer, wrong-schema, or digest-mismatched known bindings are `STALE`; an unavailable path or unmapped classification, task/gate identity, policy/commit source, or environment input is `UNCERTAIN` unless another proven mismatch or expiry makes the entry `STALE`.
+
+The native cache binding has additional fixed identities: `leafResultRef` must be exactly `ai/native-adapter-result.json`, while evidence must be exactly `ai/native-runtime-adapters.json` validated with `ai/schemas/native-runtime-adapters.schema.json`. A copied or arbitrary native result/evidence path is `STALE` even when its bytes and digest match. The current native result schema does not carry a durable task, gate, commit, policy, and freshness envelope, so an otherwise exact native binding remains `UNCERTAIN` and prevents a `FRESH` verification decision until that correlated durable envelope exists.
+
+The canonical cache does not materialize a reusable verification PASS decision whose commit or short-lived expiry would become self-referential or immediately stale. Such decisions may be recorded only when every durable input is available.
 
 ## Conservative Invalidation
 

@@ -4,6 +4,7 @@
 import argparse
 import base64
 import codecs
+from collections.abc import Mapping, Sequence
 import ctypes
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ import sys
 import tempfile
 import time
 import traceback
+from types import MappingProxyType
 import uuid
 
 try:
@@ -100,7 +102,10 @@ RUN_LOCK_OWNER_SCHEMA = {
     },
 }
 DRAFT_2020_12_URI = "https://json-schema.org/draft/2020-12/schema"
-GATEWAY_OPERATIONS = ("PREFLIGHT", "RESOLVE", "RUN_START", "PRE_COMMAND", "POST_COMMAND", "PRE_DONE_CLAIM")
+GATEWAY_OPERATIONS = (
+    "PREFLIGHT", "RESOLVE", "RUN_START", "PRE_COMMAND", "POST_COMMAND", "PRE_DONE_CLAIM",
+    "FINALIZATION_RECOVERY",
+)
 SCHEMA_NAMES = (
     "agent-handoff",
     "approval-record",
@@ -109,10 +114,13 @@ SCHEMA_NAMES = (
     "command-result",
     "ci-capability-status",
     "ci-gate-result",
+    "github-ci-provenance",
     "context-map",
     "done-claim",
+    "finalization-journal",
     "gateway-result",
     "helper-runtime-evidence",
+    "host-native-trust",
     "native-adapter-result",
     "native-bypass-attempt",
     "native-runtime-adapters",
@@ -125,6 +133,7 @@ SCHEMA_NAMES = (
     "run-session",
     "skill-catalog",
     "verification-gate-result",
+    "verification-leaf-result",
     "verification-policy",
     "workflow-cache",
 )
@@ -198,6 +207,14 @@ class RegistryBlockedError(ValueError):
     def __init__(self, errors):
         self.errors = errors
         super().__init__(errors[0]["message"] if errors else "registry resolution is blocked")
+
+
+class VerificationNotConfiguredError(ValueError):
+    result = "BLOCKED"
+
+    def __init__(self, errors):
+        self.errors = errors
+        super().__init__(errors[0]["message"] if errors else "verification input is not configured")
 
 
 class DuplicateJsonKey(ValueError):
@@ -832,6 +849,10 @@ def validate(root, instance, schema_path):
     validate_phase_1b2_contract(instance, schema_path)
     if schema_path == "ai/schemas/native-bypass-attempt.schema.json":
         validate_native_bypass_attempt(instance)
+    elif schema_path == "ai/schemas/native-runtime-adapters.schema.json":
+        validate_native_runtime_adapters_semantics(instance)
+    elif schema_path == "ai/schemas/host-native-trust.schema.json":
+        validate_host_native_trust_descriptor(instance)
 
 
 def parse_rfc3339_timestamp(value):
@@ -1007,6 +1028,30 @@ def validate_run_session(instance):
             "RUN_SESSION_REFERENCE_MISMATCH",
             "/$id",
             "run session ID must equal its run path",
+        ))
+
+    journal_identity = instance.get("finalizationJournalIdentity")
+    if isinstance(journal_identity, dict):
+        expected_journal = (
+            f".ai-runs/{run_id}/.state/finalization-journals/"
+            f"{journal_identity.get('journalId')}.json"
+        )
+        if journal_identity.get("path") != expected_journal:
+            errors.append(phase_1b2_error(
+                "FINALIZATION_JOURNAL_REFERENCE_MISMATCH",
+                "/finalizationJournalIdentity/path",
+                "finalization journal identity path must equal its run and journal ID path",
+            ))
+    receipt = instance.get("finalizationReceipt")
+    if (
+        instance.get("state") == "FINALIZED"
+        and isinstance(receipt, dict)
+        and journal_identity != receipt.get("journalIdentity")
+    ):
+        errors.append(phase_1b2_error(
+            "FINALIZATION_JOURNAL_IDENTITY_MISMATCH",
+            "/finalizationJournalIdentity",
+            "finalized session journal identity must equal the receipt journal identity",
         ))
 
     reference_lists = (
@@ -2936,21 +2981,31 @@ def run_directory(root, run_id):
     return run
 
 
-def exclusive_publish_json(root, path, instance, schema_path):
+def exclusive_publish_json(root, path, instance, schema_path, *, read_only_before_link=False):
     validate(root, instance, schema_path)
     if path.exists() or path.is_symlink():
         raise FileExistsError(path)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
+        if read_only_before_link and os.name == "nt" and hasattr(os, "O_TEMPORARY"):
+            os.close(descriptor)
+            descriptor = os.open(
+                temporary, os.O_RDWR | os.O_BINARY | os.O_TEMPORARY,
+            )
         try:
             os.fchmod(descriptor, 0o600)
         except (AttributeError, OSError):
             pass
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-            descriptor = None
-            handle.write(compact(instance) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        encoded = (compact(instance) + "\n").encode("utf-8")
+        offset = 0
+        while offset < len(encoded):
+            written = os.write(descriptor, encoded[offset:])
+            if written <= 0:
+                raise EvidenceWriteUncertainty("temporary evidence write made no progress")
+            offset += written
+        os.fsync(descriptor)
+        if read_only_before_link:
+            make_read_only(Path(temporary))
         try:
             os.link(temporary, path)
         except OSError as error:
@@ -3009,6 +3064,8 @@ def start_run(root, run_id, task_key):
             "reservations": [],
             "lockRecoveries": [],
             "redactionApplied": False,
+            "finalizationJournalIdentity": None,
+            "finalizationReceipt": None,
         }
         session_path = state_directory / "run-session.json"
         exclusive_publish_json(root, session_path, session, "ai/schemas/run-session.schema.json")
@@ -3183,15 +3240,15 @@ def _publish_run_lock(root, run_id, owner, *, purpose, block_recovery=False):
 
 
 def acquire_run_lock(root, run_id, *, purpose="normal", continuing_attempt=None):
-    if purpose not in {"normal", "start"}:
+    if purpose not in {"normal", "start", "finalization-recovery"}:
         raise InvalidStateError([validation_error(
-            "RUN_LOCK_PURPOSE_INVALID", message="only normal and start lock acquisition are public",
+            "RUN_LOCK_PURPOSE_INVALID", message="run lock acquisition purpose is unsupported",
         )])
     owner = new_run_lock_owner(run_id)
     try:
         acquired = _publish_run_lock(root, run_id, owner, purpose=purpose, block_recovery=True)
     except RegistryBlockedError as error:
-        if purpose != "normal" or error.errors[0]["code"] != "RUN_LOCK_HELD":
+        if purpose not in {"normal", "finalization-recovery"} or error.errors[0]["code"] != "RUN_LOCK_HELD":
             raise
         recover_run_lock(root, run_id, continuing_attempt=continuing_attempt)
         acquired = _publish_run_lock(
@@ -3550,8 +3607,8 @@ def acquire_recovery_claim(state, run_id):
                     "RUN_LOCK_RECOVERY_CLAIM_COLLISION", message="ownerless recovery claim quarantine exists",
                 )])
             try:
-                os.rename(claim_path, stale_path)
-            except OSError as rename_error:
+                atomic_rename_noreplace(claim_path, stale_path)
+            except (FileExistsError, EvidenceWriteUncertainty, OSError) as rename_error:
                 raise RegistryBlockedError([validation_error(
                     "RUN_LOCK_RECOVERY_ACTIVE", message="ownerless recovery claim changed",
                 )]) from rename_error
@@ -3571,8 +3628,8 @@ def acquire_recovery_claim(state, run_id):
                         message="late recovery claim owner cannot be restored because the fixed path is occupied",
                     )])
                 try:
-                    os.rename(stale_path, claim_path)
-                except OSError as restore_error:
+                    atomic_rename_noreplace(stale_path, claim_path)
+                except (FileExistsError, EvidenceWriteUncertainty, OSError) as restore_error:
                     raise RegistryBlockedError([validation_error(
                         "RUN_LOCK_RECOVERY_ACTIVE", message="late recovery claim owner restoration raced",
                     )]) from restore_error
@@ -3604,8 +3661,8 @@ def acquire_recovery_claim(state, run_id):
         if stale_path.exists() or stale_path.is_symlink():
             raise RegistryBlockedError([validation_error("RUN_LOCK_RECOVERY_CLAIM_COLLISION", message="stale recovery claim path exists")])
         try:
-            os.rename(claim_path, stale_path)
-        except OSError as rename_error:
+            atomic_rename_noreplace(claim_path, stale_path)
+        except (FileExistsError, EvidenceWriteUncertainty, OSError) as rename_error:
             raise RegistryBlockedError([validation_error("RUN_LOCK_RECOVERY_ACTIVE", message="stale recovery claim rename failed")]) from rename_error
         replacement = create_recovery_claim(claim_path, run_id)
         if not remove_exact_owned_control_directory(stale_path, owner):
@@ -3660,8 +3717,8 @@ def complete_ownerless_initialization_cleanup(state, run_id, claim, quarantine):
                 message="late lock owner cannot be restored because the lock path is occupied",
             )])
         try:
-            os.rename(quarantine, lock)
-        except OSError as restore_error:
+            atomic_rename_noreplace(quarantine, lock)
+        except (FileExistsError, EvidenceWriteUncertainty, OSError) as restore_error:
             raise RegistryBlockedError([validation_error(
                 "RUN_LOCK_HELD", message="late run lock owner restoration raced",
             )]) from restore_error
@@ -3706,6 +3763,7 @@ def complete_recovery(
     )
     if session is None:
         raise InvalidStateError([validation_error("RUN_SESSION_MISSING", message="run session is missing")])
+    finalization_recovery = session["state"] in {"FINALIZING", "FINALIZED"}
     matches = [item for item in session["lockRecoveries"] if item["recoveryId"] == recovery_id]
     if len(matches) > 1:
         raise InvalidStateError([validation_error("DUPLICATE_LOCK_RECOVERY_ID", message="recovery history is contradictory")])
@@ -3737,15 +3795,18 @@ def complete_recovery(
         run_lifecycle_hook(
             "recover.after_history_publication", session=session, quarantine=quarantine, lock=replacement_lock.path,
         )
-    session = repair_reserved_attempts(
-        root, session, replacement_lock, continuing_attempt=continuing_attempt,
-    )
-    unresolved = [
-        (item["commandId"], item["attemptId"])
-        for item in session["reservations"] if item["state"] == "RESERVED"
-    ]
-    if any(item != continuing_attempt for item in unresolved):
-        raise RegistryBlockedError([validation_error("RESERVED_ATTEMPT_REPAIR_BLOCKED", message="reserved attempt recovery is unsafe")])
+    if not finalization_recovery:
+        session = repair_reserved_attempts(
+            root, session, replacement_lock, continuing_attempt=continuing_attempt,
+        )
+        unresolved = [
+            (item["commandId"], item["attemptId"])
+            for item in session["reservations"] if item["state"] == "RESERVED"
+        ]
+        if any(item != continuing_attempt for item in unresolved):
+            raise RegistryBlockedError([validation_error(
+                "RESERVED_ATTEMPT_REPAIR_BLOCKED", message="reserved attempt recovery is unsafe",
+            )])
     validate_held_recovery_claim(replacement_lock.path.parent, run_id, claim)
     if read_run_lock_owner(quarantine / "owner.json", run_id) != stale_owner:
         raise InvalidStateError([validation_error("RUN_LOCK_CHANGED", message="quarantined lock owner changed")])
@@ -3832,8 +3893,8 @@ def recover_run_lock(root, run_id, *, continuing_attempt=None):
                 raise RegistryBlockedError([validation_error("RUN_LOCK_RECOVERY_COLLISION", message="run lock recovery path exists")])
             run_lifecycle_hook("recover.before_quarantine_rename", lock=lock, quarantine=quarantine, owner=stale_owner)
             try:
-                os.rename(lock, quarantine)
-            except OSError as error:
+                atomic_rename_noreplace(lock, quarantine)
+            except (FileExistsError, EvidenceWriteUncertainty, OSError) as error:
                 raise RegistryBlockedError([validation_error("RUN_LOCK_RECOVERY_COLLISION", message="run lock recovery rename failed")]) from error
             quarantine_started = True
             run_lifecycle_hook("recover.after_quarantine_rename", lock=lock, quarantine=quarantine, owner=stale_owner)
@@ -3866,7 +3927,12 @@ def recover_run_lock(root, run_id, *, continuing_attempt=None):
             quarantine = state / f"lock-initialization-quarantine-{uuid.uuid4()}"
             if quarantine.exists() or quarantine.is_symlink():
                 raise RegistryBlockedError([validation_error("RUN_LOCK_RECOVERY_COLLISION", message="initialization quarantine exists")])
-            os.rename(lock, quarantine)
+            try:
+                atomic_rename_noreplace(lock, quarantine)
+            except (FileExistsError, EvidenceWriteUncertainty, OSError) as error:
+                raise RegistryBlockedError([validation_error(
+                    "RUN_LOCK_RECOVERY_COLLISION", message="initialization quarantine rename failed",
+                )]) from error
             quarantine_started = True
             run_lifecycle_hook("recover.ownerless_after_quarantine_rename", lock=lock, quarantine=quarantine)
             return complete_ownerless_initialization_cleanup(state, run_id, claim, quarantine)
@@ -3923,6 +3989,17 @@ def active_open_session(root, run_id):
         raise InvalidStateError([validation_error("ACTIVE_RUN_REQUIRED", message="PRE_COMMAND requires an active run")])
     if session["state"] != "OPEN":
         raise RegistryBlockedError([validation_error("RUN_NOT_OPEN", message="PRE_COMMAND requires an OPEN run")])
+    if session.get("finalizationJournalIdentity") is not None:
+        raise RegistryBlockedError([validation_error(
+            "FINALIZATION_RECOVERY_REQUIRED",
+            message="an OPEN run with active finalization authority requires explicit recovery",
+        )])
+    legacy_journal_path = legacy_finalization_journal_path(root, run_id)
+    if legacy_journal_path.exists() or legacy_journal_path.is_symlink():
+        raise RegistryBlockedError([validation_error(
+            "FINALIZATION_RECOVERY_REQUIRED",
+            message="a legacy fixed finalization marker requires explicit recovery",
+        )])
     _root, _run_json, finalized = secure_run_artifact_path(root, run_id, ("run.json",))
     if finalized:
         raise RegistryBlockedError([validation_error("RUN_FINALIZED", message="finalized runs cannot accept commands")])
@@ -4075,10 +4152,16 @@ def immutable_policy_event(root, session, acquired, event_type, command_id, desc
 
 
 def make_read_only(path):
+    path = Path(path)
     try:
         os.chmod(path, 0o400)
     except OSError as error:
         raise EvidenceWriteUncertainty("published evidence could not be made read-only") from error
+    try:
+        if path.stat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+            raise EvidenceWriteUncertainty("published evidence remained writable")
+    except OSError as error:
+        raise EvidenceWriteUncertainty("published evidence mode could not be verified") from error
 
 
 def reservation_for_process(session, process_attempt):
@@ -4789,11 +4872,63 @@ def done_claim_exit_for(result):
     }[result]
 
 
+def validated_done_claim_evidence(root, session, claim):
+    command_refs = set(session["commandResultRefs"])
+    session_refs = command_refs | set(session["gateResultRefs"])
+    top_level_refs = set(claim.get("evidenceRefs", []))
+    check_refs = {
+        reference
+        for check in claim.get("checks", [])
+        for reference in check.get("evidenceRefs", [])
+    }
+    resolved = {}
+    for check in claim.get("checks", []):
+        for reference in check.get("evidenceRefs", []):
+            if reference not in top_level_refs or reference not in session_refs:
+                raise InvalidStateError([validation_error(
+                    "DONE_CLAIM_CHECK_EVIDENCE_UNBOUND",
+                    message="check evidence must be present in the claim and active session",
+                )])
+            schema_path = (
+                "ai/schemas/command-result.schema.json"
+                if reference in command_refs
+                else "ai/schemas/gateway-result.schema.json"
+            )
+            _path, artifact = read_run_reference(root, reference, schema_path)
+            resolved[reference] = artifact
+    if top_level_refs != check_refs or not command_refs.issubset(top_level_refs):
+        raise InvalidStateError([validation_error(
+            "DONE_CLAIM_EVIDENCE_CLOSURE_MISMATCH",
+            message="top-level evidence must equal check evidence and include every command result",
+        )])
+    return resolved
+
+
+def validate_not_run_consistency(session, claim):
+    check_ids = {check["id"] for check in claim.get("checks", [])}
+    command_ids = {
+        reservation["commandId"] for reservation in session.get("reservations", [])
+        if reservation.get("state") != "RESERVED"
+    }
+    not_run_ids = [item["id"] for item in claim.get("notRunItems", [])]
+    if len(not_run_ids) != len(set(not_run_ids)):
+        raise InvalidStateError([validation_error(
+            "DONE_CLAIM_NOT_RUN_DUPLICATE", message="not-run IDs must be unique",
+        )])
+    if set(not_run_ids) & (check_ids | command_ids):
+        raise InvalidStateError([validation_error(
+            "DONE_CLAIM_NOT_RUN_CONTRADICTION",
+            message="a claimed or executed check cannot also be not-run",
+        )])
+
+
 def done_claim_semantic_result(root, session, claim):
     if claim.get("$id") != f".ai-runs/{session['runId']}/done-claim.json":
         return "INVALID_STATE", "DONE_CLAIM_REFERENCE_MISMATCH"
     if claim.get("runId") != session["runId"] or claim.get("taskKey") != session["taskKey"]:
         return "INVALID_STATE", "DONE_CLAIM_RUN_MISMATCH"
+    resolved_evidence = validated_done_claim_evidence(root, session, claim)
+    validate_not_run_consistency(session, claim)
     if claim.get("implementationStatus") != "PASS" or claim.get("overallResult") != "PASS":
         return "BLOCKED", "DONE_CLAIM_NOT_PASS"
     if claim.get("blockers"):
@@ -4819,14 +4954,14 @@ def done_claim_semantic_result(root, session, claim):
             return "BLOCKED", "COMPLETION_WITHOUT_EVIDENCE"
     for reference in claimed_refs:
         if reference not in session_command_refs:
-            return "INVALID_STATE", "DONE_CLAIM_EVIDENCE_NOT_IN_SESSION"
-        _path, command_result = read_run_reference(root, reference, "ai/schemas/command-result.schema.json")
+            continue
+        command_result = resolved_evidence[reference]
         if command_result.get("result") == "FAIL":
             return "FAIL", "DONE_CLAIM_HIDDEN_FAILED_LEAF"
         if command_result.get("result") != "PASS":
             return "BLOCKED", "DONE_CLAIM_LEAF_NOT_PASS"
     for reference in session_command_refs:
-        _path, command_result = read_run_reference(root, reference, "ai/schemas/command-result.schema.json")
+        command_result = resolved_evidence[reference]
         if command_result.get("result") == "FAIL":
             return "FAIL", "DONE_CLAIM_HIDDEN_FAILED_LEAF"
         if command_result.get("result") != "PASS":
@@ -4876,7 +5011,7 @@ def expected_terminal_artifacts(session):
     return expected
 
 
-def validate_evidence_closure(root, session, include_final_refs=()):
+def validate_evidence_closure(root, session, include_final_refs=(), exclude_refs=()):
     session = json.loads(json.dumps(session))
     session["_root"] = root
     expected = expected_terminal_artifacts(session)
@@ -4888,9 +5023,14 @@ def validate_evidence_closure(root, session, include_final_refs=()):
         if not path.is_file():
             continue
         relative = path.relative_to(run).as_posix()
-        if relative.startswith(".state/") or relative == "claim-input.json":
+        reference = path.relative_to(root).as_posix()
+        if (
+            relative.startswith(".state/")
+            or relative in ("claim-input.json", "artifact-manifest.json", "run.json")
+            or reference in exclude_refs
+        ):
             continue
-        actual.add(path.relative_to(root).as_posix())
+        actual.add(reference)
     unexpected = actual - expected
     missing = expected - actual
     if unexpected:
@@ -4935,7 +5075,9 @@ def require_generated_summaries_current(root):
 
 
 def publish_final_json(root, path, instance, schema_path):
-    exclusive_publish_json(root, path, instance, schema_path)
+    exclusive_publish_json(
+        root, path, instance, schema_path, read_only_before_link=True,
+    )
     make_read_only(path)
 
 
@@ -4961,10 +5103,13 @@ def final_run_result_for(gate_result):
     return gate_result
 
 
-def publish_finalized_run(root, session, gate_result, reason):
+def canonical_instance_sha256(instance):
+    return hashlib.sha256(compact(instance).encode("utf-8")).hexdigest()
+
+
+def final_run_projection(session, gate_result, reason, ended_at):
     run_id = session["runId"]
-    ended_at = utc_now()
-    run_index = {
+    return {
         "$schema": "ai/schemas/run.schema.json",
         "$id": f".ai-runs/{run_id}/run.json",
         "schemaVersion": 1,
@@ -4979,42 +5124,561 @@ def publish_finalized_run(root, session, gate_result, reason):
         "approvalRefs": session["approvalRefs"],
         "policyViolationRefs": session["policyViolationRefs"],
         "evidenceRefs": [
-            ".ai-runs/{}/done-claim.json".format(run_id),
-            ".ai-runs/{}/artifact-manifest.json".format(run_id),
-            ".ai-runs/{}/gate-results/pre-done-claim.json".format(run_id),
+            f".ai-runs/{run_id}/done-claim.json",
+            f".ai-runs/{run_id}/artifact-manifest.json",
+            f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
         ],
         "redactionApplied": session["redactionApplied"],
         "reason": reason or "Phase 1B integrity PASS; verification completeness NOT EVALUATED",
     }
+
+
+def legacy_finalization_journal_path(root, run_id):
+    _root, path, _exists = secure_run_artifact_path(
+        root, run_id, (".state", "finalization-journal.json"),
+    )
+    return path
+
+
+def finalization_journal_reference(run_id, journal_id):
+    try:
+        parsed = uuid.UUID(journal_id)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_JOURNAL_ID_INVALID", message="finalization journal ID is invalid",
+        )]) from error
+    if parsed.version != 4 or str(parsed) != journal_id:
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_JOURNAL_ID_INVALID", message="finalization journal ID is invalid",
+        )])
+    return f".ai-runs/{run_id}/.state/finalization-journals/{journal_id}.json"
+
+
+def finalization_journal_path(root, run_id, journal_id, *, create_parents=False):
+    finalization_journal_reference(run_id, journal_id)
+    _root, path, _exists = secure_run_artifact_path(
+        root, run_id, (".state", "finalization-journals", f"{journal_id}.json"),
+        create_parents=create_parents,
+    )
+    return path
+
+
+def normalized_finalization_journal(journal):
+    normalized = json.loads(json.dumps(journal))
+    identity = normalized.get("finalizingSession", {}).get("finalizationJournalIdentity")
+    if isinstance(identity, dict):
+        identity["canonicalSha256"] = "0" * 64
+    return normalized
+
+
+def finalization_journal(run_id, source_open_session, finalizing_session, claim_input_ref):
+    journal_id = str(uuid.uuid4())
+    journal_reference = finalization_journal_reference(run_id, journal_id)
+    placeholder_identity = {
+        "path": journal_reference,
+        "journalId": journal_id,
+        "canonicalSha256": "0" * 64,
+    }
+    expected_without_identity = expected_finalizing_session(source_open_session)
+    if finalizing_session != expected_without_identity:
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_JOURNAL_MISMATCH",
+            message="requested finalizing session is not the exact OPEN transition",
+        )])
+    journal = {
+        "$schema": "ai/schemas/finalization-journal.schema.json",
+        "$id": journal_reference,
+        "schemaVersion": 1,
+        "journalId": journal_id,
+        "runId": run_id,
+        "sourceOpenSession": json.loads(json.dumps(source_open_session)),
+        "finalizingSession": expected_finalizing_session(
+            source_open_session, placeholder_identity,
+        ),
+        "claimInputRef": claim_input_ref,
+        "expectedLockRecoveries": json.loads(json.dumps(source_open_session["lockRecoveries"])),
+    }
+    journal["finalizingSession"]["finalizationJournalIdentity"] = finalization_journal_identity(journal)
+    return journal
+
+
+def validate_finalization_journal(
+    root, journal, expected_run_id, *, source_session=None, claim_input_ref=None,
+    journal_identity=None,
+):
+    validate(root, journal, "ai/schemas/finalization-journal.schema.json")
+    source = journal["sourceOpenSession"]
+    finalizing = journal["finalizingSession"]
+    validate(root, source, "ai/schemas/run-session.schema.json")
+    validate(root, finalizing, "ai/schemas/run-session.schema.json")
+    expected_identity = finalization_journal_identity(journal)
+    expected_finalizing = expected_finalizing_session(source, expected_identity)
+    expected_reference = finalization_journal_reference(expected_run_id, journal["journalId"])
+    mismatched = (
+        journal["$id"] != expected_reference
+        or journal["runId"] != expected_run_id
+        or source["runId"] != expected_run_id
+        or source["state"] != "OPEN"
+        or finalizing != expected_finalizing
+        or journal["expectedLockRecoveries"] != source["lockRecoveries"]
+        or finalizing["lockRecoveries"] != journal["expectedLockRecoveries"]
+        or source_session is not None and source != source_session
+        or claim_input_ref is not None and journal["claimInputRef"] != claim_input_ref
+        or journal_identity is not None and journal_identity != expected_identity
+    )
+    if mismatched:
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_JOURNAL_MISMATCH", message="finalization journal authority mismatches the run",
+        )])
+    return journal
+
+
+def read_finalization_journal(root, run_id, journal_identity):
+    if not isinstance(journal_identity, dict):
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_JOURNAL_MISSING", message="active finalization journal identity is missing",
+        )])
+    journal_id = journal_identity.get("journalId")
+    expected_reference = finalization_journal_reference(run_id, journal_id)
+    if journal_identity.get("path") != expected_reference:
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_JOURNAL_MISMATCH", message="active finalization journal path mismatches its ID",
+        )])
+    _path, journal = read_exact_run_json(
+        root, run_id, (".state", "finalization-journals", f"{journal_id}.json"),
+        "ai/schemas/finalization-journal.schema.json",
+    )
+    if journal is None:
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_JOURNAL_MISSING", message="independent finalization journal is missing",
+        )])
+    return validate_finalization_journal(
+        root, journal, run_id, journal_identity=journal_identity,
+    )
+
+
+def ensure_finalization_journal(root, source_session, finalizing_session, claim_input_ref):
+    run_id = source_session["runId"]
+    journal = finalization_journal(run_id, source_session, finalizing_session, claim_input_ref)
+    path = finalization_journal_path(
+        root, run_id, journal["journalId"], create_parents=True,
+    )
+    publish_final_json(root, path, journal, "ai/schemas/finalization-journal.schema.json")
+    return journal
+
+
+def finalization_journal_identity(journal):
+    return {
+        "path": journal["$id"],
+        "journalId": journal["journalId"],
+        "canonicalSha256": canonical_instance_sha256(normalized_finalization_journal(journal)),
+    }
+
+
+def finalization_receipt(session, journal, run_projection, claim, gate, artifact_identities):
+    pre_receipt_session = json.loads(json.dumps(session))
+    run_id = pre_receipt_session["runId"]
+    return {
+        "journalIdentity": finalization_journal_identity(journal),
+        "preReceiptSession": pre_receipt_session,
+        "preReceiptSessionSha256": canonical_instance_sha256(pre_receipt_session),
+        "manifestIdentity": {
+            "$id": f".ai-runs/{run_id}/artifact-manifest.json",
+            "runId": run_id,
+        },
+        "runProjection": json.loads(json.dumps(run_projection)),
+        "claimIdentity": {
+            "path": f".ai-runs/{run_id}/done-claim.json",
+            "canonicalSha256": canonical_instance_sha256(claim),
+            "implementationStatus": claim["implementationStatus"],
+            "overallResult": claim["overallResult"],
+            "unexpected500Status": claim["unexpected500Status"],
+            "unhandledExceptionStatus": claim["unhandledExceptionStatus"],
+        },
+        "gateIdentity": {
+            "path": f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
+            "canonicalSha256": canonical_instance_sha256(gate),
+            "operation": gate["operation"],
+            "result": gate["result"],
+            "reason": gate["reason"],
+        },
+        "artifactIdentities": json.loads(json.dumps(artifact_identities)),
+    }
+
+
+def expected_final_artifact_identities(root, session, excluded_refs=()):
+    run_id = session["runId"]
+    root = Path(root).resolve(strict=True)
+    run = root / ".ai-runs" / run_id
+    references = set()
+    for path in run.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(run).as_posix()
+        reference = path.relative_to(root).as_posix()
+        if relative.startswith(".state/") or relative == "claim-input.json" or reference in excluded_refs:
+            continue
+        references.add(reference)
+    references.update({
+        f".ai-runs/{run_id}/done-claim.json",
+        f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
+    })
+    identities = []
+    for reference in sorted(references, key=lambda value: value.encode("utf-8")):
+        kind = artifact_kind_for(Path(reference))
+        if kind is None:
+            raise InvalidStateError([validation_error(
+                "UNKNOWN_FINAL_ARTIFACT", message="final artifact has no approved kind",
+            )])
+        identities.append({"path": reference, "kind": kind})
+    return identities
+
+
+def sealed_finalization_session(root, session, journal, run_projection, claim, gate):
+    sealed = json.loads(json.dumps(session))
+    sealed["state"] = "FINALIZED"
+    sealed["finalizationReceipt"] = finalization_receipt(
+        session,
+        journal,
+        run_projection,
+        claim,
+        gate,
+        expected_final_artifact_identities(root, session, {journal["claimInputRef"]}),
+    )
+    validate(root, sealed, "ai/schemas/run-session.schema.json")
+    return sealed
+
+
+def valid_lock_recovery_suffix(snapshot, session):
+    expected = snapshot["lockRecoveries"]
+    current = session["lockRecoveries"]
+    if current[:len(expected)] != expected:
+        return False
+    recovery_ids = {item["recoveryId"] for item in expected}
+    for recovery in current[len(expected):]:
+        recovery_id = recovery.get("recoveryId")
+        if (
+            not isinstance(recovery_id, str)
+            or not RECOVERY_QUARANTINE_PATTERN.fullmatch(recovery_id)
+            or recovery.get("replacementOwnerId") != recovery_uuid(recovery_id)
+            or recovery.get("runId") != snapshot["runId"]
+            or recovery_id in recovery_ids
+        ):
+            return False
+        recovery_ids.add(recovery_id)
+    return True
+
+
+def finalized_session_matches_snapshot(session, snapshot, receipt):
+    if not valid_lock_recovery_suffix(snapshot, session):
+        return False
+    expected = json.loads(json.dumps(snapshot))
+    expected["state"] = "FINALIZED"
+    expected["finalizationReceipt"] = receipt
+    expected["lockRecoveries"] = json.loads(json.dumps(session["lockRecoveries"]))
+    return session == expected
+
+
+def session_matches_journal_projection(session, projection):
+    if not valid_lock_recovery_suffix(projection, session):
+        return False
+    expected = json.loads(json.dumps(projection))
+    expected["lockRecoveries"] = json.loads(json.dumps(session["lockRecoveries"]))
+    return session == expected
+
+
+def validate_receipt_journal_binding(session, journal):
+    receipt = session.get("finalizationReceipt")
+    snapshot = receipt.get("preReceiptSession") if isinstance(receipt, dict) else None
+    mismatched = (
+        not isinstance(snapshot, dict)
+        or session.get("finalizationJournalIdentity") != receipt.get("journalIdentity")
+        or receipt.get("journalIdentity") != finalization_journal_identity(journal)
+        or receipt.get("preReceiptSessionSha256") != canonical_instance_sha256(snapshot)
+        or snapshot != journal["finalizingSession"]
+        or not finalized_session_matches_snapshot(session, snapshot, receipt)
+    )
+    if mismatched:
+        raise RegistryBlockedError([validation_error(
+            "FINALIZATION_RECOVERY_REQUIRED",
+            message="finalization receipt does not match independent journal authority",
+        )])
+    return receipt, snapshot
+
+
+def validate_finalization_receipt_anchor(root, session, claim, gate, expected_run_id, journal=None):
+    receipt = session.get("finalizationReceipt")
+    snapshot = receipt.get("preReceiptSession") if isinstance(receipt, dict) else None
+    if not isinstance(snapshot, dict):
+        raise InvalidStateError([validation_error(
+            "FINAL_RUN_PROJECTION_MISMATCH", message="finalization receipt session anchor is missing",
+        )])
+    journal = read_finalization_journal(
+        root, expected_run_id, session.get("finalizationJournalIdentity"),
+    ) if journal is None else validate_finalization_journal(
+        root, journal, expected_run_id,
+        journal_identity=session.get("finalizationJournalIdentity"),
+    )
+    journal_identity = receipt.get("journalIdentity", {})
+    claim_identity = receipt.get("claimIdentity", {})
+    gate_identity = receipt.get("gateIdentity", {})
+    mismatched = (
+        receipt.get("preReceiptSessionSha256") != canonical_instance_sha256(snapshot)
+        or session.get("finalizationJournalIdentity") != journal_identity
+        or journal_identity != finalization_journal_identity(journal)
+        or snapshot != journal["finalizingSession"]
+        or snapshot.get("state") != "FINALIZING"
+        or snapshot.get("finalizationReceipt") is not None
+        or snapshot.get("runId") != expected_run_id
+        or not finalized_session_matches_snapshot(session, snapshot, receipt)
+        or claim_identity.get("path") != f".ai-runs/{expected_run_id}/done-claim.json"
+        or claim_identity.get("canonicalSha256") != canonical_instance_sha256(claim)
+        or claim_identity.get("implementationStatus") != claim.get("implementationStatus")
+        or claim_identity.get("overallResult") != claim.get("overallResult")
+        or claim_identity.get("unexpected500Status") != claim.get("unexpected500Status")
+        or claim_identity.get("unhandledExceptionStatus") != claim.get("unhandledExceptionStatus")
+        or gate_identity.get("path") != f".ai-runs/{expected_run_id}/gate-results/pre-done-claim.json"
+        or gate_identity.get("canonicalSha256") != canonical_instance_sha256(gate)
+        or gate_identity.get("operation") != gate.get("operation")
+        or gate_identity.get("result") != gate.get("result")
+        or gate_identity.get("reason") != gate.get("reason")
+    )
+    if mismatched:
+        raise InvalidStateError([validation_error(
+            "FINAL_RUN_PROJECTION_MISMATCH", message="finalization receipt session anchor mismatches",
+        )])
+    return receipt, snapshot, journal
+
+
+def validate_final_run_projection(
+    root, run_index, claim, gate, manifest, session, expected_run_id=None, journal=None,
+):
+    expected_run_id = claim["runId"] if expected_run_id is None else expected_run_id
+    expected_evidence = [
+        f".ai-runs/{expected_run_id}/done-claim.json",
+        f".ai-runs/{expected_run_id}/artifact-manifest.json",
+        f".ai-runs/{expected_run_id}/gate-results/pre-done-claim.json",
+    ]
+
+    def manifest_references(kind):
+        return sorted(
+            artifact["path"] for artifact in manifest["artifacts"]
+            if artifact["kind"] == kind
+        )
+
+    receipt, snapshot, journal = validate_finalization_receipt_anchor(
+        root, session, claim, gate, expected_run_id, journal=journal,
+    )
+    expected_artifact_identities = [
+        {"path": artifact["path"], "kind": artifact["kind"]}
+        for artifact in manifest["artifacts"]
+    ]
+    retained_projection = receipt.get("runProjection")
+    ended_at = retained_projection.get("endedAt") if isinstance(retained_projection, dict) else None
+    expected_projection = final_run_projection(snapshot, gate["result"], gate["reason"], ended_at)
+    reservation_command_refs = sorted(
+        item["commandResultRef"] for item in snapshot["reservations"]
+        if item["state"] != "RESERVED"
+    )
+    reservation_process_refs = sorted(
+        item["processAttemptRef"] for item in snapshot["reservations"]
+        if item["state"] != "RESERVED"
+    )
+    expected_gate_refs = sorted(snapshot["gateResultRefs"] + [
+        f".ai-runs/{expected_run_id}/gate-results/pre-done-claim.json",
+    ])
+    mismatched = (
+        session.get("state") != "FINALIZED"
+        or session["runId"] != expected_run_id
+        or manifest["$id"] != f".ai-runs/{expected_run_id}/artifact-manifest.json"
+        or manifest["runId"] != expected_run_id
+        or run_index != retained_projection
+        or run_index["runId"] != claim["runId"]
+        or run_index["runId"] != expected_run_id
+        or run_index["taskKey"] != claim["taskKey"]
+        or run_index["result"] != final_run_result_for(gate["result"])
+        or run_index["evidenceRefs"] != expected_evidence
+        or sorted(run_index["commandResultRefs"]) != manifest_references("COMMAND_RESULT")
+        or sorted(snapshot["processAttemptRefs"]) != manifest_references("PROCESS_ATTEMPT")
+        or sorted(run_index["approvalRefs"]) != manifest_references("APPROVAL")
+        or sorted(run_index["policyViolationRefs"]) != manifest_references("POLICY_VIOLATION")
+        or expected_gate_refs != manifest_references("GATE_RESULT")
+        or any(item["state"] == "RESERVED" for item in snapshot["reservations"])
+        or reservation_command_refs != sorted(snapshot["commandResultRefs"])
+        or reservation_process_refs != sorted(snapshot["processAttemptRefs"])
+        or gate.get("data") is not None and gate["data"]["manifestRef"] != manifest["$id"]
+        or retained_projection != expected_projection
+        or receipt.get("artifactIdentities") != expected_artifact_identities
+    )
+    if mismatched:
+        raise InvalidStateError([validation_error(
+            "FINAL_RUN_PROJECTION_MISMATCH",
+            message="run.json does not match claim, gate, and manifest",
+        )])
+
+
+def publish_finalized_run(root, run_projection):
+    run_id = run_projection["runId"]
     run_destination = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "run.json"
-    publish_final_json(root, run_destination, run_index, "ai/schemas/run.schema.json")
-    return run_index
+    publish_final_json(root, run_destination, run_projection, "ai/schemas/run.schema.json")
+    return run_projection
 
 
-def publish_done_gate_manifest_run(root, session, claim, gate_result_name, gate_reason):
+def publish_done_gate_manifest_run(
+    root, session, journal, claim, gate, run_projection, claim_input_ref,
+):
     run_id = session["runId"]
     claim_destination = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "done-claim.json"
     if not claim_destination.exists():
         publish_final_json(root, claim_destination, claim, "ai/schemas/done-claim.schema.json")
-    gate = gate_result_artifact(root, run_id, gate_result_name, gate_reason)
-    if gate_result_name == "PASS":
-        gate["data"]["taskKey"] = session["taskKey"]
     gate_destination = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "gate-results" / "pre-done-claim.json"
     gate_destination.parent.mkdir(mode=0o700, exist_ok=True)
     publish_final_json(root, gate_destination, gate, "ai/schemas/gateway-result.schema.json")
     validate_evidence_closure(root, session, include_final_refs={
         f".ai-runs/{run_id}/done-claim.json",
         f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
-    })
-    manifest = final_artifact_manifest(root, run_id)
+    }, exclude_refs={claim_input_ref})
+    manifest = final_artifact_manifest(root, run_id, {claim_input_ref})
     manifest_destination = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "artifact-manifest.json"
     publish_final_json(root, manifest_destination, manifest, "ai/schemas/artifact-manifest.schema.json")
-    publish_finalized_run(root, session, gate_result_name, gate_reason)
-    shutil.rmtree(Path(root).resolve(strict=True) / ".ai-runs" / run_id / ".state")
+    publish_finalized_run(root, run_projection)
+    make_finalization_files_read_only(root, session, journal, require_final_artifacts=True)
     return gate
 
 
-def final_artifact_manifest(root, run_id):
+def finalization_artifact_refs(run_id):
+    return (
+        f".ai-runs/{run_id}/done-claim.json",
+        f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
+        f".ai-runs/{run_id}/artifact-manifest.json",
+    )
+
+
+def make_finalization_files_read_only(
+    root, session, journal, *, require_final_artifacts=False,
+):
+    root = Path(root).resolve(strict=True)
+    run_id = session["runId"]
+    identity = session.get("finalizationJournalIdentity")
+    validate_finalization_journal(
+        root, journal, run_id, journal_identity=identity,
+    )
+    artifact_components = (
+        ("done-claim.json",),
+        ("gate-results", "pre-done-claim.json"),
+        ("artifact-manifest.json",),
+        ("run.json",),
+    )
+    for components in artifact_components:
+        _root, path, exists = secure_run_artifact_path(root, run_id, components)
+        if not exists:
+            if require_final_artifacts:
+                raise EvidenceWriteUncertainty("required final artifact is missing during mode seal")
+            continue
+        make_read_only(path)
+    _root, session_path, session_exists = secure_run_artifact_path(
+        root, run_id, (".state", "run-session.json"),
+    )
+    if not session_exists:
+        raise EvidenceWriteUncertainty("run session is missing during mode seal")
+    make_read_only(session_path)
+    journal_path = finalization_journal_path(root, run_id, journal["journalId"])
+    if not journal_path.is_file() or journal_path.is_symlink():
+        raise EvidenceWriteUncertainty("finalization journal is missing during mode seal")
+    make_read_only(journal_path)
+
+
+def expected_finalizing_session(original_session, journal_identity=None):
+    finalizing = json.loads(json.dumps(original_session))
+    finalizing["state"] = "FINALIZING"
+    if journal_identity is not None:
+        finalizing["finalizationJournalIdentity"] = json.loads(json.dumps(journal_identity))
+    return finalizing
+
+
+def read_locked_run_session(root, run_id, acquired):
+    validate_held_run_lock(root, run_id, acquired)
+    _session_path, session = read_exact_run_json(
+        root, run_id, (".state", "run-session.json"), "ai/schemas/run-session.schema.json",
+    )
+    validate_held_run_lock(root, run_id, acquired)
+    return session
+
+
+def rollback_finalization(
+    root: Path,
+    original_session: dict,
+    final_refs: Sequence[str],
+    acquired,
+    expected_current_session=None,
+    journal=None,
+) -> None:
+    root = Path(root).resolve(strict=True)
+    validate(root, original_session, "ai/schemas/run-session.schema.json")
+    if original_session["state"] != "OPEN":
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_ORIGINAL_SESSION_INVALID", message="rollback requires the exact prior OPEN session",
+        )])
+    run_id = original_session["runId"]
+    expected_refs = finalization_artifact_refs(run_id)
+    if isinstance(final_refs, (str, bytes)) or tuple(final_refs) != expected_refs:
+        raise InvalidStateError([validation_error(
+            "FINALIZATION_ROLLBACK_REFS_INVALID", message="rollback references are not the exact finalization set",
+        )])
+
+    validate_held_run_lock(root, run_id, acquired)
+    run = root / ".ai-runs" / run_id
+    try:
+        (run / "run.json").lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        raise RegistryBlockedError([validation_error(
+            "FINALIZATION_ALREADY_PUBLISHED", message="published run.json cannot be rolled back",
+        )])
+
+    expected_finalizing = (
+        expected_finalizing_session(original_session)
+        if expected_current_session is None
+        else json.loads(json.dumps(expected_current_session))
+    )
+    current_session = read_locked_run_session(root, run_id, acquired)
+    if current_session != expected_finalizing:
+        raise RegistryBlockedError([validation_error(
+            "FINALIZING_SESSION_CHANGED", message="FINALIZING session changed before rollback",
+        )])
+    if journal is not None:
+        journal_identity = finalization_journal_identity(journal)
+        retained_journal = read_finalization_journal(root, run_id, journal_identity)
+        if retained_journal != journal:
+            raise RegistryBlockedError([validation_error(
+                "FINALIZATION_JOURNAL_CHANGED", message="finalization journal changed before rollback",
+            )])
+
+    for reference in final_refs:
+        validate_held_run_lock(root, run_id, acquired)
+        relative = reference.removeprefix(f".ai-runs/{run_id}/")
+        _root, path, exists = secure_run_artifact_path(root, run_id, tuple(relative.split("/")))
+        if not exists:
+            continue
+        path.chmod(0o600)
+        path.unlink()
+        fsync_directory(path.parent)
+
+    try:
+        replace_run_session(
+            root,
+            run / ".state" / "run-session.json",
+            original_session,
+            acquired,
+            expected_session=expected_finalizing,
+        )
+    except Exception:
+        if read_locked_run_session(root, run_id, acquired) != original_session:
+            raise
+
+
+def final_artifact_manifest(root, run_id, excluded_refs=()):
     root = Path(root).resolve(strict=True)
     run = root / ".ai-runs" / run_id
     artifacts = []
@@ -5022,7 +5686,12 @@ def final_artifact_manifest(root, run_id):
         if not path.is_file():
             continue
         relative = path.relative_to(run).as_posix()
-        if relative.startswith(".state/") or relative in ("artifact-manifest.json", "run.json", "claim-input.json"):
+        reference = path.relative_to(root).as_posix()
+        if (
+            relative.startswith(".state/")
+            or relative in ("artifact-manifest.json", "run.json", "claim-input.json")
+            or reference in excluded_refs
+        ):
             continue
         kind = artifact_kind_for(path)
         if kind is None:
@@ -5052,6 +5721,17 @@ def verify_finalized_run(root, run_id):
         _path, run_index = read_exact_run_json(root, run_id, ("run.json",), "ai/schemas/run.schema.json")
         if run_index is None:
             raise InvalidStateError([validation_error("FINALIZED_RUN_MISSING", message="finalized run.json is missing")])
+        _session_path, session = read_exact_run_json(
+            root, run_id, (".state", "run-session.json"), "ai/schemas/run-session.schema.json",
+        )
+        if session is None:
+            raise InvalidStateError([validation_error(
+                "FINALIZATION_RECEIPT_MISSING", message="retained finalized session is missing",
+            )])
+        journal = read_finalization_journal(
+            root, run_id, session.get("finalizationJournalIdentity"),
+        )
+        claim_input_ref = journal["claimInputRef"]
         _manifest_path, manifest = read_exact_run_json(root, run_id, ("artifact-manifest.json",), "ai/schemas/artifact-manifest.schema.json")
         if manifest is None:
             raise InvalidStateError([validation_error("ARTIFACT_MANIFEST_MISSING", message="artifact manifest is missing")])
@@ -5067,11 +5747,30 @@ def verify_finalized_run(root, run_id):
             if not path.is_file():
                 continue
             relative = path.relative_to(run).as_posix()
-            if relative in ("artifact-manifest.json", "run.json", "claim-input.json"):
+            reference = path.relative_to(root).as_posix()
+            if (
+                relative.startswith(".state/")
+                or relative in ("artifact-manifest.json", "run.json", "claim-input.json")
+                or reference == claim_input_ref
+            ):
                 continue
-            actual.add(path.relative_to(root).as_posix())
+            actual.add(reference)
         if set(manifest_paths) != actual:
             raise InvalidStateError([validation_error("FINALIZED_DIRECTORY_CLOSURE_MISMATCH", message="finalized directory closure mismatches manifest")])
+        _claim_path, claim = read_exact_run_json(
+            root, run_id, ("done-claim.json",), "ai/schemas/done-claim.schema.json",
+        )
+        if claim is None:
+            raise InvalidStateError([validation_error("FINAL_DONE_CLAIM_MISSING", message="final done claim is missing")])
+        _gate_path, gate = read_exact_run_json(
+            root, run_id, ("gate-results", "pre-done-claim.json"), "ai/schemas/gateway-result.schema.json",
+        )
+        if gate is None:
+            raise InvalidStateError([validation_error("FINAL_GATE_RESULT_MISSING", message="final gate result is missing")])
+        validate_final_run_projection(
+            root, run_index, claim, gate, manifest, session,
+            expected_run_id=run_id, journal=journal,
+        )
         data = {
             "runId": run_id,
             "taskKey": run_index["taskKey"],
@@ -5091,6 +5790,234 @@ def verify_finalized_run(root, run_id):
         return publish_result(root, gateway_result("INVALID_STATE", "VERIFY_FINALIZED_FAILED", operation="PRE_DONE_CLAIM"), 5)
 
 
+def finalization_recovery_result(root, run_id, state, action):
+    return publish_result(root, gateway_result(
+        "PASS", None,
+        {"runId": run_id, "state": state, "action": action},
+        operation="FINALIZATION_RECOVERY",
+    ), 0)
+
+
+def read_or_publish_final_json(root, run_id, components, expected, schema_path):
+    _root, path, exists = secure_run_artifact_path(
+        root, run_id, components, create_parents=True,
+    )
+    if exists:
+        actual = read_json(path)
+        validate(root, actual, schema_path)
+        if actual != expected:
+            raise InvalidStateError([validation_error(
+                "FINALIZATION_PARTIAL_ARTIFACT_MISMATCH",
+                message="partial finalization artifact contradicts the sealed receipt",
+            )])
+        make_read_only(path)
+        return actual
+    publish_final_json(root, path, expected, schema_path)
+    return expected
+
+
+def validate_recovery_manifest(root, run_id, manifest, excluded_refs=()):
+    run = Path(root).resolve(strict=True) / ".ai-runs" / run_id
+    manifest_paths = {artifact["path"]: artifact for artifact in manifest["artifacts"]}
+    for reference, artifact in manifest_paths.items():
+        path = Path(root).resolve(strict=True) / reference
+        if not path.is_file():
+            raise InvalidStateError([validation_error(
+                "MANIFEST_ARTIFACT_MISSING", message="manifest artifact is missing",
+            )])
+        if digest(path) != artifact["sha256"] or path.stat().st_size != artifact["size"]:
+            raise InvalidStateError([validation_error(
+                "ARTIFACT_DIGEST_MISMATCH", message="manifest digest or size mismatch",
+            )])
+    actual = set()
+    for path in run.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(run).as_posix()
+        reference = path.relative_to(root).as_posix()
+        if (
+            relative.startswith(".state/")
+            or relative in ("artifact-manifest.json", "run.json", "claim-input.json")
+            or reference in excluded_refs
+        ):
+            continue
+        actual.add(path.relative_to(Path(root).resolve(strict=True)).as_posix())
+    if set(manifest_paths) != actual:
+        raise InvalidStateError([validation_error(
+            "FINALIZED_DIRECTORY_CLOSURE_MISMATCH",
+            message="finalized directory closure mismatches manifest",
+        )])
+
+
+def resume_sealed_finalization(root, run_id, session, journal, acquired):
+    receipt = session["finalizationReceipt"]
+    snapshot = receipt["preReceiptSession"]
+    claim_path = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "done-claim.json"
+    if claim_path.exists():
+        claim = read_json(claim_path)
+    else:
+        claim = read_json(done_claim_source_path(root, run_id, journal["claimInputRef"]))
+    validate(root, claim, "ai/schemas/done-claim.schema.json")
+    gate_identity = receipt["gateIdentity"]
+    gate = gate_result_artifact(
+        root, run_id, gate_identity["result"], gate_identity["reason"],
+    )
+    if gate["result"] == "PASS":
+        gate["data"]["taskKey"] = snapshot["taskKey"]
+    validate_finalization_receipt_anchor(root, session, claim, gate, run_id, journal=journal)
+    _root, manifest_path, manifest_exists = secure_run_artifact_path(
+        root, run_id, ("artifact-manifest.json",), create_parents=True,
+    )
+    manifest = None
+    if manifest_exists:
+        manifest = read_json(manifest_path)
+        validate(root, manifest, "ai/schemas/artifact-manifest.schema.json")
+        make_read_only(manifest_path)
+    read_or_publish_final_json(
+        root, run_id, ("done-claim.json",), claim, "ai/schemas/done-claim.schema.json",
+    )
+    read_or_publish_final_json(
+        root, run_id, ("gate-results", "pre-done-claim.json"), gate,
+        "ai/schemas/gateway-result.schema.json",
+    )
+    validate_evidence_closure(root, snapshot, include_final_refs={
+        f".ai-runs/{run_id}/done-claim.json",
+        f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
+    }, exclude_refs={journal["claimInputRef"]})
+    if manifest is None:
+        manifest = final_artifact_manifest(root, run_id, {journal["claimInputRef"]})
+        publish_final_json(
+            root, manifest_path, manifest, "ai/schemas/artifact-manifest.schema.json",
+        )
+    validate_recovery_manifest(root, run_id, manifest, {journal["claimInputRef"]})
+    projection = receipt["runProjection"]
+    validate_final_run_projection(
+        root, projection, claim, gate, manifest, session,
+        expected_run_id=run_id, journal=journal,
+    )
+    validate_held_run_lock(root, run_id, acquired)
+    publish_finalized_run(root, projection)
+    make_finalization_files_read_only(
+        root, session, journal, require_final_artifacts=True,
+    )
+
+
+def recover_finalization(root, run_id):
+    root = Path(root).resolve()
+    preflight, preflight_status = run_current_preflight(root)
+    if preflight_status != 0:
+        return publish_result(root, gateway_result(
+            preflight["result"], preflight["reason"], operation="FINALIZATION_RECOVERY",
+            errors=preflight["errors"],
+        ), preflight_status)
+    acquired = None
+
+    def recovery_required():
+        evidence = validation_error(
+            "FINALIZATION_RECOVERY_REQUIRED",
+            message="independent finalization authority is invalid or recovery is uncertain",
+        )
+        return publish_result(root, gateway_result(
+            "BLOCKED", evidence["code"], operation="FINALIZATION_RECOVERY", errors=[evidence],
+        ), 2)
+
+    try:
+        validate_run_start_inputs(run_id, "finalization-recovery")
+        acquired = acquire_run_lock(root, run_id, purpose="finalization-recovery")
+        session = read_locked_run_session(root, run_id, acquired)
+        _root, _run_path, run_exists = secure_run_artifact_path(root, run_id, ("run.json",))
+        legacy_journal_path = legacy_finalization_journal_path(root, run_id)
+        if legacy_journal_path.exists() or legacy_journal_path.is_symlink():
+            return recovery_required()
+        if session["state"] == "OPEN":
+            return finalization_recovery_result(root, run_id, "OPEN", "ALREADY_OPEN")
+        try:
+            journal = read_finalization_journal(
+                root, run_id, session.get("finalizationJournalIdentity"),
+            )
+        except (InvalidStateError, OSError, KeyError, TypeError, ValueError):
+            return recovery_required()
+        if run_exists:
+            verified, status = verify_finalized_run(root, run_id)
+            if status != 0:
+                return recovery_required()
+            make_finalization_files_read_only(
+                root, session, journal, require_final_artifacts=True,
+            )
+            return finalization_recovery_result(
+                root, run_id, "FINALIZED", "ALREADY_FINALIZED",
+            )
+        if session["state"] == "FINALIZING":
+            if not session_matches_journal_projection(session, journal["finalizingSession"]):
+                return recovery_required()
+            original = json.loads(json.dumps(journal["sourceOpenSession"]))
+            original["lockRecoveries"] = json.loads(json.dumps(session["lockRecoveries"]))
+            rollback_finalization(
+                root, original, finalization_artifact_refs(run_id), acquired,
+                expected_current_session=session, journal=journal,
+            )
+            return finalization_recovery_result(root, run_id, "OPEN", "ROLLED_BACK")
+        try:
+            validate_receipt_journal_binding(session, journal)
+        except (InvalidStateError, RegistryBlockedError, KeyError, TypeError, ValueError):
+            return recovery_required()
+        original = json.loads(json.dumps(journal["sourceOpenSession"]))
+        original["lockRecoveries"] = json.loads(json.dumps(session["lockRecoveries"]))
+        try:
+            resume_sealed_finalization(root, run_id, session, journal, acquired)
+        except (EvidenceWriteUncertainty, RuntimeError):
+            return recovery_required()
+        except (InvalidStateError, TypeError, ValueError):
+            try:
+                rollback_finalization(
+                    root, original, finalization_artifact_refs(run_id), acquired,
+                    expected_current_session=session, journal=journal,
+                )
+            except (EvidenceWriteUncertainty, RuntimeError, InvalidStateError, RegistryBlockedError, OSError):
+                return recovery_required()
+            return finalization_recovery_result(root, run_id, "OPEN", "ROLLED_BACK")
+        return finalization_recovery_result(root, run_id, "FINALIZED", "RESUMED")
+    except RegistryBlockedError as error:
+        return publish_result(root, gateway_result(
+            "BLOCKED", error.errors[0]["code"], operation="FINALIZATION_RECOVERY", errors=error.errors,
+        ), 2)
+    except InvalidStateError:
+        return recovery_required()
+    except (EvidenceWriteUncertainty, RuntimeError):
+        return recovery_required()
+    except (OSError, KeyError, TypeError, ValueError):
+        return publish_result(root, gateway_result(
+            "INVALID_STATE", "FINALIZATION_RECOVERY_FAILED", operation="FINALIZATION_RECOVERY",
+        ), 5)
+    finally:
+        if acquired is not None:
+            try:
+                validate_held_run_lock(root, run_id, acquired)
+                _root, retained_path, retained_exists = secure_run_artifact_path(
+                    root, run_id, (".state", "run-session.json"),
+                )
+                retained = read_json(retained_path) if retained_exists else None
+                if isinstance(retained, dict) and retained.get("state") == "FINALIZED":
+                    make_read_only(retained_path)
+                    identity = retained.get("finalizationJournalIdentity")
+                    if isinstance(identity, dict):
+                        retained_journal_path = finalization_journal_path(
+                            root, run_id, identity.get("journalId"),
+                        )
+                        expected_reference = finalization_journal_reference(
+                            run_id, identity.get("journalId"),
+                        )
+                        if (
+                            identity.get("path") == expected_reference
+                            and retained_journal_path.exists()
+                            and retained_journal_path.is_file()
+                        ):
+                            make_read_only(retained_journal_path)
+            except Exception:
+                pass
+            release_run_lock(acquired)
+
+
 def prepare_done_claim(root, run_id, claim_ref):
     root = Path(root).resolve()
     preflight, preflight_status = run_current_preflight(root)
@@ -5099,6 +6026,90 @@ def prepare_done_claim(root, run_id, claim_ref):
             preflight["result"], preflight["reason"], operation="PRE_DONE_CLAIM", errors=preflight["errors"],
         ), preflight_status)
     acquired = None
+    original_session = None
+    rollback_session = None
+    finalization_started = False
+    journal = None
+
+    def recovery_required_result():
+        error = validation_error(
+            "FINALIZATION_RECOVERY_REQUIRED",
+            message="finalization state requires explicit recovery",
+        )
+        return publish_result(root, gateway_result(
+            "BLOCKED", error["code"], operation="PRE_DONE_CLAIM", errors=[error],
+        ), 2)
+
+    def rollback_or_recovery_required():
+        if not finalization_started:
+            return None
+        try:
+            rollback_finalization(
+                root,
+                original_session,
+                finalization_artifact_refs(run_id),
+                acquired,
+                expected_current_session=rollback_session,
+                journal=journal,
+            )
+        except Exception:
+            return recovery_required_result()
+        return None
+
+    def reconcile_prepare_uncertainty():
+        if finalization_started:
+            recovery = rollback_or_recovery_required()
+            if recovery is not None:
+                return recovery
+            return publish_result(root, gateway_result(
+                "INVALID_STATE", "PRE_DONE_CLAIM_FAILED", operation="PRE_DONE_CLAIM",
+            ), 5)
+        if acquired is None or original_session is None:
+            return recovery_required_result()
+        try:
+            current_session = read_locked_run_session(root, run_id, acquired)
+            if current_session == original_session:
+                retained_journal = None
+            else:
+                retained_journal = journal
+                if retained_journal is None:
+                    retained_journal = read_finalization_journal(
+                        root, run_id, current_session.get("finalizationJournalIdentity"),
+                    )
+                validate_finalization_journal(
+                    root, retained_journal, run_id,
+                    source_session=original_session, claim_input_ref=claim_ref,
+                    journal_identity=current_session.get("finalizationJournalIdentity"),
+                )
+            if current_session != original_session and retained_journal is not None and (
+                session_matches_journal_projection(
+                    current_session, retained_journal["finalizingSession"],
+                )
+                or (
+                    current_session.get("state") == "FINALIZED"
+                    and isinstance(current_session.get("finalizationReceipt"), dict)
+                    and session_matches_journal_projection(
+                        current_session["finalizationReceipt"]["preReceiptSession"],
+                        retained_journal["finalizingSession"],
+                    )
+                )
+            ):
+                rollback_source = json.loads(json.dumps(retained_journal["sourceOpenSession"]))
+                rollback_source["lockRecoveries"] = json.loads(json.dumps(
+                    current_session["lockRecoveries"],
+                ))
+                rollback_finalization(
+                    root, rollback_source, finalization_artifact_refs(run_id), acquired,
+                    expected_current_session=current_session, journal=retained_journal,
+                )
+            elif current_session != original_session:
+                return recovery_required_result()
+        except Exception:
+            return recovery_required_result()
+        return publish_result(root, gateway_result(
+            "INVALID_STATE", "PRE_DONE_CLAIM_FAILED", operation="PRE_DONE_CLAIM",
+        ), 5)
+
     try:
         validate_run_start_inputs(run_id, "done-claim")
         session = active_open_session(root, run_id)
@@ -5107,29 +6118,94 @@ def prepare_done_claim(root, run_id, claim_ref):
         validate_held_run_lock(root, run_id, acquired)
         session = resume_immutable_publications(root, session, acquired)
         require_no_reserved_attempts(session)
-        replacement = json.loads(json.dumps(session))
-        replacement["state"] = "FINALIZING"
-        replace_run_session(root, root / replacement["$id"], replacement, acquired, expected_session=session)
-        session = replacement
+        original_session = json.loads(json.dumps(session))
+        replacement = expected_finalizing_session(original_session)
 
         source = done_claim_source_path(root, run_id, claim_ref)
         claim = read_json(source)
         validate(root, claim, "ai/schemas/done-claim.schema.json")
         require_generated_summaries_current(root)
-        validate_evidence_closure(root, session)
-        result, reason = done_claim_semantic_result(root, session, claim)
+        validate_evidence_closure(root, replacement, exclude_refs={claim_ref})
+        result, reason = done_claim_semantic_result(root, replacement, claim)
         status = done_claim_exit_for(result)
-        gate = publish_done_gate_manifest_run(root, session, claim, result, reason)
+        gate = gate_result_artifact(root, run_id, result, reason)
+        if result == "PASS":
+            gate["data"]["taskKey"] = replacement["taskKey"]
+        run_projection = final_run_projection(replacement, result, reason, utc_now())
+        journal = ensure_finalization_journal(
+            root, original_session, replacement, claim_ref,
+        )
+        replacement = json.loads(json.dumps(journal["finalizingSession"]))
+        try:
+            replace_run_session(
+                root, root / replacement["$id"], replacement, acquired, expected_session=original_session,
+            )
+        except Exception:
+            try:
+                current_session = read_locked_run_session(root, run_id, acquired)
+            except Exception:
+                return recovery_required_result()
+            if current_session == replacement:
+                finalization_started = True
+                rollback_session = replacement
+            elif current_session == original_session:
+                pass
+            else:
+                return recovery_required_result()
+            raise
+        finalization_started = True
+        session = replacement
+        rollback_session = replacement
+
+        sealed_session = sealed_finalization_session(
+            root, session, journal, run_projection, claim, gate,
+        )
+        try:
+            replace_run_session(
+                root,
+                root / sealed_session["$id"],
+                sealed_session,
+                acquired,
+                expected_session=session,
+            )
+        except Exception:
+            try:
+                current_session = read_locked_run_session(root, run_id, acquired)
+            except Exception:
+                return recovery_required_result()
+            if current_session == sealed_session:
+                rollback_session = sealed_session
+            elif current_session != session:
+                return recovery_required_result()
+            raise
+        session = sealed_session
+        rollback_session = sealed_session
+        gate = publish_done_gate_manifest_run(
+            root, session, journal, claim, gate,
+            session["finalizationReceipt"]["runProjection"],
+            journal["claimInputRef"],
+        )
         return publish_result(root, gate, status)
     except RegistryBlockedError as error:
+        recovery = rollback_or_recovery_required()
+        if recovery is not None:
+            return recovery
         return publish_result(root, gateway_result(
             "BLOCKED", error.errors[0]["code"], operation="PRE_DONE_CLAIM", errors=error.errors,
         ), 2)
     except InvalidStateError as error:
+        recovery = rollback_or_recovery_required()
+        if recovery is not None:
+            return recovery
         return publish_result(root, gateway_result(
             "INVALID_STATE", error.errors[0]["code"], operation="PRE_DONE_CLAIM", errors=error.errors,
         ), 5)
+    except (EvidenceWriteUncertainty, RuntimeError):
+        return reconcile_prepare_uncertainty()
     except (OSError, TypeError, ValueError) as error:
+        recovery = rollback_or_recovery_required()
+        if recovery is not None:
+            return recovery
         return publish_result(root, gateway_result(
             "INVALID_STATE", "PRE_DONE_CLAIM_FAILED", operation="PRE_DONE_CLAIM",
         ), 5)
@@ -5378,6 +6454,10 @@ def run_verify_finalized_cli(arguments):
     return verify_finalized_run(arguments.repository_root, arguments.run_id)
 
 
+def run_finalization_recovery_cli(arguments):
+    return recover_finalization(arguments.repository_root, arguments.run_id)
+
+
 def add_command_arguments(parser):
     parser.add_argument("--repository-root", required=True)
     parser.add_argument("--run-id", required=True)
@@ -5395,6 +6475,7 @@ def invalid_cli_result(operation):
         "post-command": ("POST_COMMAND", "INVALID_POST_COMMAND_ARGUMENTS"),
         "done-claim-prepare": ("PRE_DONE_CLAIM", "INVALID_DONE_CLAIM_ARGUMENTS"),
         "verify-finalized": ("PRE_DONE_CLAIM", "INVALID_VERIFY_FINALIZED_ARGUMENTS"),
+        "finalization-recover": ("FINALIZATION_RECOVERY", "INVALID_FINALIZATION_RECOVERY_ARGUMENTS"),
         "verification-gate": ("VERIFICATION_GATE", "INVALID_VERIFICATION_GATE_ARGUMENTS"),
         "native-adapter-gate": ("NATIVE_ADAPTER_GATE", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS"),
     }
@@ -5487,10 +6568,373 @@ def command_discovery_update_proposals(registry):
     return proposals
 
 
+REQUIRED_SKILL_IDS = {
+    "repo-intake",
+    "command-runner",
+    "verification-runner",
+    "api-smoke-verifier",
+    "failure-triage",
+    "docs-sync",
+    "review-gate",
+}
+
+
+def cache_entry_identity(entry):
+    key = entry["key"]
+    if entry["kind"] == "VERIFICATION_DECISION":
+        return (
+            key["taskKey"],
+            key["gateInvocationId"],
+            key["commitSha"],
+            key["changeType"],
+            key["entryPoint"],
+            key["policySha256"],
+            tuple(
+                (
+                    item["checkId"],
+                    item["producerId"],
+                    item["leafResultRef"],
+                    item["leafResultSha256"],
+                    item["evidence"]["path"],
+                    item["evidence"]["sha256"],
+                    item["evidence"]["schema"],
+                )
+                for item in key["checkBindings"]
+            ),
+            key["environmentFingerprint"],
+            key["expiresAt"],
+        )
+    return (
+        tuple(sorted((item["path"], item["sha256"]) for item in key["paths"])),
+        key["environmentFingerprint"],
+    )
+
+
+def validate_skill_catalog_semantics(catalog):
+    ids = [skill["id"] for skill in catalog["skills"]]
+    if len(ids) != len(set(ids)) or set(ids) != REQUIRED_SKILL_IDS:
+        raise InvalidStateError([validation_error(
+            "SKILL_CATALOG_ID_SET_INVALID",
+            message="skill catalog must contain every required skill ID exactly once",
+        )])
+
+
+def validate_handoff_skill_set(handoff, catalog):
+    expected = {skill["id"] for skill in catalog["skills"]}
+    actual = handoff["skillIds"]
+    if len(actual) != len(set(actual)) or set(actual) != expected:
+        raise InvalidStateError([validation_error(
+            "HANDOFF_REQUIRED_SKILL_MISSING",
+            message="handoff must contain every catalog skill ID exactly once",
+        )])
+
+
+def verification_cache_evidence_schema(check):
+    return (
+        "ai/schemas/native-runtime-adapters.schema.json"
+        if check["id"] == "native-runtime-adapter"
+        else check["evidenceSchema"]
+    )
+
+
+def verification_cache_checks(policy, change_type, entry_point):
+    changes = {item["id"]: item for item in policy.get("changeTypes", [])}
+    checks = {item["id"]: item for item in policy.get("checks", [])}
+    change = changes.get(change_type)
+    if change is None or entry_point not in change.get("entryPoints", []):
+        return None
+    selected_ids = list(dict.fromkeys(
+        change.get("requiredChecks", []) + change.get("optionalChecks", [])
+    ))
+    selected = []
+    for check_id in selected_ids:
+        check = checks.get(check_id)
+        if check is None:
+            return None
+        selected.append({
+            "checkId": check_id,
+            "producerId": check["producerId"],
+            "evidenceSchema": verification_cache_evidence_schema(check),
+        })
+    return selected or None
+
+
+def verification_cache_file(root, reference, reader):
+    if (
+        not isinstance(reference, str)
+        or VERIFICATION_REPOSITORY_PATH.fullmatch(reference) is None
+    ):
+        raise ValueError("cache binding path is unsafe")
+    path = resolve_repository_file(root, reference)
+    encoded, value = reader(path)
+    return encoded, value
+
+
+def verification_cache_path_unavailable(error):
+    return bool(error.errors) and all(
+        item.get("code") in {"PATH_OUTSIDE_REPOSITORY", "PATH_NOT_FILE"}
+        for item in error.errors
+    )
+
+
+def validate_verification_cache_binding(root, binding, expected, key):
+    stale_reasons = []
+    uncertain_reasons = []
+    if not isinstance(binding, dict):
+        return ["Cache check binding is malformed."], []
+    if binding.get("checkId") != expected["checkId"]:
+        stale_reasons.append("Cache check order or identity changed.")
+    if binding.get("producerId") != expected["producerId"]:
+        stale_reasons.append("Cache check producer changed.")
+
+    leaf_ref = binding.get("leafResultRef")
+    is_native = expected["checkId"] == NATIVE_ADAPTER_CHECK_ID
+    if is_native and leaf_ref != "ai/native-adapter-result.json":
+        stale_reasons.append("Cache native leaf result reference changed.")
+    leaf_value = None
+    leaf_bytes = None
+    try:
+        leaf_bytes, leaf_value = verification_cache_file(
+            root, leaf_ref, read_verification_leaf_result,
+        )
+    except InvalidStateError as error:
+        if verification_cache_path_unavailable(error):
+            uncertain_reasons.append("Cache leaf result is missing, unmapped, or unavailable.")
+        else:
+            stale_reasons.append("Cache leaf result content is invalid.")
+    except (OSError, TypeError, ValueError):
+        uncertain_reasons.append("Cache leaf result is missing, unmapped, or unavailable.")
+    else:
+        if hashlib.sha256(leaf_bytes).hexdigest() != binding.get("leafResultSha256"):
+            stale_reasons.append("Cache leaf result digest changed.")
+        expected_leaf_schema = (
+            "ai/schemas/native-adapter-result.schema.json"
+            if expected["checkId"] == NATIVE_ADAPTER_CHECK_ID
+            else "ai/schemas/verification-leaf-result.schema.json"
+        )
+        try:
+            validate(root, leaf_value, expected_leaf_schema)
+        except InvalidStateError:
+            stale_reasons.append("Cache leaf result schema validation failed.")
+        else:
+            if is_native:
+                if leaf_value.get("$id") != "ai/native-adapter-result.json":
+                    stale_reasons.append("Cache native leaf identity changed.")
+            else:
+                correlations = {
+                    "$id": leaf_ref,
+                    "checkId": expected["checkId"],
+                    "producerId": expected["producerId"],
+                    "commitSha": key.get("commitSha"),
+                    "policySha256": key.get("policySha256"),
+                }
+                for field in ("taskKey", "gateInvocationId"):
+                    value = key.get(field)
+                    if isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value):
+                        correlations[field] = value
+                if any(leaf_value.get(field) != value for field, value in correlations.items()):
+                    stale_reasons.append("Cache leaf result correlation changed.")
+                try:
+                    produced_at = parse_rfc3339_timestamp(leaf_value["producedAt"])[0]
+                    leaf_expires_at = parse_rfc3339_timestamp(leaf_value["expiresAt"])[0]
+                except (KeyError, TypeError, ValueError):
+                    stale_reasons.append("Cache leaf result freshness is invalid.")
+                else:
+                    now = dt.datetime.now(dt.timezone.utc)
+                    if (
+                        not produced_at <= now <= leaf_expires_at
+                        or leaf_expires_at - produced_at > VERIFICATION_LEAF_MAX_AGE
+                    ):
+                        stale_reasons.append("Cache leaf result expired.")
+
+    evidence = binding.get("evidence")
+    if not isinstance(evidence, dict):
+        stale_reasons.append("Cache evidence binding is missing.")
+        return stale_reasons, uncertain_reasons
+    if evidence.get("schema") != expected["evidenceSchema"]:
+        stale_reasons.append("Cache evidence schema changed.")
+    if is_native and evidence.get("path") != "ai/native-runtime-adapters.json":
+        stale_reasons.append("Cache native evidence reference changed.")
+    if leaf_value is not None:
+        if not is_native:
+            leaf_evidence = leaf_value.get("evidence")
+            expected_evidence = None if not isinstance(leaf_evidence, dict) else {
+                "path": leaf_evidence.get("ref"),
+                "sha256": leaf_evidence.get("sha256"),
+                "schema": leaf_evidence.get("schema"),
+            }
+        if not is_native and evidence != expected_evidence:
+            stale_reasons.append("Cache evidence is not bound to its leaf result.")
+
+    try:
+        evidence_bytes, evidence_value = verification_cache_file(
+            root, evidence.get("path"), read_verification_leaf_evidence,
+        )
+    except InvalidStateError as error:
+        if verification_cache_path_unavailable(error):
+            uncertain_reasons.append("Cache evidence path is missing, unmapped, or unavailable.")
+        else:
+            stale_reasons.append("Cache evidence content is invalid.")
+    except (OSError, TypeError, ValueError):
+        uncertain_reasons.append("Cache evidence path is missing, unmapped, or unavailable.")
+    else:
+        if hashlib.sha256(evidence_bytes).hexdigest() != evidence.get("sha256"):
+            stale_reasons.append("Cache evidence digest changed.")
+        if evidence.get("schema") == expected["evidenceSchema"]:
+            try:
+                validate(root, evidence_value, expected["evidenceSchema"])
+            except InvalidStateError:
+                stale_reasons.append("Cache evidence schema validation failed.")
+    if is_native:
+        uncertain_reasons.append(
+            "Cache native result has no durable task, gate, commit, policy, and freshness envelope."
+        )
+    return stale_reasons, uncertain_reasons
+
+
+def load_verification_cache_policy(root):
+    policy_path = resolve_repository_file(root, "ai/verification-policy.json")
+    encoded, policy = read_bounded_verification_json(
+        policy_path,
+        MAX_PARAMETER_FILE_BYTES,
+        "VERIFICATION_CACHE_POLICY_TOO_LARGE",
+        "verification cache policy exceeds the bounded read limit",
+    )
+    validate(root, policy, "ai/schemas/verification-policy.schema.json")
+    return policy, hashlib.sha256(encoded).hexdigest()
+
+
+def verification_cache_invalidation(root, entry, policy, policy_sha256, commit_sha):
+    key = entry.get("key", {})
+    stale_reasons = []
+    uncertain_reasons = []
+    if not all(
+        isinstance(key.get(field), str)
+        and NATIVE_ADAPTER_IDENTIFIER.fullmatch(key[field])
+        for field in ("taskKey", "gateInvocationId")
+    ):
+        uncertain_reasons.append("Cache task or gate correlation is missing or unmapped.")
+
+    expected_checks = (
+        verification_cache_checks(policy, key.get("changeType"), key.get("entryPoint"))
+        if policy is not None
+        else None
+    )
+    if policy is None:
+        uncertain_reasons.append("Current verification cache policy is unavailable.")
+    elif expected_checks is None:
+        uncertain_reasons.append("Cache change type or entry point is missing or unmapped.")
+        bindings = key.get("checkBindings", [])
+        policy_checks = {
+            item["id"]: {
+                "checkId": item["id"],
+                "producerId": item["producerId"],
+                "evidenceSchema": verification_cache_evidence_schema(item),
+            }
+            for item in policy.get("checks", [])
+        }
+        if isinstance(bindings, list):
+            for binding in bindings:
+                check_id = binding.get("checkId") if isinstance(binding, dict) else None
+                expected = policy_checks.get(check_id)
+                if expected is None:
+                    uncertain_reasons.append("Cache check binding is unmapped.")
+                    continue
+                binding_stale, binding_uncertain = validate_verification_cache_binding(
+                    root, binding, expected, key,
+                )
+                stale_reasons.extend(binding_stale)
+                uncertain_reasons.extend(binding_uncertain)
+    else:
+        bindings = key.get("checkBindings")
+        expected_identity = [
+            (item["checkId"], item["producerId"])
+            for item in expected_checks
+        ]
+        if not isinstance(bindings, list):
+            stale_reasons.append("Cache full check binding set is missing.")
+            bindings = []
+        actual_identity = [
+            (item.get("checkId"), item.get("producerId"))
+            if isinstance(item, dict) else None
+            for item in bindings
+        ]
+        if actual_identity != expected_identity:
+            stale_reasons.append("Cache consumed check set or order changed.")
+        expected_evidence_refs = [
+            item.get("evidence", {}).get("path")
+            if isinstance(item, dict) and isinstance(item.get("evidence"), dict)
+            else None
+            for item in bindings
+        ]
+        if entry.get("evidenceRefs") != expected_evidence_refs:
+            stale_reasons.append("Cache evidence references do not match check bindings.")
+        for index, binding in enumerate(bindings):
+            if index >= len(expected_checks):
+                stale_reasons.append("Cache contains an extra check binding.")
+                continue
+            binding_stale, binding_uncertain = validate_verification_cache_binding(
+                root, binding, expected_checks[index], key,
+            )
+            stale_reasons.extend(binding_stale)
+            uncertain_reasons.extend(binding_uncertain)
+    if key.get("environmentFingerprint") is not None:
+        uncertain_reasons.append("Cache environment fingerprint has no authoritative current mapping.")
+    if commit_sha is None:
+        uncertain_reasons.append("Current repository commit is unavailable.")
+    elif key.get("commitSha") != commit_sha:
+        stale_reasons.append("Cache commit changed.")
+    if policy_sha256 is None:
+        if policy is not None:
+            uncertain_reasons.append("Current verification policy digest is unavailable.")
+    elif key.get("policySha256") != policy_sha256:
+        stale_reasons.append("Cache verification policy digest changed.")
+
+    try:
+        expires_at = parse_rfc3339_timestamp(key["expiresAt"])[0]
+    except (KeyError, TypeError, ValueError):
+        uncertain_reasons.append("Cache expiry is missing or unmapped.")
+    else:
+        if dt.datetime.now(dt.timezone.utc) > expires_at:
+            stale_reasons.append("Cache decision expired.")
+
+    if stale_reasons:
+        return "STALE", " ".join(stale_reasons + uncertain_reasons)
+    if uncertain_reasons:
+        return "UNCERTAIN", " ".join(uncertain_reasons)
+    return "FRESH", "All verification cache identity inputs match."
+
+
 def cache_invalidation_report(root, workflow_cache):
     repository_root = Path(root).resolve(strict=True)
     report = []
+    verification_entries = [
+        entry for entry in workflow_cache.get("entries", [])
+        if entry.get("kind") == "VERIFICATION_DECISION"
+    ]
+    policy = None
+    policy_sha256 = None
+    commit_sha = None
+    if verification_entries:
+        try:
+            policy, policy_sha256 = load_verification_cache_policy(root)
+        except (InvalidStateError, OSError, TypeError, ValueError):
+            pass
+        try:
+            commit_sha = repository_commit_sha(root)
+        except (InvalidStateError, VerificationNotConfiguredError, OSError, TypeError, ValueError):
+            pass
     for entry in workflow_cache.get("entries", []):
+        if entry.get("kind") == "VERIFICATION_DECISION":
+            entry_status, reason = verification_cache_invalidation(
+                root, entry, policy, policy_sha256, commit_sha,
+            )
+            report.append({
+                "entryId": entry["id"],
+                "status": entry_status,
+                "reason": reason,
+            })
+            continue
         entry_status = "FRESH"
         reason = "All cache key paths match recorded digests."
         for item in entry.get("key", {}).get("paths", []):
@@ -5532,6 +6976,10 @@ def repo_intake(root):
         workflow_cache = validate_repository_instance(root, root / "ai" / "workflow-cache.json")
         project_state = validate_repository_instance(root, root / "ai" / "project-state.json")
         registry = validate_repository_instance(root, root / "ai" / "command-registry.json")
+        skill_catalog = validate_repository_instance(root, root / "ai" / "skill-catalog.json")
+        validate_skill_catalog_semantics(skill_catalog)
+        handoff = validate_repository_instance(root, root / "ai" / "agent-handoff.json")
+        validate_handoff_skill_set(handoff, skill_catalog)
         validate_context_map_paths(root, context)
         data = {
             "contextMapRef": "ai/context-map.json",
@@ -5605,49 +7053,168 @@ def publish_verification_gate_result(root, result, status):
 
 
 NATIVE_ADAPTER_CHECK_ID = "native-runtime-adapter"
+VERIFICATION_LEAF_MAX_AGE = dt.timedelta(minutes=5)
+MAX_VERIFICATION_LEAF_EVIDENCE_BYTES = MAX_PARAMETER_FILE_BYTES
+VERIFICATION_REPOSITORY_PATH = re.compile(
+    r"(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)(?![\s\S]*\\)(?![\s\S]*(?:^|/)\.\.(?:/|$)).+\Z"
+)
 
 
-def load_verification_leaf_results(root, leaf_results_ref):
-    if leaf_results_ref is None:
-        return {}
-    repository_root = Path(root).resolve(strict=True)
+def repository_commit_sha(root):
     try:
-        relative = Path(leaf_results_ref)
-        if relative.is_absolute() or any(part in ("", ".", "..") for part in relative.parts):
-            raise ValueError("invalid leaf result path")
-        path = (repository_root / relative).resolve(strict=True)
-        path.relative_to(repository_root)
-        payload = read_json(path)
-        results = payload.get("results")
-        if not isinstance(results, list):
-            raise ValueError("leaf results must contain results array")
-        if any(
+        completed = subprocess.run(
+            ["git", "-C", str(Path(root).resolve()), "rev-parse", "HEAD"],
+            shell=False,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise VerificationNotConfiguredError([validation_error(
+            "VERIFICATION_REPOSITORY_COMMIT_NOT_CONFIGURED",
+            message="the checked-out repository commit is unavailable",
+        )]) from error
+    matched = (
+        re.fullmatch(r"([a-f0-9]{40})(?:\r?\n)?", completed.stdout)
+        if isinstance(completed.stdout, str)
+        else None
+    )
+    if matched is None:
+        raise VerificationNotConfiguredError([validation_error(
+            "VERIFICATION_REPOSITORY_COMMIT_NOT_CONFIGURED",
+            message="the checked-out repository commit is malformed",
+        )])
+    return matched.group(1)
+
+
+def read_bounded_verification_json(path, max_bytes, too_large_code, too_large_message):
+    with path.open("rb") as handle:
+        encoded = handle.read(max_bytes + 1)
+    if len(encoded) > max_bytes:
+        raise InvalidStateError([validation_error(
+            too_large_code,
+            message=too_large_message,
+        )])
+    try:
+        value = json.loads(
+            encoded.decode("utf-8", errors="strict"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_non_finite_number,
+        )
+    except DuplicateJsonKey as error:
+        raise InvalidStateError([validation_error(
+            "DUPLICATE_JSON_KEY",
+            message="duplicate JSON object key is forbidden",
+        )]) from error
+    except NonFiniteJsonNumber as error:
+        raise InvalidStateError([validation_error(
+            "NON_FINITE_JSON_NUMBER",
+            message=f"non-finite JSON number is forbidden: {error}",
+        )]) from error
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise InvalidStateError([validation_error(
+            "MALFORMED_JSON", message="input is not valid UTF-8 JSON",
+        )]) from error
+    return encoded, value
+
+
+def deep_freeze(value):
+    if isinstance(value, Mapping):
+        return MappingProxyType({
+            key: deep_freeze(item)
+            for key, item in value.items()
+        })
+    if isinstance(value, (list, tuple)):
+        return tuple(deep_freeze(item) for item in value)
+    return value
+
+
+def load_verification_policy_snapshot(root):
+    policy_path = resolve_repository_file(root, "ai/verification-policy.json")
+    encoded, policy = read_bounded_verification_json(
+        policy_path,
+        MAX_PARAMETER_FILE_BYTES,
+        "VERIFICATION_POLICY_TOO_LARGE",
+        "verification policy exceeds the bounded read limit",
+    )
+    if not isinstance(policy, dict):
+        raise InvalidStateError([validation_error(
+            "INVALID_INSTANCE_ROOT",
+            message="workflow JSON root must be an object",
+        )])
+    validate(root, policy, "ai/schemas/verification-policy.schema.json")
+    return deep_freeze(policy), hashlib.sha256(encoded).hexdigest()
+
+
+def read_verification_leaf_evidence(path):
+    return read_bounded_verification_json(
+        path,
+        MAX_VERIFICATION_LEAF_EVIDENCE_BYTES,
+        "VERIFICATION_LEAF_EVIDENCE_TOO_LARGE",
+        "verification leaf evidence exceeds the bounded read limit",
+    )
+
+
+def read_verification_leaf_result(path):
+    return read_bounded_verification_json(
+        path,
+        MAX_VERIFICATION_LEAF_EVIDENCE_BYTES,
+        "VERIFICATION_LEAF_RESULT_TOO_LARGE",
+        "verification leaf result exceeds the bounded read limit",
+    )
+
+
+def verification_leaf_references(root, refs_file):
+    try:
+        payload = read_json(resolve_repository_file(root, refs_file))
+        if not isinstance(payload, dict):
+            raise ValueError("leaf result references must be an object")
+
+        legacy_results = payload.get("results")
+        if isinstance(legacy_results, list) and any(
             isinstance(item, dict) and item.get("checkId") == NATIVE_ADAPTER_CHECK_ID
-            for item in results
+            for item in legacy_results
         ):
             raise InvalidStateError([validation_error(
                 "NATIVE_ADAPTER_LEAF_FORGED",
                 message="native runtime adapter leaf results are internal-only",
             )])
-        by_id = {}
-        for index, item in enumerate(results):
-            if not isinstance(item, dict):
-                raise ValueError("leaf result must be an object")
-            check_id = item.get("checkId")
-            raw_result = item.get("result")
-            if not isinstance(check_id, str) or raw_result not in (
-                "PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON",
+        if set(payload) != {"leafResultRefs"}:
+            raise ValueError("leaf result references have an invalid shape")
+
+        references = payload["leafResultRefs"]
+        if not isinstance(references, list) or len(references) != len(set(
+            item for item in references if isinstance(item, str)
+        )):
+            raise ValueError("leaf result references must be a unique array")
+        for reference in references:
+            if (
+                not isinstance(reference, str)
+                or VERIFICATION_REPOSITORY_PATH.fullmatch(reference) is None
+                or any(part in ("", ".", "..") for part in reference.split("/"))
             ):
-                raise ValueError("invalid leaf result")
-            if check_id in by_id:
-                raise ValueError("duplicate leaf result")
-            by_id[check_id] = {
-                "checkId": check_id,
-                "result": raw_result,
-                "evidenceRef": item.get("evidenceRef"),
-                "reason": item.get("reason"),
-            }
-        return by_id
+                raise ValueError("invalid leaf result reference")
+
+        loaded_leaves = []
+        for reference in references:
+            encoded, leaf = read_verification_leaf_result(
+                resolve_repository_file(root, reference),
+            )
+            loaded_leaves.append({
+                "reference": Path(reference).as_posix(),
+                "encoded": encoded,
+                "leaf": leaf,
+            })
+        if any(
+            isinstance(item["leaf"], dict)
+            and item["leaf"].get("checkId") == NATIVE_ADAPTER_CHECK_ID
+            for item in loaded_leaves
+        ):
+            raise InvalidStateError([validation_error(
+                "NATIVE_ADAPTER_LEAF_FORGED",
+                message="native runtime adapter leaf results are internal-only",
+            )])
+        return loaded_leaves
     except InvalidStateError:
         raise
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
@@ -5657,40 +7224,139 @@ def load_verification_leaf_results(root, leaf_results_ref):
         )]) from error
 
 
-def default_leaf_result_for_check(check_id, policy_check):
-    if check_id in ("review-gate", "done-claim-gate"):
-        return {
-            "checkId": check_id,
-            "result": "NOT_CONFIGURED",
-            "evidenceRef": None,
-            "reason": "Explicit Phase 2C review or done-claim leaf evidence was not provided.",
-        }
-    if policy_check.get("registryCommandId") is None:
-        return {
-            "checkId": check_id,
-            "result": "PASS",
-            "evidenceRef": "ai/verification-policy.json",
-            "reason": "Static Phase 2C gate input is satisfied by canonical policy and reviewable documents.",
-        }
+def verified_leaf_result(root, loaded_leaf, expected, policy_sha256):
+    reference = loaded_leaf["reference"]
+    encoded = loaded_leaf["encoded"]
+    leaf = loaded_leaf["leaf"]
+    validate(root, leaf, "ai/schemas/verification-leaf-result.schema.json")
+    if leaf["checkId"] == NATIVE_ADAPTER_CHECK_ID:
+        raise InvalidStateError([validation_error(
+            "NATIVE_ADAPTER_LEAF_FORGED",
+            message="native runtime adapter leaf results are internal-only",
+        )])
+    if leaf["$id"] != Path(reference).as_posix():
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_ID_MISMATCH",
+            message="verification leaf ID does not match its repository reference",
+        )])
+    if leaf["checkId"] != expected["checkId"]:
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_CORRELATION_MISMATCH",
+            message="verification leaf check identity does not match canonical policy",
+        )])
+    for field in ("taskKey", "gateInvocationId", "commitSha"):
+        if leaf[field] != expected[field]:
+            raise InvalidStateError([validation_error(
+                "VERIFICATION_LEAF_CORRELATION_MISMATCH",
+                message="verification leaf correlation does not match the current gate",
+            )])
+    if leaf["policySha256"] != policy_sha256:
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_POLICY_MISMATCH",
+            message="verification leaf policy digest does not match canonical policy",
+        )])
+    if leaf["producerId"] != expected["producerId"]:
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_PRODUCER_MISMATCH",
+            message="verification leaf producer does not match canonical policy",
+        )])
+
+    produced = parse_rfc3339_timestamp(leaf["producedAt"])[0]
+    expires = parse_rfc3339_timestamp(leaf["expiresAt"])[0]
+    now = dt.datetime.now(dt.timezone.utc)
+    if not produced <= now <= expires or expires - produced > VERIFICATION_LEAF_MAX_AGE:
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_STALE",
+            message="verification leaf is outside its bounded freshness window",
+        )])
+
+    evidence = leaf["evidence"]
+    if evidence is not None:
+        if evidence["schema"] != expected["evidenceSchema"]:
+            raise InvalidStateError([validation_error(
+                "VERIFICATION_LEAF_EVIDENCE_SCHEMA_MISMATCH",
+                message="verification leaf evidence schema does not match canonical policy",
+            )])
+        evidence_path = resolve_repository_file(root, evidence["ref"])
+        evidence_bytes, evidence_value = read_verification_leaf_evidence(evidence_path)
+        evidence_sha256 = hashlib.sha256(evidence_bytes).hexdigest()
+        validate(root, evidence_value, evidence["schema"])
+        if evidence_sha256 != evidence["sha256"]:
+            raise InvalidStateError([validation_error(
+                "VERIFICATION_LEAF_DIGEST_MISMATCH",
+                message="verification leaf evidence digest does not match",
+            )])
+    verified = dict(leaf)
+    verified["leafResultRef"] = reference
+    verified["leafResultSha256"] = hashlib.sha256(encoded).hexdigest()
+    return verified
+
+
+def verify_external_leaf(root, loaded_leaf, task_key, gate_invocation_id, commit_sha,
+                         policy, policy_sha256):
+    policy_checks = {check["id"]: check for check in policy["checks"]}
+    leaf = loaded_leaf["leaf"]
+    check_id = leaf.get("checkId") if isinstance(leaf, dict) else None
+    policy_check = policy_checks.get(check_id)
+    if policy_check is None:
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_LEAF_RESULTS_INVALID",
+            message="verification leaf check identity is unknown or duplicated",
+        )])
+    expected = {
+        "checkId": check_id,
+        "taskKey": task_key,
+        "gateInvocationId": gate_invocation_id,
+        "commitSha": commit_sha,
+        "producerId": policy_check["producerId"],
+        "evidenceSchema": policy_check["evidenceSchema"],
+    }
+    return verified_leaf_result(root, loaded_leaf, expected, policy_sha256)
+
+
+def load_verified_leaf_results(root, loaded_leaves, task_key, gate_invocation_id, commit_sha,
+                               policy, policy_sha256):
+    by_id = {}
+    for loaded_leaf in loaded_leaves:
+        leaf = loaded_leaf["leaf"]
+        check_id = leaf.get("checkId") if isinstance(leaf, dict) else None
+        if check_id in by_id:
+            raise InvalidStateError([validation_error(
+                "VERIFICATION_LEAF_RESULTS_INVALID",
+                message="verification leaf check identity is unknown or duplicated",
+            )])
+        by_id[check_id] = verify_external_leaf(
+            root,
+            loaded_leaf,
+            task_key,
+            gate_invocation_id,
+            commit_sha,
+            policy,
+            policy_sha256,
+        )
+    return by_id
+
+
+def default_leaf_result_for_check(check_id, _policy_check):
     return {
         "checkId": check_id,
         "result": "NOT_CONFIGURED",
         "evidenceRef": None,
-        "reason": "No leaf evidence was provided for this registry-backed check.",
+        "reason": "No verified leaf evidence was provided for this check.",
     }
 
 
-def map_verification_leaf(raw_result, required):
+def map_verification_leaf(raw_result, required, policy_allows_na):
+    if raw_result == "FAIL":
+        return "FAIL"
     if raw_result == "PASS":
         return "PASS"
-    if raw_result == "FAIL":
-        return "FAIL" if required else "NOT_APPLICABLE"
+    if raw_result == "NOT_APPLICABLE":
+        return "NOT_APPLICABLE" if policy_allows_na else "BLOCKED"
     if raw_result in ("BLOCKED", "NOT_CONFIGURED"):
         return "BLOCKED" if required else "NOT_APPLICABLE"
-    if raw_result == "NOT_APPLICABLE":
-        return "NOT_APPLICABLE"
     if raw_result == "SKIPPED_WITH_REASON":
-        return "SKIPPED_WITH_REASON" if not required else "BLOCKED"
+        return "BLOCKED" if required else "SKIPPED_WITH_REASON"
     return "BLOCKED"
 
 
@@ -5703,12 +7369,33 @@ def aggregate_verification_gate(mapped_checks):
     return "PASS"
 
 
+def verification_check_result(check_id, required, raw, mapped_result):
+    evidence = raw.get("evidence")
+    evidence_ref = raw.get("evidenceRef")
+    if evidence_ref is None and isinstance(evidence, dict):
+        evidence_ref = evidence.get("ref")
+    return {
+        "checkId": check_id,
+        "required": required,
+        "rawResult": raw["result"],
+        "mappedResult": mapped_result,
+        "reason": raw.get("reason"),
+        "evidenceRef": evidence_ref,
+        "leafResultRef": raw.get("leafResultRef"),
+        "leafResultSha256": raw.get("leafResultSha256"),
+        "producerId": raw.get("producerId"),
+        "commitSha": raw.get("commitSha"),
+        "policySha256": raw.get("policySha256"),
+    }
+
+
 NATIVE_ADAPTER_SURFACES = ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
 NATIVE_SUMMARY_MAX_BYTES = 512
 NATIVE_SNAPSHOT_MAX_AGE_SECONDS = 300
 NATIVE_JSON_SAFE_INTEGER = 9007199254740991
 NATIVE_CONSUMED_CHALLENGES = set()
 NATIVE_ADAPTER_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+NATIVE_KEY_FINGERPRINT = re.compile(r"[a-f0-9]{64}\Z")
 NATIVE_SEMVER = re.compile(
     r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
     r"(?:-(?:(?:0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -5727,6 +7414,25 @@ NATIVE_BASIC_CREDENTIAL = re.compile(r"\bbasic\s+\S+", re.IGNORECASE)
 NATIVE_BEARER_CREDENTIAL = re.compile(r"\bbearer\s+\S+", re.IGNORECASE)
 NATIVE_FORBIDDEN_RAW_CONTENT_LABEL = re.compile(r"\b(?:authorization|cookies?)\b", re.IGNORECASE)
 NATIVE_ALLOWED_BEARER_DOCUMENTATION = frozenset(("bearer token documentation",))
+NATIVE_RFC3339_TIMESTAMP = re.compile(
+    r"[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T"
+    r"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?Z\Z"
+)
+
+
+def native_deep_freeze(value):
+    return deep_freeze(value)
+
+
+@dataclass(frozen=True)
+class HostNativeTrust:
+    descriptor: Mapping
+    probe: Mapping
+    ledger_root: Path
+
+    def __post_init__(self):
+        object.__setattr__(self, "descriptor", native_deep_freeze(self.descriptor))
+        object.__setattr__(self, "probe", native_deep_freeze(self.probe))
 
 
 class NativeBypassContractError(ValueError):
@@ -5734,6 +7440,10 @@ class NativeBypassContractError(ValueError):
 
 
 class NativeBypassReferenceError(ValueError):
+    pass
+
+
+class NativeReplayError(ValueError):
     pass
 
 
@@ -5854,16 +7564,338 @@ def native_adapter_fixture_path(root, reference, *, canonical=False):
     return resolve_repository_file(root, normalized)
 
 
-def native_adapter_supported_host(policy):
-    current_host = policy["currentHost"]
-    if current_host["versionProvenance"] != "PROBED" or current_host["hostVersion"] is None:
+def native_semantic_error(code, instance_path, message):
+    raise InvalidStateError([
+        validation_error(code, instance_path=instance_path, message=message)
+    ])
+
+
+def validate_native_runtime_adapters_semantics(policy):
+    if policy.get("supportedHosts") != []:
+        native_semantic_error(
+            "REPOSITORY_NATIVE_TRUST_FORBIDDEN",
+            "/supportedHosts",
+            "repository policy cannot declare a supported host",
+        )
+    surfaces = policy.get("currentHost", {}).get("surfaces")
+    if (
+        not isinstance(surfaces, list)
+        or len(surfaces) != len(NATIVE_ADAPTER_SURFACES)
+        or {surface.get("surface") for surface in surfaces if isinstance(surface, dict)}
+        != set(NATIVE_ADAPTER_SURFACES)
+        or any(
+            not isinstance(surface, dict) or surface.get("status") != "UNSUPPORTED"
+            for surface in surfaces
+        )
+    ):
+        native_semantic_error(
+            "REPOSITORY_NATIVE_SURFACE_BASELINE_INVALID",
+            "/currentHost/surfaces",
+            "repository policy must retain exactly four unsupported host surfaces",
+        )
+
+
+def native_adapter_version_range_bounds(version_range):
+    match = re.fullmatch(r">=(\S+) <(\S+)", version_range) if isinstance(version_range, str) else None
+    if match is None:
+        raise ValueError("native adapter version range is invalid")
+    minimum, maximum = (native_semver_key(item) for item in match.groups())
+    if minimum >= maximum:
+        raise ValueError("native adapter version range must be increasing")
+    return minimum, maximum
+
+
+def validate_host_native_trust_descriptor(descriptor):
+    required = {
+        "$schema",
+        "schemaVersion",
+        "producerId",
+        "hostId",
+        "minimumHostVersion",
+        "adapterVersionRange",
+        "ed25519PublicKeyFingerprint",
+        "surfaces",
+    }
+    try:
+        valid = (
+            isinstance(descriptor, dict)
+            and set(descriptor) == required
+            and descriptor["$schema"] == "ai/schemas/host-native-trust.schema.json"
+            and descriptor["schemaVersion"] == 1
+            and all(
+                isinstance(descriptor[field], str)
+                and NATIVE_ADAPTER_IDENTIFIER.fullmatch(descriptor[field])
+                for field in ("producerId", "hostId")
+            )
+            and NATIVE_KEY_FINGERPRINT.fullmatch(descriptor["ed25519PublicKeyFingerprint"])
+            and isinstance(descriptor["surfaces"], list)
+            and len(descriptor["surfaces"]) == len(NATIVE_ADAPTER_SURFACES)
+            and set(descriptor["surfaces"]) == set(NATIVE_ADAPTER_SURFACES)
+        )
+        native_semver_key(descriptor["minimumHostVersion"])
+        native_adapter_version_range_bounds(descriptor["adapterVersionRange"])
+    except (KeyError, TypeError, ValueError):
+        valid = False
+    if not valid:
+        native_semantic_error(
+            "HOST_NATIVE_TRUST_DESCRIPTOR_INVALID",
+            "",
+            "host-native trust descriptor violates the compiled trust contract",
+        )
+
+
+def validate_host_native_trust_probe(probe):
+    required = {"hostId", "hostVersion", "versionProvenance", "producerId", "observedAt"}
+    try:
+        valid = (
+            isinstance(probe, dict)
+            and set(probe) == required
+            and all(
+                isinstance(probe[field], str)
+                and NATIVE_ADAPTER_IDENTIFIER.fullmatch(probe[field])
+                for field in ("hostId", "producerId")
+            )
+            and probe["versionProvenance"] == "PROBED"
+            and isinstance(probe["observedAt"], str)
+            and NATIVE_RFC3339_TIMESTAMP.fullmatch(probe["observedAt"])
+        )
+        native_semver_key(probe["hostVersion"])
+        parse_rfc3339_timestamp(probe["observedAt"])
+    except (KeyError, TypeError, ValueError):
+        valid = False
+    if not valid:
+        native_semantic_error(
+            "HOST_NATIVE_TRUST_PROBE_INVALID",
+            "",
+            "authoritative host probe violates the compiled trust contract",
+        )
+
+
+def resolve_external_host_trust_path(repository_root, path, *, directory):
+    repository_root = Path(repository_root).resolve(strict=True)
+    candidate = Path(os.path.abspath(os.fspath(path)))
+    try:
+        if any(item.is_symlink() for item in (candidate, *candidate.parents)):
+            raise ValueError("host trust paths cannot contain symlinks")
+        resolved = candidate.resolve(strict=True)
+        try:
+            resolved.relative_to(repository_root)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("host trust paths must be outside the repository")
+        if directory and not resolved.is_dir():
+            raise ValueError("host trust ledger root must be a directory")
+        if not directory and not resolved.is_file():
+            raise ValueError("host trust document must be a regular file")
+        return resolved
+    except OSError as error:
+        raise ValueError("host trust path is unavailable") from error
+
+
+def native_safe_ledger_backend_supported():
+    return (
+        os.name == "posix"
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "geteuid")
+        and os.open in os.supports_dir_fd
+        and os.unlink in os.supports_dir_fd
+    )
+
+
+def secure_host_ledger_directory(ledger_root, filename):
+    if not isinstance(filename, str) or re.fullmatch(r"[a-f0-9]{64}\.json", filename) is None:
+        raise ValueError("host ledger record name is invalid")
+    candidate = Path(os.path.abspath(os.fspath(ledger_root)))
+    try:
+        if any(item.is_symlink() for item in (candidate, *candidate.parents)):
+            raise ValueError("host ledger paths cannot contain symlinks")
+        resolved_root = candidate.resolve(strict=True)
+        if not resolved_root.is_dir():
+            raise ValueError("host ledger root must be a directory")
+        metadata = resolved_root.stat()
+        if os.name != "nt":
+            if metadata.st_uid != os.geteuid():
+                raise PermissionError("host ledger root must be owned by the evaluator user")
+            if stat.S_IMODE(metadata.st_mode) != 0o700:
+                raise PermissionError("host ledger root permissions must be owner-only")
+    except OSError as error:
+        raise ValueError("host ledger root is unavailable") from error
+    return resolved_root, metadata
+
+
+def validate_pinned_native_ledger_directory(metadata, expected):
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_dev != expected.st_dev
+        or metadata.st_ino != expected.st_ino
+    ):
+        raise OSError("host ledger directory identity changed while it was being pinned")
+    if os.name != "nt":
+        if metadata.st_uid != os.geteuid():
+            raise PermissionError("pinned host ledger directory owner is invalid")
+        if stat.S_IMODE(metadata.st_mode) != 0o700:
+            raise PermissionError("pinned host ledger directory permissions are invalid")
+
+
+def validate_native_ledger_record(metadata):
+    if not stat.S_ISREG(metadata.st_mode):
+        raise OSError("native attestation ledger record is not a regular file")
+    if os.name != "nt":
+        if metadata.st_uid != os.geteuid():
+            raise PermissionError("native attestation ledger record owner is invalid")
+        if stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise PermissionError("native attestation ledger record permissions are invalid")
+
+
+def cleanup_native_attestation_record(directory_descriptor, filename, record_descriptor):
+    cleanup_errors = []
+    if record_descriptor is not None:
+        try:
+            os.close(record_descriptor)
+        except OSError as error:
+            cleanup_errors.append(error)
+    try:
+        os.unlink(filename, dir_fd=directory_descriptor)
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        cleanup_errors.append(error)
+    try:
+        os.fsync(directory_descriptor)
+    except OSError as error:
+        cleanup_errors.append(error)
+    if cleanup_errors:
+        raise OSError("native attestation ledger cleanup is uncertain") from cleanup_errors[0]
+
+
+def consume_native_attestation(ledger_root: Path, identity: dict) -> None:
+    required = {
+        "repositorySha256",
+        "producerId",
+        "taskKey",
+        "gateInvocationId",
+        "attestationId",
+        "nonce",
+        "eventSetSha256",
+    }
+    if (
+        not isinstance(identity, dict)
+        or set(identity) != required
+        or any(not isinstance(value, str) or not value for value in identity.values())
+        or NATIVE_KEY_FINGERPRINT.fullmatch(identity["repositorySha256"]) is None
+        or NATIVE_KEY_FINGERPRINT.fullmatch(identity["eventSetSha256"]) is None
+        or any(
+            NATIVE_ADAPTER_IDENTIFIER.fullmatch(identity[field]) is None
+            for field in ("producerId", "taskKey", "gateInvocationId", "nonce")
+        )
+    ):
+        raise ValueError("native attestation ledger identity is invalid")
+    canonical = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    key = hashlib.sha256(canonical).hexdigest()
+    filename = f"{key}.json"
+    if not native_safe_ledger_backend_supported():
+        raise OSError(errno.ENOTSUP, "safe handle-relative host ledger backend is unavailable")
+    directory, expected_metadata = secure_host_ledger_directory(ledger_root, filename)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    directory_descriptor = os.open(str(directory), directory_flags)
+    record_descriptor = None
+    created = False
+    try:
+        validate_pinned_native_ledger_directory(
+            os.fstat(directory_descriptor), expected_metadata,
+        )
+        record_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        record_flags |= getattr(os, "O_CLOEXEC", 0)
+        try:
+            record_descriptor = os.open(
+                filename,
+                record_flags,
+                0o600,
+                dir_fd=directory_descriptor,
+            )
+        except FileExistsError as error:
+            raise NativeReplayError("NATIVE_ADAPTER_CHALLENGE_REPLAYED") from error
+        created = True
+        try:
+            validate_native_ledger_record(os.fstat(record_descriptor))
+            remaining = memoryview(canonical)
+            while remaining:
+                written = os.write(record_descriptor, remaining)
+                if written <= 0:
+                    raise OSError("native attestation ledger write made no progress")
+                remaining = remaining[written:]
+            os.fsync(record_descriptor)
+            os.close(record_descriptor)
+            record_descriptor = None
+            os.fsync(directory_descriptor)
+        except Exception:
+            cleanup_native_attestation_record(
+                directory_descriptor, filename, record_descriptor,
+            )
+            record_descriptor = None
+            created = False
+            raise
+    finally:
+        try:
+            os.close(directory_descriptor)
+        except OSError:
+            if created:
+                raise OSError("native attestation ledger directory close is uncertain")
+            raise
+
+
+def load_host_native_trust(repository_root, descriptor_path, probe_path, ledger_root) -> HostNativeTrust:
+    descriptor_file = resolve_external_host_trust_path(
+        repository_root, descriptor_path, directory=False,
+    )
+    probe_file = resolve_external_host_trust_path(
+        repository_root, probe_path, directory=False,
+    )
+    resolved_ledger_root = resolve_external_host_trust_path(
+        repository_root, ledger_root, directory=True,
+    )
+    descriptor = read_json(descriptor_file)
+    probe = read_json(probe_file)
+    validate(repository_root, descriptor, "ai/schemas/host-native-trust.schema.json")
+    validate_host_native_trust_probe(probe)
+    if (
+        probe["producerId"] != descriptor["producerId"]
+        or probe["hostId"] != descriptor["hostId"]
+    ):
+        native_semantic_error(
+            "HOST_NATIVE_TRUST_IDENTITY_MISMATCH",
+            "",
+            "authoritative probe identity must match its host trust descriptor",
+        )
+    return HostNativeTrust(descriptor, probe, resolved_ledger_root)
+
+
+def native_host_baseline_surfaces(descriptor):
+    return [
+        {
+            "surface": surface,
+            "status": "NOT_CONFIGURED",
+            "reasonCode": "ADAPTER_CONFIGURATION_REQUIRED",
+        }
+        for surface in descriptor["surfaces"]
+    ]
+
+
+def native_adapter_supported_host(policy, host_trust=None):
+    if host_trust is None:
         return None
-    current_version = native_semver_key(current_host["hostVersion"])
-    for supported_host in policy["supportedHosts"]:
-        minimum_version = native_semver_key(supported_host["minimumHostVersion"])
-        if supported_host["hostId"] == current_host["hostId"] and current_version >= minimum_version:
-            return supported_host
-    return None
+    probe = host_trust.probe
+    descriptor = host_trust.descriptor
+    if probe["versionProvenance"] != "PROBED":
+        return None
+    if probe["hostId"] != descriptor["hostId"]:
+        return None
+    if native_semver_key(probe["hostVersion"]) < native_semver_key(descriptor["minimumHostVersion"]):
+        return None
+    return descriptor
 
 
 def native_semver_key(version):
@@ -5900,7 +7932,7 @@ def load_native_bypass_attempts(root, bypass_attempts_ref, task_key, gate_invoca
             if not isinstance(attempt, dict):
                 raise ValueError("native bypass attempt must be an object")
             validate(root, attempt, "ai/schemas/native-bypass-attempt.schema.json")
-            if attempt["taskKey"] != task_key:
+            if attempt["taskKey"] != task_key and attempt["lifecycle"] != "RESOLVED":
                 raise ValueError("native bypass attempt task does not match this gate")
             if attempt["gateInvocationId"] != gate_invocation_id and attempt["lifecycle"] != "DETECTED":
                 raise ValueError("native bypass attempt resolution does not match this gate")
@@ -5945,14 +7977,38 @@ def native_bypass_event_set_facts(attempts):
     return len(attempts), hashlib.sha256(canonical).hexdigest()
 
 
+def native_detection_digest(detection):
+    payload = {
+        key: value for key, value in detection.items()
+        if key not in {
+            "resolvedAt", "resolutionReason", "detectionEventId",
+            "detectionGateInvocationId", "detectionEventSha256",
+        }
+    }
+    return hashlib.sha256(json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+
+
 def native_bypass_lifecycle_state(attempts, gate_invocation_id):
+    if any(
+        attempt["lifecycle"] == "DETECTED"
+        and attempt["gateInvocationId"] == gate_invocation_id
+        for attempt in attempts
+    ):
+        return "UNRESOLVED", []
+
     groups = {}
     for attempt in attempts:
         groups.setdefault(attempt["deduplicationKey"], []).append(attempt)
 
     resolved_transition = False
     resolution_event_ids = []
-    for attempts_in_group in groups.values():
+    unresolved_detection = False
+    for deduplication_key, attempts_in_group in groups.items():
         detections = [
             attempt for attempt in attempts_in_group
             if attempt["lifecycle"] == "DETECTED"
@@ -5967,30 +8023,32 @@ def native_bypass_lifecycle_state(attempts, gate_invocation_id):
             if attempt["lifecycle"] == "RESOLVED" and attempt["gateInvocationId"] == gate_invocation_id
         ]
         if current_resolutions:
-            if any(
-                not any(
-                    detection["gateInvocationId"] != gate_invocation_id
+            matched_detection_indexes = set()
+            for resolution in current_resolutions:
+                matching_indexes = [
+                    index for index, detection in enumerate(detections)
+                    if detection["eventId"] == resolution["detectionEventId"]
+                    and detection["taskKey"] == resolution["taskKey"]
+                    and detection["gateInvocationId"] == resolution["detectionGateInvocationId"]
+                    and detection["deduplicationKey"] == deduplication_key
+                    and native_detection_digest(detection) == resolution["detectionEventSha256"]
                     and parse_rfc3339_timestamp(detection["observedAt"])
                     < parse_rfc3339_timestamp(resolution["observedAt"])
-                    for detection in detections
-                )
-                for resolution in current_resolutions
-            ):
-                return "INVALID_RESOLUTION", []
-            if any(
-                parse_rfc3339_timestamp(detection["observedAt"])
-                >= parse_rfc3339_timestamp(resolution["observedAt"])
-                for detection in detections
-                for resolution in current_resolutions
-            ):
-                return "UNRESOLVED", []
+                ]
+                if len(matching_indexes) != 1:
+                    return "INVALID_RESOLUTION", []
+                matched_detection_indexes.add(matching_indexes[0])
+            if len(matched_detection_indexes) != len(detections):
+                unresolved_detection = True
             resolved_transition = True
             resolution_event_ids.extend(
                 resolution["eventId"] for resolution in current_resolutions
             )
             continue
         if detections:
-            return "UNRESOLVED", []
+            unresolved_detection = True
+    if unresolved_detection:
+        return "UNRESOLVED", []
     return ("RESOLVED_TRANSITION" if resolved_transition else None), resolution_event_ids
 
 
@@ -6082,8 +8140,40 @@ def native_snapshot_freshness_reason(observed_at):
     return None
 
 
-def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, task_key, gate_invocation_id):
-    baseline_surfaces = supported_host["surfaces"]
+def consume_trusted_native_snapshot(root, snapshot, supported_host, task_key,
+                                    gate_invocation_id, ledger_root):
+    challenge_key = (
+        str(Path(root).resolve()),
+        supported_host["producerId"],
+        task_key,
+        gate_invocation_id,
+    )
+    resolved_ledger_root = resolve_external_host_trust_path(
+        root, ledger_root, directory=True,
+    )
+    repository_identity = os.path.normcase(str(Path(root).resolve(strict=True))).encode("utf-8")
+    identity = {
+        "repositorySha256": hashlib.sha256(repository_identity).hexdigest(),
+        "producerId": snapshot["producerId"],
+        "taskKey": snapshot["taskKey"],
+        "gateInvocationId": snapshot["gateInvocationId"],
+        "attestationId": snapshot["$id"],
+        "nonce": snapshot["gateInvocationId"],
+        "eventSetSha256": snapshot["bypassEventSetSha256"],
+    }
+    try:
+        consume_native_attestation(resolved_ledger_root, identity)
+    except NativeReplayError:
+        return "NATIVE_ADAPTER_CHALLENGE_REPLAYED"
+    if challenge_key in NATIVE_CONSUMED_CHALLENGES:
+        return "NATIVE_ADAPTER_CHALLENGE_REPLAYED"
+    NATIVE_CONSUMED_CHALLENGES.add(challenge_key)
+    return None
+
+
+def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, task_key,
+                                  gate_invocation_id, ledger_root):
+    baseline_surfaces = native_host_baseline_surfaces(supported_host)
     try:
         validate(root, snapshot, "ai/schemas/native-runtime-snapshot.schema.json")
         native_snapshot_canonical_bytes(snapshot)
@@ -6145,15 +8235,6 @@ def native_runtime_snapshot_trust(root, snapshot, supported_host, current_host, 
     ):
         return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CALLBACK_FAILED"
 
-    challenge_key = (
-        str(Path(root).resolve()),
-        supported_host["producerId"],
-        task_key,
-        gate_invocation_id,
-    )
-    if challenge_key in NATIVE_CONSUMED_CHALLENGES:
-        return claimed_surfaces, baseline_surfaces, "NATIVE_ADAPTER_CHALLENGE_REPLAYED"
-    NATIVE_CONSUMED_CHALLENGES.add(challenge_key)
     return claimed_surfaces, claimed_surfaces, None
 
 
@@ -6169,17 +8250,20 @@ def native_unsupported_runtime_snapshot_contract(snapshot):
 
 
 def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref=None, bypass_attempts_ref=None,
-                        policy_ref="ai/native-runtime-adapters.json"):
+                        policy_ref="ai/native-runtime-adapters.json",
+                        host_trust: "HostNativeTrust | None" = None):
     root = Path(root).resolve()
     fallback_data = native_adapter_fallback_data()
     try:
         policy_path = native_adapter_fixture_path(root, policy_ref, canonical=True)
         policy = validate_repository_instance(root, policy_path)
-        current_host = policy["currentHost"]
-        supported_host = native_adapter_supported_host(policy)
+        supported_host = native_adapter_supported_host(policy, host_trust)
+        current_host = host_trust.probe if supported_host is not None else policy["currentHost"]
         repository_only_qualification = supported_host is None
         baseline_surfaces = (
-            current_host["surfaces"] if supported_host is None else supported_host["surfaces"]
+            current_host["surfaces"]
+            if supported_host is None
+            else native_host_baseline_surfaces(supported_host)
         )
         fallback_data = native_adapter_data(
             current_host,
@@ -6259,6 +8343,7 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                     current_host,
                     task_key,
                     gate_invocation_id,
+                    host_trust.ledger_root,
                 )
                 snapshot_data = native_adapter_data(
                     current_host,
@@ -6316,6 +8401,27 @@ def native_adapter_gate(root, task_key, gate_invocation_id, runtime_snapshot_ref
                 native_adapter_gate_result("BLOCKED", resolution_binding_reason, snapshot_data),
                 2,
             )
+        replay_reason = consume_trusted_native_snapshot(
+            root,
+            snapshot,
+            supported_host,
+            task_key,
+            gate_invocation_id,
+            host_trust.ledger_root,
+        )
+        if replay_reason is not None:
+            replay_data = native_adapter_data(
+                current_host,
+                snapshot_claimed_surfaces,
+                baseline_surfaces,
+                attempt_refs,
+                False,
+            )
+            return publish_native_adapter_gate_result(
+                root,
+                native_adapter_gate_result("BLOCKED", replay_reason, replay_data),
+                2,
+            )
         return publish_native_adapter_gate_result(
             root, native_adapter_gate_result("PASS", None, snapshot_data), 0,
         )
@@ -6337,7 +8443,7 @@ def run_native_adapter_gate_cli(arguments):
     if not isinstance(arguments.repository_root, str) or not arguments.repository_root or not all(
         isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
         for value in (arguments.task_key, arguments.gate_invocation_id)
-    ) or any(value == "" for value in (arguments.runtime_snapshot, arguments.bypass_attempts) if value is not None):
+    ):
         result, status = invalid_cli_result("native-adapter-gate")
         print(compact(result))
         return result, status
@@ -6352,8 +8458,7 @@ def run_native_adapter_gate_cli(arguments):
         root,
         arguments.task_key,
         arguments.gate_invocation_id,
-        arguments.runtime_snapshot,
-        arguments.bypass_attempts,
+        host_trust=None,
     )
     output_status = write_resolve_output(root, arguments.output, result)
     if output_status != 0:
@@ -6368,7 +8473,8 @@ def run_native_adapter_gate_cli(arguments):
 
 
 def native_adapter_phase2c_leaf(root, task_key, gate_invocation_id, runtime_snapshot_ref=None,
-                                bypass_attempts_ref=None):
+                                bypass_attempts_ref=None, verification_policy=None,
+                                policy_sha256=None):
     adapter_result, _ = native_adapter_gate(
         root,
         task_key,
@@ -6376,17 +8482,266 @@ def native_adapter_phase2c_leaf(root, task_key, gate_invocation_id, runtime_snap
         runtime_snapshot_ref,
         bypass_attempts_ref,
     )
-    return {
+    leaf = {
         "checkId": NATIVE_ADAPTER_CHECK_ID,
         "result": adapter_result["phase2cLeafResult"],
         "evidenceRef": "ai/native-runtime-adapters.json",
+        "leafResultRef": adapter_result["$id"],
+        "leafResultSha256": hashlib.sha256(compact(adapter_result).encode("utf-8")).hexdigest(),
+        "producerId": NATIVE_ADAPTER_CHECK_ID,
         "reason": adapter_result["reason"],
+    }
+    if (verification_policy is None) != (policy_sha256 is None):
+        raise InvalidStateError([validation_error(
+            "VERIFICATION_POLICY_IDENTITY_INVALID",
+            message="verification policy value and digest must be supplied together",
+        )])
+    if verification_policy is not None:
+        policy_checks = {
+            check["id"]: check
+            for check in verification_policy["checks"]
+        }
+        native_policy_check = policy_checks.get(NATIVE_ADAPTER_CHECK_ID)
+        if native_policy_check is None:
+            raise InvalidStateError([validation_error(
+                "VERIFICATION_POLICY_CHECK_INVALID",
+                message="verification policy does not define the internal native check",
+            )])
+        leaf["producerId"] = native_policy_check["producerId"]
+        leaf["policySha256"] = policy_sha256
+    return leaf
+
+
+
+
+CI_DURABLE_REQUIRED_BINDINGS = [
+    "repository", "workflowRef", "workflowSha", "commitSha", "eventName",
+    "workflowRunId", "attempt", "jobId", "artifactId", "artifactDigest",
+    "artifactMembers", "taskKey", "gateInvocationId", "nativeAdapterStatusDigest",
+    "bypassEventSetSha256", "resolutionEventIds",
+]
+
+CI_EXPECTED_REPOSITORY = "116Lv/sparta-ch6-advanced"
+CI_EXPECTED_WORKFLOW_REF = (
+    "116Lv/sparta-ch6-advanced/.github/workflows/"
+    "phase-3b-ci-gates.yml@refs/heads/main"
+)
+
+
+@dataclass(frozen=True)
+class GitHubTrustedRunContext:
+    """Immutable current-run facts supplied by a future external verifier."""
+
+    repository: str
+    workflow_ref: str
+    workflow_sha: str
+    head_sha: str
+    event_name: str
+    run_id: int
+    run_attempt: int
+    job_id: str
+    artifact_id: int
+    artifact_digest: str
+    artifact_members: tuple
+    task_key: str
+    gate_invocation_id: str
+    native_evidence_sha256: str
+    bypass_event_set_sha256: str
+    resolution_event_ids: tuple
+    signer_repository: str
+
+
+def ci_provenance_error(code, message):
+    raise InvalidStateError([validation_error(code, message=message)])
+
+
+def ci_artifact_member_parts(reference):
+    if not isinstance(reference, str) or not reference or "\\" in reference:
+        ci_provenance_error("CI_ARTIFACT_MEMBER_PATH_INVALID", "artifact member path is invalid")
+    candidate = Path(reference)
+    parts = candidate.parts
+    if candidate.is_absolute() or not parts or any(part in ("", ".", "..") for part in parts):
+        ci_provenance_error("CI_ARTIFACT_MEMBER_PATH_INVALID", "artifact member path is invalid")
+    return parts
+
+
+def read_ci_artifact_member_posix(repository_root, parts):
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(str(repository_root), directory_flags)
+    try:
+        for component in parts[:-1]:
+            child = os.open(component, directory_flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        file_descriptor = os.open(parts[-1], file_flags, dir_fd=descriptor)
+        try:
+            if not stat.S_ISREG(os.fstat(file_descriptor).st_mode):
+                raise OSError("artifact member is not a regular file")
+            chunks = []
+            while True:
+                chunk = os.read(file_descriptor, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            os.close(file_descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def ci_safe_artifact_backend_supported():
+    return (
+        os.name == "posix"
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+        and os.open in os.supports_dir_fd
+    )
+
+
+def read_ci_artifact_member(repository_root, reference):
+    repository_root = Path(repository_root).resolve(strict=True)
+    parts = ci_artifact_member_parts(reference)
+    if not ci_safe_artifact_backend_supported():
+        ci_provenance_error(
+            "CI_ARTIFACT_MEMBER_BACKEND_UNAVAILABLE",
+            "safe handle-relative artifact member reads are unavailable",
+        )
+    try:
+        return read_ci_artifact_member_posix(repository_root, parts)
+    except OSError as error:
+        ci_provenance_error(
+            "CI_ARTIFACT_MEMBER_UNSAFE",
+            "artifact member could not be read through a pinned regular-file identity",
+        )
+        raise AssertionError("unreachable") from error
+
+
+def github_provenance_identity(provenance):
+    return {
+        "repository": provenance["repository"],
+        "workflowRef": provenance["workflowRef"],
+        "workflowSha": provenance["workflowSha"],
+        "headSha": provenance["headSha"],
+        "eventName": provenance["eventName"],
+        "runId": provenance["runId"],
+        "runAttempt": provenance["runAttempt"],
+        "jobId": provenance["jobId"],
+        "artifactId": provenance["artifactId"],
+        "artifactDigest": provenance["artifactDigest"],
+        "signerRepository": provenance["attestation"]["signerRepository"],
     }
 
 
+def verify_github_ci_provenance(root, provenance, retained_run, artifact_refs,
+                                trusted_context, unittest_member_reader=None):
+    if not isinstance(trusted_context, GitHubTrustedRunContext):
+        ci_provenance_error(
+            "CI_TRUSTED_RUN_CONTEXT_INVALID",
+            "external verifier current-run context is required",
+        )
+    try:
+        snapshot = json.loads(compact(provenance))
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        ci_provenance_error("CI_GITHUB_PROVENANCE_INVALID", "GitHub provenance is not finite JSON data")
+        raise AssertionError("unreachable") from error
+    if not isinstance(snapshot, dict):
+        ci_provenance_error("CI_GITHUB_PROVENANCE_INVALID", "GitHub provenance must be an object")
+    if (
+        trusted_context.repository != CI_EXPECTED_REPOSITORY
+        or trusted_context.workflow_ref != CI_EXPECTED_WORKFLOW_REF
+        or trusted_context.signer_repository != CI_EXPECTED_REPOSITORY
+        or not isinstance(trusted_context.artifact_members, tuple)
+        or not isinstance(trusted_context.resolution_event_ids, tuple)
+        or any(
+            not isinstance(member, tuple)
+            or len(member) != 2
+            or not all(isinstance(value, str) for value in member)
+            for member in trusted_context.artifact_members
+        )
+    ):
+        ci_provenance_error(
+            "CI_TRUSTED_RUN_CONTEXT_INVALID",
+            "external verifier current-run context violates the compiled contract",
+        )
+    attestation = snapshot.get("attestation")
+    if not isinstance(attestation, dict) or attestation.get("verified") is not True:
+        ci_provenance_error("CI_ATTESTATION_UNVERIFIED", "artifact attestation is not externally verified")
+    if attestation.get("subjectDigest") != snapshot.get("artifactDigest"):
+        ci_provenance_error("CI_ARTIFACT_ATTESTATION_MISMATCH", "attestation subject does not bind the artifact digest")
+    if attestation.get("signerRepository") != trusted_context.signer_repository:
+        ci_provenance_error("CI_ATTESTATION_SIGNER_MISMATCH", "attestation signer repository is unexpected")
 
-
-CI_GATE_CHECK_ID = "phase-3b-ci-gates"
+    expected_provenance = {
+        "repository": trusted_context.repository,
+        "workflowRef": trusted_context.workflow_ref,
+        "workflowSha": trusted_context.workflow_sha,
+        "headSha": trusted_context.head_sha,
+        "eventName": trusted_context.event_name,
+        "runId": trusted_context.run_id,
+        "runAttempt": trusted_context.run_attempt,
+        "jobId": trusted_context.job_id,
+        "artifactId": trusted_context.artifact_id,
+        "artifactDigest": trusted_context.artifact_digest,
+        "taskKey": trusted_context.task_key,
+        "gateInvocationId": trusted_context.gate_invocation_id,
+        "nativeEvidenceSha256": trusted_context.native_evidence_sha256,
+        "bypassEventSetSha256": trusted_context.bypass_event_set_sha256,
+        "resolutionEventIds": list(trusted_context.resolution_event_ids),
+    }
+    members = snapshot.get("members")
+    expected_members = [
+        {"path": path, "sha256": sha256}
+        for path, sha256 in trusted_context.artifact_members
+    ]
+    if (
+        any(snapshot.get(field) != value for field, value in expected_provenance.items())
+        or members != expected_members
+    ):
+        ci_provenance_error(
+            "CI_GITHUB_PROVENANCE_MISMATCH",
+            "GitHub provenance does not match external current-run context",
+        )
+    validate(root, snapshot, "ai/schemas/github-ci-provenance.schema.json")
+    expected_retained_run = {
+        "repository": trusted_context.repository,
+        "workflowRef": trusted_context.workflow_ref,
+        "workflowSha": trusted_context.workflow_sha,
+        "commitSha": trusted_context.head_sha,
+        "eventName": trusted_context.event_name,
+        "workflowRunId": trusted_context.run_id,
+        "attempt": trusted_context.run_attempt,
+        "jobId": trusted_context.job_id,
+        "artifactId": trusted_context.artifact_id,
+        "artifactDigest": trusted_context.artifact_digest,
+        "artifactMembers": expected_members,
+        "taskKey": trusted_context.task_key,
+        "gateInvocationId": trusted_context.gate_invocation_id,
+        "nativeAdapterStatusDigest": trusted_context.native_evidence_sha256,
+        "bypassEventSetSha256": trusted_context.bypass_event_set_sha256,
+        "resolutionEventIds": list(trusted_context.resolution_event_ids),
+    }
+    if retained_run != expected_retained_run or artifact_refs != [
+        member["path"] for member in expected_members
+    ]:
+        ci_provenance_error(
+            "CI_GITHUB_PROVENANCE_MISMATCH",
+            "retained run claim does not match external current-run context",
+        )
+    member_reader = read_ci_artifact_member if unittest_member_reader is None else unittest_member_reader
+    for member in members:
+        try:
+            member_bytes = member_reader(root, member["path"])
+        except OSError:
+            ci_provenance_error("CI_ARTIFACT_MEMBER_UNSAFE", "artifact member is unavailable or unsafe")
+        if not isinstance(member_bytes, bytes):
+            ci_provenance_error("CI_ARTIFACT_MEMBER_UNSAFE", "artifact member reader returned non-bytes")
+        actual = hashlib.sha256(member_bytes).hexdigest()
+        if actual != member["sha256"]:
+            ci_provenance_error("CI_ARTIFACT_MEMBER_TAMPERED", "artifact member digest does not match authenticated provenance")
+    return MappingProxyType(snapshot), github_provenance_identity(snapshot)
 
 
 def ci_evidence_gate_result(result, reason, data):
@@ -6426,67 +8781,71 @@ def ci_evidence_gate_data(status, task_key, gate_invocation_id):
     return {
         "taskKey": task_key,
         "gateInvocationId": gate_invocation_id,
-        "requiredCheck": current_ci["requiredCheck"],
         "provider": current_ci["provider"],
-        "workflowRefs": current_ci["workflowRefs"],
-        "nativeAdapterInstallation": current_ci["nativeAdapterInstallation"],
+        "repositoryContract": dict(current_ci["repositoryContract"]),
+        "nativeEnforcement": dict(current_ci["nativeEnforcement"]),
         "durableEvidence": current_ci["durableEvidence"],
         "remoteRunner": current_ci["remoteRunner"],
         "nativeAdapterLeaf": status["phase2cLink"],
         "cachePolicy": status["cachePolicy"],
         "phase2CLeafResult": "BLOCKED",
+        "githubProvenance": None,
     }
 
 
-def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-capability-status.json"):
+def ci_gate_correlation_valid(value):
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= 128
+        and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value) is not None
+    )
+
+
+def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-capability-status.json",
+                     github_provenance=None):
     root = Path(root).resolve()
+    task_key_valid = ci_gate_correlation_valid(task_key)
+    gate_invocation_id_valid = ci_gate_correlation_valid(gate_invocation_id)
     fallback_data = {
-        "taskKey": task_key,
-        "gateInvocationId": gate_invocation_id,
-        "requiredCheck": CI_GATE_CHECK_ID,
+        "taskKey": task_key if task_key_valid else "invalid",
+        "gateInvocationId": gate_invocation_id if gate_invocation_id_valid else "invalid",
         "provider": "github-actions",
-        "workflowRefs": [],
-        "nativeAdapterInstallation": {"status": "NOT_CONFIGURED", "reasonCode": "CI_STATUS_UNAVAILABLE"},
-        "durableEvidence": {"status": "NOT_CONFIGURED", "retentionDays": 90, "artifactRefs": [], "retainedRun": None},
+        "repositoryContract": {
+            "checkName": "phase-3b-repository-contract",
+            "workflowRef": ".github/workflows/phase-3b-ci-gates.yml",
+            "configurationStatus": "CONFIGURED_UNVERIFIED",
+        },
+        "nativeEnforcement": {
+            "checkName": "phase-3b-native-enforcement",
+            "configurationStatus": "NOT_CONFIGURED",
+            "requiredCheckConfigured": False,
+            "reasonCode": "CI_STATUS_UNAVAILABLE",
+        },
+        "durableEvidence": {
+            "status": "NOT_CONFIGURED",
+            "reasonCode": "CI_STATUS_UNAVAILABLE",
+            "retentionDays": 90,
+            "artifactRefs": [],
+            "requiredBindings": list(CI_DURABLE_REQUIRED_BINDINGS),
+            "retainedRun": None,
+        },
         "remoteRunner": {"status": "NOT_CONFIGURED", "completionBlocking": True, "reasonCode": "CI_STATUS_UNAVAILABLE"},
         "nativeAdapterLeaf": {"nativeAdapterCheckId": "native-runtime-adapter", "currentHostResult": "UNSUPPORTED"},
         "cachePolicy": {"reuse": "FORBIDDEN_WITHOUT_MATCHING_RUN_ID", "handoff": "SUMMARY_ONLY"},
         "phase2CLeafResult": "BLOCKED",
+        "githubProvenance": None,
     }
     try:
-        if not all(isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value) for value in (task_key, gate_invocation_id)):
+        if not task_key_valid or not gate_invocation_id_valid:
             return ci_evidence_gate_result("BLOCKED", "INVALID_CI_GATE_ARGUMENTS", fallback_data), 2
         status = validate_repository_instance(root, ci_status_ref)
         data = ci_evidence_gate_data(status, task_key, gate_invocation_id)
-        workflows_configured = all((root / ref).is_file() for ref in status["currentCi"]["workflowRefs"])
-        evidence = status["currentCi"]["durableEvidence"]
-        native_install = status["currentCi"]["nativeAdapterInstallation"]
-        remote_runner = status["currentCi"]["remoteRunner"]
-        if not workflows_configured:
-            return ci_evidence_gate_result("NOT_CONFIGURED", "CI_WORKFLOW_NOT_CONFIGURED", data), 3
-        if evidence["status"] != "AVAILABLE":
-            return ci_evidence_gate_result("NOT_CONFIGURED", "CI_EVIDENCE_NOT_AVAILABLE", data), 3
-        retained_run = evidence.get("retainedRun")
-        artifact_refs = evidence.get("artifactRefs", [])
-        expected_bindings = {
-            "repository", "commitSha", "workflowRunId", "jobId", "attempt", "taskKey",
-            "gateInvocationId", "nativeAdapterStatusDigest", "bypassEventSetSha256", "resolutionEventIds",
-        }
-        if (
-            not isinstance(retained_run, dict)
-            or set(evidence.get("requiredBindings", [])) != expected_bindings
-            or not artifact_refs
-            or retained_run.get("taskKey") != task_key
-            or retained_run.get("gateInvocationId") != gate_invocation_id
-        ):
-            return ci_evidence_gate_result("BLOCKED", "CI_DURABLE_EVIDENCE_IDENTITY_MISSING", data), 2
-        if any(not (root / ref).is_file() for ref in artifact_refs):
-            return ci_evidence_gate_result("BLOCKED", "CI_DURABLE_EVIDENCE_ARTIFACT_MISSING", data), 2
-        if native_install["status"] != "INSTALLED":
-            return ci_evidence_gate_result("BLOCKED", "CI_NATIVE_ADAPTER_NOT_INSTALLED", data), 2
-        if remote_runner["status"] != "PASS":
-            return ci_evidence_gate_result("BLOCKED", "CI_REMOTE_RUNNER_NOT_PASSING", data), 2
-        return ci_evidence_gate_result("PASS", None, data), 0
+        # Compatibility-only input: repository Python values cannot establish
+        # the missing external GitHub/Sigstore verifier authority.
+        _ = github_provenance
+        return ci_evidence_gate_result(
+            "NOT_CONFIGURED", "CI_GITHUB_PROVENANCE_NOT_AVAILABLE", data,
+        ), 3
     except (InvalidStateError, OSError, TypeError, ValueError, KeyError, json.JSONDecodeError):
         return ci_evidence_gate_result("BLOCKED", "CI_EVIDENCE_EVALUATION_INVALID", fallback_data), 2
 
@@ -6514,7 +8873,7 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                       gate_invocation_id=None, runtime_snapshot_ref=None, bypass_attempts_ref=None):
     root = Path(root).resolve()
     try:
-        policy = validate_repository_instance(root, root / "ai" / "verification-policy.json")
+        policy, policy_sha256 = load_verification_policy_snapshot(root)
         change_types = {item["id"]: item for item in policy["changeTypes"]}
         checks = {item["id"]: item for item in policy["checks"]}
         if change_type not in change_types:
@@ -6527,33 +8886,47 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                 "POLICY_VIOLATION", "UNKNOWN_ENTRY_POINT", None,
             ), 4)
         change = change_types[change_type]
-        leaf_results = load_verification_leaf_results(root, leaf_results_ref)
+        if leaf_results_ref is not None:
+            loaded_leaves = verification_leaf_references(root, leaf_results_ref)
+        commit_sha = repository_commit_sha(root)
+        if leaf_results_ref is None:
+            leaf_results = {}
+        else:
+            leaf_results = load_verified_leaf_results(
+                root,
+                loaded_leaves,
+                task_key,
+                gate_invocation_id,
+                commit_sha,
+                policy,
+                policy_sha256,
+            )
         native_leaf = native_adapter_phase2c_leaf(
             root,
             task_key,
             gate_invocation_id,
             runtime_snapshot_ref,
             bypass_attempts_ref,
+            policy,
+            policy_sha256,
         )
+        native_leaf["commitSha"] = commit_sha
         if not all(
             isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value)
             for value in (task_key, gate_invocation_id)
         ):
             raw = native_leaf
-            mapped_result = map_verification_leaf(raw["result"], True)
+            mapped_result = map_verification_leaf(
+                raw["result"], True, raw.get("reason") == "HOST_UNSUPPORTED",
+            )
             data = {
                 "changeType": change_type,
                 "entryPoint": entry_point,
                 "minimumVerificationLevel": change["minimumVerificationLevel"],
                 "completenessEvaluated": True,
-                "checks": [{
-                    "checkId": NATIVE_ADAPTER_CHECK_ID,
-                    "required": True,
-                    "rawResult": raw["result"],
-                    "mappedResult": mapped_result,
-                    "reason": raw["reason"],
-                    "evidenceRef": raw["evidenceRef"],
-                }],
+                "checks": [verification_check_result(
+                    NATIVE_ADAPTER_CHECK_ID, True, raw, mapped_result,
+                )],
                 "createdAiRuns": False,
             }
             overall = aggregate_verification_gate(data["checks"])
@@ -6561,22 +8934,20 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                 overall, None if overall == "PASS" else "VERIFICATION_GATE_" + overall, data,
             ), verification_gate_exit(overall))
         if entry_point not in change["entryPoints"]:
-            native_check = {
-                "checkId": NATIVE_ADAPTER_CHECK_ID,
-                "required": True,
-                "rawResult": native_leaf["result"],
-                "mappedResult": map_verification_leaf(native_leaf["result"], True),
-                "reason": native_leaf["reason"],
-                "evidenceRef": native_leaf["evidenceRef"],
-            }
-            entry_point_check = {
-                "checkId": entry_point,
-                "required": False,
-                "rawResult": "NOT_APPLICABLE",
-                "mappedResult": "NOT_APPLICABLE",
+            native_check = verification_check_result(
+                NATIVE_ADAPTER_CHECK_ID,
+                True,
+                native_leaf,
+                map_verification_leaf(
+                    native_leaf["result"], True,
+                    native_leaf.get("reason") == "HOST_UNSUPPORTED",
+                ),
+            )
+            entry_point_check = verification_check_result(entry_point, False, {
+                "result": "NOT_APPLICABLE",
                 "reason": "Entry point is not applicable to the selected change type.",
                 "evidenceRef": "ai/verification-policy.json",
-            }
+            }, "NOT_APPLICABLE")
             if native_check["mappedResult"] in {"BLOCKED", "FAIL"}:
                 data = {
                     "changeType": change_type,
@@ -6616,14 +8987,19 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
                 raw = leaf_results.get(check_id, default_leaf_result_for_check(check_id, policy_check))
             required = check_id in change["requiredChecks"]
             raw_result = raw["result"]
-            mapped_checks.append({
-                "checkId": check_id,
-                "required": required,
-                "rawResult": raw_result,
-                "mappedResult": map_verification_leaf(raw_result, required),
-                "reason": raw.get("reason"),
-                "evidenceRef": raw.get("evidenceRef"),
-            })
+            mapped_checks.append(verification_check_result(
+                check_id,
+                required,
+                raw,
+                map_verification_leaf(
+                    raw_result,
+                    required,
+                    (
+                        check_id == NATIVE_ADAPTER_CHECK_ID
+                        and raw.get("reason") == "HOST_UNSUPPORTED"
+                    ) or change_type in policy_check["notApplicableFor"],
+                ),
+            ))
         overall = aggregate_verification_gate(mapped_checks)
         data = {
             "changeType": change_type,
@@ -6642,6 +9018,10 @@ def verification_gate(root, change_type, entry_point, leaf_results_ref=None, tas
         else:
             reason = None if overall == "PASS" else "VERIFICATION_GATE_" + overall
         return publish_verification_gate_result(root, verification_gate_result(overall, reason, data), verification_gate_exit(overall))
+    except VerificationNotConfiguredError as error:
+        return publish_verification_gate_result(root, verification_gate_result(
+            "BLOCKED", error.errors[0]["code"], None, errors=error.errors,
+        ), 2)
     except InvalidStateError as error:
         return publish_verification_gate_result(root, verification_gate_result(
             "INVALID_STATE", error.errors[0]["code"], None, errors=error.errors,
@@ -6705,6 +9085,9 @@ def main():
     verify_finalized_parser = subparsers.add_parser("verify-finalized", add_help=False)
     verify_finalized_parser.add_argument("--repository-root", required=True)
     verify_finalized_parser.add_argument("--run-id", required=True)
+    finalization_recovery_parser = subparsers.add_parser("finalization-recover", add_help=False)
+    finalization_recovery_parser.add_argument("--repository-root", required=True)
+    finalization_recovery_parser.add_argument("--run-id", required=True)
     repo_intake_parser = subparsers.add_parser("repo-intake", add_help=False)
     repo_intake_parser.add_argument("--repository-root", required=True)
     repo_intake_parser.add_argument("--output", required=True)
@@ -6722,8 +9105,6 @@ def main():
     native_adapter_gate_parser.add_argument("--repository-root", required=True)
     native_adapter_gate_parser.add_argument("--task-key", required=True)
     native_adapter_gate_parser.add_argument("--gate-invocation-id", required=True)
-    native_adapter_gate_parser.add_argument("--runtime-snapshot")
-    native_adapter_gate_parser.add_argument("--bypass-attempts")
     native_adapter_gate_parser.add_argument("--output", required=True)
     ci_evidence_gate_parser = subparsers.add_parser("ci-evidence-gate", add_help=False)
     ci_evidence_gate_parser.add_argument("--repository-root", required=True)
@@ -6736,7 +9117,7 @@ def main():
     except ValueError:
         if len(sys.argv) > 1 and sys.argv[1] in (
             "run-start", "pre-command", "execute-command", "post-command", "done-claim-prepare",
-            "verify-finalized", "verification-gate", "native-adapter-gate", "ci-evidence-gate",
+            "verify-finalized", "finalization-recover", "verification-gate", "native-adapter-gate", "ci-evidence-gate",
         ):
             result, status = invalid_cli_result(sys.argv[1])
             print(compact(result))
@@ -6753,7 +9134,7 @@ def main():
         return status
     if arguments.operation in (
         "run-start", "pre-command", "execute-command", "post-command", "done-claim-prepare",
-        "verify-finalized",
+        "verify-finalized", "finalization-recover",
     ):
         handlers = {
             "run-start": run_start_cli,
@@ -6762,6 +9143,7 @@ def main():
             "post-command": run_post_command_cli,
             "done-claim-prepare": run_done_claim_prepare_cli,
             "verify-finalized": run_verify_finalized_cli,
+            "finalization-recover": run_finalization_recovery_cli,
         }
         result, status = handlers[arguments.operation](arguments)
         print(compact(result))

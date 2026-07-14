@@ -33,8 +33,8 @@
       "minLength": 1,
       "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*\\\\).+$"
     },
-    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "cacheEntry": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}(?![\\s\\S])" },
+    "pathCacheEntry": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "kind", "status", "key", "summary", "evidenceRefs", "createdAt"],
@@ -78,6 +78,117 @@
           "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
         }
       }
+    },
+    "verificationDecisionCacheEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "status", "key", "summary", "evidenceRefs", "createdAt"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+        "kind": { "const": "VERIFICATION_DECISION" },
+        "status": { "enum": ["FRESH", "STALE", "UNCERTAIN"] },
+        "key": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "taskKey",
+            "gateInvocationId",
+            "commitSha",
+            "changeType",
+            "entryPoint",
+            "policySha256",
+            "checkBindings",
+            "environmentFingerprint",
+            "expiresAt"
+          ],
+          "properties": {
+            "taskKey": { "$ref": "#/$defs/identifier" },
+            "gateInvocationId": { "$ref": "#/$defs/identifier" },
+            "commitSha": { "type": "string", "pattern": "^[a-f0-9]{40}(?![\\s\\S])" },
+            "changeType": { "type": "string", "minLength": 1 },
+            "entryPoint": { "type": "string", "minLength": 1 },
+            "policySha256": { "$ref": "#/$defs/sha256" },
+            "checkBindings": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/checkBinding" }
+            },
+            "environmentFingerprint": {
+              "oneOf": [
+                { "type": "null" },
+                { "$ref": "#/$defs/sha256" }
+              ]
+            },
+            "expiresAt": { "$ref": "#/$defs/timestamp" }
+          }
+        },
+        "summary": { "type": "string", "minLength": 1 },
+        "evidenceRefs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/repositoryPath" }
+        },
+        "createdAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "cacheEntry": {
+      "oneOf": [
+        { "$ref": "#/$defs/pathCacheEntry" },
+        { "$ref": "#/$defs/verificationDecisionCacheEntry" }
+      ]
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])"
+    },
+    "producerId": {
+      "enum": [
+        "review-gate",
+        "done-claim-gate",
+        "failure-triage",
+        "verify.static",
+        "native-runtime-adapter",
+        "verify.unit",
+        "verify.integration",
+        "verify.api-smoke",
+        "verify.e2e"
+      ]
+    },
+    "checkBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checkId", "producerId", "leafResultRef", "leafResultSha256", "evidence"],
+      "properties": {
+        "checkId": { "$ref": "#/$defs/producerId" },
+        "producerId": { "$ref": "#/$defs/producerId" },
+        "leafResultRef": { "$ref": "#/$defs/repositoryPath" },
+        "leafResultSha256": { "$ref": "#/$defs/sha256" },
+        "evidence": { "$ref": "#/$defs/evidenceBinding" }
+      }
+    },
+    "evidenceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "schema"],
+      "properties": {
+        "path": { "$ref": "#/$defs/repositoryPath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "schema": {
+          "enum": [
+            "ai/schemas/gateway-result.schema.json",
+            "ai/schemas/command-result.schema.json",
+            "ai/schemas/native-adapter-result.schema.json",
+            "ai/schemas/native-runtime-adapters.schema.json"
+          ]
+        }
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z(?![\\s\\S])"
     },
     "handoffNote": {
       "type": "object",

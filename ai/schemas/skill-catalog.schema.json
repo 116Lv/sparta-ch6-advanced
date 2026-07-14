@@ -18,6 +18,7 @@
       "type": "array",
       "minItems": 7,
       "maxItems": 7,
+      "uniqueItems": true,
       "items": { "$ref": "#/$defs/skill" },
       "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "repo-intake" } } }
     }

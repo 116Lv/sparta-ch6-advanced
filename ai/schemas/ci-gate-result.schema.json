@@ -16,14 +16,13 @@
     "data": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["taskKey", "gateInvocationId", "requiredCheck", "provider", "workflowRefs", "nativeAdapterInstallation", "durableEvidence", "remoteRunner", "nativeAdapterLeaf", "cachePolicy", "phase2CLeafResult"],
+      "required": ["taskKey", "gateInvocationId", "provider", "repositoryContract", "nativeEnforcement", "durableEvidence", "remoteRunner", "nativeAdapterLeaf", "cachePolicy", "phase2CLeafResult"],
       "properties": {
         "taskKey": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])" },
         "gateInvocationId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])" },
-        "requiredCheck": { "const": "phase-3b-ci-gates" },
         "provider": { "const": "github-actions" },
-        "workflowRefs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repositoryPath" } },
-        "nativeAdapterInstallation": { "$ref": "#/$defs/statusReason" },
+        "repositoryContract": { "$ref": "#/$defs/repositoryContract" },
+        "nativeEnforcement": { "$ref": "#/$defs/nativeEnforcement" },
         "durableEvidence": { "$ref": "#/$defs/durableEvidence" },
         "remoteRunner": {
           "type": "object",
@@ -48,18 +47,78 @@
           "required": ["reuse", "handoff"],
           "properties": { "reuse": { "const": "FORBIDDEN_WITHOUT_MATCHING_RUN_ID" }, "handoff": { "const": "SUMMARY_ONLY" }, "retentionDays": { "type": "integer", "minimum": 90 } }
         },
-        "phase2CLeafResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_APPLICABLE"] }
+        "phase2CLeafResult": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_APPLICABLE"] },
+        "githubProvenance": {
+          "anyOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/githubProvenanceIdentity" }
+          ]
+        }
       }
     }
   },
   "allOf": [
-    { "if": { "properties": { "result": { "const": "PASS" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "PASS" }, "reason": { "type": "null" } } } },
+    {
+      "if": { "properties": { "result": { "const": "PASS" } }, "required": ["result"] },
+      "then": {
+        "properties": {
+          "phase2cLeafResult": { "const": "PASS" },
+          "reason": { "type": "null" },
+          "data": {
+            "required": ["githubProvenance"],
+            "properties": {
+              "githubProvenance": { "$ref": "#/$defs/githubProvenanceIdentity" }
+            }
+          }
+        }
+      }
+    },
     { "if": { "properties": { "result": { "const": "NOT_CONFIGURED" } }, "required": ["result"] }, "then": { "properties": { "phase2cLeafResult": { "const": "BLOCKED" } } } }
   ],
   "$defs": {
     "identifier": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
     "repositoryPath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "gitSha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "githubProvenanceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "workflowRef", "workflowSha", "headSha", "eventName", "runId", "runAttempt", "jobId", "artifactId", "artifactDigest", "signerRepository"],
+      "properties": {
+        "repository": { "const": "116Lv/sparta-ch6-advanced" },
+        "workflowRef": { "const": "116Lv/sparta-ch6-advanced/.github/workflows/phase-3b-ci-gates.yml@refs/heads/main" },
+        "workflowSha": { "$ref": "#/$defs/gitSha" },
+        "headSha": { "$ref": "#/$defs/gitSha" },
+        "eventName": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "runId": { "type": "integer", "minimum": 1 },
+        "runAttempt": { "type": "integer", "minimum": 1 },
+        "jobId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "artifactId": { "type": "integer", "minimum": 1 },
+        "artifactDigest": { "$ref": "#/$defs/sha256" },
+        "signerRepository": { "const": "116Lv/sparta-ch6-advanced" }
+      }
+    },
+    "repositoryContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checkName", "workflowRef", "configurationStatus"],
+      "properties": {
+        "checkName": { "const": "phase-3b-repository-contract" },
+        "workflowRef": { "$ref": "#/$defs/repositoryPath" },
+        "configurationStatus": { "enum": ["VERIFIED", "CONFIGURED_UNVERIFIED", "NOT_CONFIGURED", "BLOCKED"] }
+      }
+    },
+    "nativeEnforcement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checkName", "configurationStatus", "requiredCheckConfigured", "reasonCode"],
+      "properties": {
+        "checkName": { "const": "phase-3b-native-enforcement" },
+        "configurationStatus": { "enum": ["VERIFIED", "CONFIGURED_UNVERIFIED", "NOT_CONFIGURED", "BLOCKED"] },
+        "requiredCheckConfigured": { "type": "boolean" },
+        "reasonCode": { "$ref": "#/$defs/identifier" }
+      }
+    },
     "statusReason": { "type": "object", "additionalProperties": false, "required": ["status", "reasonCode"], "properties": { "status": { "enum": ["INSTALLED", "SUPPORTED", "UNSUPPORTED", "NOT_CONFIGURED", "BLOCKED"] }, "reasonCode": { "$ref": "#/$defs/identifier" } } },
     "durableEvidence": {
       "type": "object",
@@ -70,7 +129,31 @@
         "reasonCode": { "$ref": "#/$defs/identifier" },
         "retentionDays": { "type": "integer", "minimum": 90, "maximum": 400 },
         "artifactRefs": { "type": "array", "items": { "$ref": "#/$defs/repositoryPath" } },
-        "requiredBindings": { "type": "array", "minItems": 10, "maxItems": 10, "uniqueItems": true, "items": { "type": "string" } },
+        "requiredBindings": {
+          "type": "array",
+          "minItems": 16,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "prefixItems": [
+            { "const": "repository" },
+            { "const": "workflowRef" },
+            { "const": "workflowSha" },
+            { "const": "commitSha" },
+            { "const": "eventName" },
+            { "const": "workflowRunId" },
+            { "const": "attempt" },
+            { "const": "jobId" },
+            { "const": "artifactId" },
+            { "const": "artifactDigest" },
+            { "const": "artifactMembers" },
+            { "const": "taskKey" },
+            { "const": "gateInvocationId" },
+            { "const": "nativeAdapterStatusDigest" },
+            { "const": "bypassEventSetSha256" },
+            { "const": "resolutionEventIds" }
+          ],
+          "items": false
+        },
         "retainedRun": { "type": ["object", "null"] }
       }
     }

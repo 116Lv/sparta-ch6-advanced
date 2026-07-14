@@ -11,7 +11,7 @@
     "$id": { "const": "ai/native-runtime-adapters.json" },
     "schemaVersion": { "const": 1 },
     "updatedAt": { "$ref": "#/$defs/timestamp" },
-    "supportedHosts": { "type": "array", "items": { "$ref": "#/$defs/supportedHost" } },
+    "supportedHosts": { "type": "array", "maxItems": 0 },
     "currentHost": { "$ref": "#/$defs/currentHost" },
     "completionPolicy": {
       "type": "object",

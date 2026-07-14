@@ -28,3 +28,6 @@ ai/.workflow-state-txn/
 __pycache__/
 *.py[cod]
 
+### Isolated Agent Worktrees ###
+.worktrees/
+

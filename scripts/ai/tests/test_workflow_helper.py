@@ -59,6 +59,274 @@ def load_helper():
     return module
 
 
+def canonical_posix_fixture_bytes(path):
+    content = path.read_bytes()
+    if b"\r" in content.replace(b"\r\n", b""):
+        raise AssertionError(f"POSIX fixture contains a non-CRLF carriage return: {path}")
+    return content.replace(b"\r\n", b"\n")
+
+
+def require_contract(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def normalized_contract_lines(text, *, preserve_shebang=False):
+    lines = []
+    for raw_line in text.splitlines():
+        require_contract("\t" not in raw_line, "contract text must not contain tabs")
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#") and not (
+            preserve_shebang and stripped.startswith("#!")
+        ):
+            continue
+        lines.append(raw_line.rstrip())
+    return tuple(lines)
+
+
+def validate_contract_entry_script(text):
+    executable = tuple(
+        line.strip()
+        for line in normalized_contract_lines(text, preserve_shebang=True)
+    )
+    expected = (
+        "#!/usr/bin/env bash",
+        "set -eu",
+        "PATH=/usr/bin:/bin:$PATH",
+        'SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
+        'REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)',
+        'cd "$REPOSITORY_ROOT"',
+        "python -m unittest scripts.ai.tests.test_workflow_helper -v",
+        '/usr/bin/bash "$SCRIPT_DIR/test-runtime-preflight.sh"',
+        '/usr/bin/bash "$SCRIPT_DIR/test-command-runner.sh"',
+    )
+    require_contract(
+        executable == expected,
+        f"contract entry executable sequence mismatch: {executable!r}",
+    )
+
+
+def yaml_contract_field(content):
+    require_contract(":" in content, f"invalid workflow field: {content!r}")
+    key, value = content.split(":", 1)
+    require_contract(
+        re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", key) is not None,
+        f"invalid workflow key: {key!r}",
+    )
+    return key, value.strip()
+
+
+def workflow_block(lines, start, parent_indent):
+    block = []
+    index = start
+    block_indent = parent_indent + 2
+    while index < len(lines):
+        line = lines[index]
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= parent_indent:
+            break
+        require_contract(
+            indent >= block_indent,
+            f"workflow block indentation is invalid: {line!r}",
+        )
+        block.append(line[block_indent:].rstrip())
+        index += 1
+    return tuple(block), index
+
+
+def workflow_nested_mapping(lines, start, parent_indent):
+    result = {}
+    index = start
+    child_indent = parent_indent + 2
+    while index < len(lines):
+        line = lines[index]
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= parent_indent:
+            break
+        require_contract(
+            indent == child_indent,
+            f"workflow nested mapping indentation is invalid: {line!r}",
+        )
+        key, value = yaml_contract_field(line[child_indent:])
+        require_contract(key not in result, f"duplicate workflow field: {key}")
+        if value == "|":
+            value, index = workflow_block(lines, index + 1, child_indent)
+        else:
+            require_contract(value != "", f"unsupported nested workflow mapping: {key}")
+            index += 1
+        result[key] = value
+    return result, index
+
+
+def workflow_step_model(lines):
+    require_contract(lines, "workflow step must not be empty")
+    first = lines[0]
+    require_contract(
+        first.startswith("      - "),
+        f"workflow step must start at the expected indentation: {first!r}",
+    )
+    result = {}
+    key, value = yaml_contract_field(first[8:])
+    require_contract(value != "", f"workflow step first field requires a value: {key}")
+    result[key] = value
+    index = 1
+    while index < len(lines):
+        line = lines[index]
+        indent = len(line) - len(line.lstrip(" "))
+        require_contract(indent == 8, f"workflow step indentation is invalid: {line!r}")
+        key, value = yaml_contract_field(line[8:])
+        require_contract(key not in result, f"duplicate workflow step field: {key}")
+        if value == "|":
+            value, index = workflow_block(lines, index + 1, 8)
+        elif value == "":
+            value, index = workflow_nested_mapping(lines, index + 1, 8)
+        else:
+            index += 1
+        result[key] = value
+    return result
+
+
+def phase3b_workflow_model(text):
+    lines = normalized_contract_lines(text)
+    workflow_names = [line[6:].strip() for line in lines if line.startswith("name: ")]
+    require_contract(
+        workflow_names == ["phase-3b-repository-contract"],
+        f"workflow name mismatch: {workflow_names!r}",
+    )
+    jobs_indexes = [index for index, line in enumerate(lines) if line == "jobs:"]
+    require_contract(len(jobs_indexes) == 1, "one jobs mapping is required")
+    jobs_index = jobs_indexes[0]
+    expected_top_level = (
+        "name: phase-3b-repository-contract",
+        "on:",
+        "  pull_request:",
+        "  push:",
+        "    branches:",
+        "      - main",
+        "permissions:",
+        "  contents: read",
+    )
+    require_contract(
+        lines[:jobs_index] == expected_top_level,
+        f"workflow top-level model mismatch: {lines[:jobs_index]!r}",
+    )
+    jobs_end = next(
+        (
+            index for index in range(jobs_index + 1, len(lines))
+            if len(lines[index]) - len(lines[index].lstrip(" ")) == 0
+        ),
+        len(lines),
+    )
+    require_contract(jobs_end == len(lines), "workflow has an unapproved trailing top-level key")
+    job_lines = lines[jobs_index + 1:jobs_end]
+    job_headers = [
+        (index, line[2:-1])
+        for index, line in enumerate(job_lines)
+        if line.startswith("  ") and not line.startswith("    ") and line.endswith(":")
+    ]
+    require_contract(
+        job_headers == [(0, "phase-3b-repository-contract")],
+        f"workflow must contain only the repository contract job: {job_headers!r}",
+    )
+    steps_indexes = [index for index, line in enumerate(job_lines) if line == "    steps:"]
+    require_contract(steps_indexes == [4], f"workflow steps location mismatch: {steps_indexes!r}")
+    steps_index = steps_indexes[0]
+    metadata = {}
+    for line in job_lines[1:steps_index]:
+        require_contract(line.startswith("    "), f"job metadata indentation is invalid: {line!r}")
+        key, value = yaml_contract_field(line[4:])
+        require_contract(value != "" and key not in metadata, f"invalid job metadata field: {key}")
+        metadata[key] = value
+    require_contract(
+        metadata == {
+            "name": "phase-3b-repository-contract",
+            "runs-on": "ubuntu-latest",
+            "timeout-minutes": "10",
+        },
+        f"repository contract job metadata mismatch: {metadata!r}",
+    )
+    step_lines = job_lines[steps_index + 1:]
+    starts = [
+        index for index, line in enumerate(step_lines)
+        if line.startswith("      - ")
+    ]
+    require_contract(starts and starts[0] == 0, "workflow steps must start with a list item")
+    steps = []
+    for position, start in enumerate(starts):
+        end = starts[position + 1] if position + 1 < len(starts) else len(step_lines)
+        steps.append(workflow_step_model(step_lines[start:end]))
+    return metadata, steps
+
+
+def validate_phase3b_contract_workflow(text):
+    _metadata, steps = phase3b_workflow_model(text)
+    dependency_probe = (
+        "python - <<'PY'",
+        "from importlib.metadata import version",
+        "from jsonschema import Draft202012Validator, FormatChecker",
+        "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey",
+        "assert version('jsonschema') == '4.25.1'",
+        "assert version('cryptography') == '45.0.5'",
+        "PY",
+        "/usr/bin/python3 - <<'PY'",
+        "from importlib.metadata import version",
+        "from jsonschema import Draft202012Validator, FormatChecker",
+        "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey",
+        "assert version('jsonschema') == '4.25.1'",
+        "assert version('cryptography') == '45.0.5'",
+        "PY",
+    )
+    expected_steps = [
+        {"uses": "actions/checkout@v4"},
+        {"uses": "actions/setup-python@v5", "with": {"python-version": "'3.12'"}},
+        {
+            "name": "Install helper dependencies",
+            "run": (
+                "python -m pip install jsonschema==4.25.1 cryptography==45.0.5",
+                "/usr/bin/python3 -m pip install --break-system-packages "
+                "jsonschema==4.25.1 cryptography==45.0.5",
+            ),
+        },
+        {"name": "Verify helper dependency provenance", "run": dependency_probe},
+        {
+            "name": "Run complete repository contract tests",
+            "shell": "bash",
+            "run": (
+                "set -o pipefail",
+                "bash scripts/ai/tests/run-contract-tests.sh 2>&1 | "
+                "tee phase3b-contract-test-output.txt",
+            ),
+        },
+        {
+            "uses": "actions/upload-artifact@v4",
+            "if": "${{ !cancelled() }}",
+            "with": {
+                "name": "phase3b-repository-contract-diagnostics",
+                "path": ("phase3b-contract-test-output.txt",),
+                "if-no-files-found": "error",
+                "retention-days": "90",
+            },
+        },
+    ]
+    require_contract(steps == expected_steps, f"workflow action-step model mismatch: {steps!r}")
+    run_lines = tuple(
+        line
+        for step in steps
+        for line in step.get("run", ())
+    )
+    entry_pipeline = (
+        "bash scripts/ai/tests/run-contract-tests.sh 2>&1 | "
+        "tee phase3b-contract-test-output.txt"
+    )
+    require_contract(run_lines.count(entry_pipeline) == 1, "entrypoint must run exactly once")
+    require_contract(
+        all("unittest" not in line and "test_workflow_helper" not in line for line in run_lines),
+        "workflow must not contain a separate or selective helper runner",
+    )
+
+
 def preflight_pass():
     return {
         "$schema": "ai/schemas/gateway-result.schema.json",
@@ -306,7 +574,10 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
     def setUpClass(cls):
         cls.helper = load_helper()
         cls.schemas = {}
-        for name in ("gateway-result", "command-result", "run-session", "process-attempt", "artifact-manifest"):
+        for name in (
+            "gateway-result", "command-result", "run-session", "process-attempt",
+            "artifact-manifest", "finalization-journal",
+        ):
             with (REPOSITORY_ROOT / "ai" / "schemas" / f"{name}.schema.json").open(encoding="utf-8") as handle:
                 cls.schemas[name] = json.load(handle)
             Draft202012Validator.check_schema(cls.schemas[name])
@@ -335,22 +606,31 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
             return json.load(handle)
 
     def test_phase_1b2_and_phase_2_schema_names_are_allowlisted(self):
-        additions = {"run-session", "process-attempt", "artifact-manifest"}
+        additions = {
+            "run-session", "process-attempt", "artifact-manifest", "finalization-journal",
+        }
         self.assertTrue(additions.issubset(self.helper.SCHEMA_NAMES))
         phase_2a = {"context-map", "workflow-cache", "repo-intake-result"}
         self.assertTrue(phase_2a.issubset(self.helper.SCHEMA_NAMES))
         phase_2b = {"agent-handoff", "skill-catalog"}
         self.assertTrue(phase_2b.issubset(self.helper.SCHEMA_NAMES))
-        phase_2c = {"verification-policy", "verification-gate-result"}
+        phase_2c = {"verification-policy", "verification-gate-result", "verification-leaf-result"}
         self.assertTrue(phase_2c.issubset(self.helper.SCHEMA_NAMES))
         phase_3a = {
+            "host-native-trust",
             "native-adapter-result",
             "native-bypass-attempt",
             "native-runtime-adapters",
             "native-runtime-snapshot",
         }
         self.assertTrue(phase_3a.issubset(self.helper.SCHEMA_NAMES))
-        self.assertEqual(len(self.helper.SCHEMA_NAMES), 25)
+        phase_3b = {
+            "ci-capability-status",
+            "ci-gate-result",
+            "github-ci-provenance",
+        }
+        self.assertTrue(phase_3b.issubset(self.helper.SCHEMA_NAMES))
+        self.assertEqual(len(self.helper.SCHEMA_NAMES), 29)
         self.assertEqual(
             {name for name in self.helper.SCHEMA_NAMES if name in additions},
             additions,
@@ -478,6 +758,11 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
 
         finalizing = json.loads(json.dumps(instance))
         finalizing["state"] = "FINALIZING"
+        finalizing["finalizationJournalIdentity"] = {
+            "path": ".ai-runs/run-1/.state/finalization-journals/11111111-1111-4111-8111-111111111111.json",
+            "journalId": "11111111-1111-4111-8111-111111111111",
+            "canonicalSha256": "a" * 64,
+        }
         self.assert_schema_valid("run-session", finalizing)
         self.assertNotIn("FINALIZING", {self.fixture("run-session-open.json")["state"]})
 
@@ -2698,6 +2983,11 @@ class PreCommandTests(unittest.TestCase):
 
         session = self.session()
         session["state"] = "FINALIZING"
+        session["finalizationJournalIdentity"] = {
+            "path": ".ai-runs/run-1/.state/finalization-journals/11111111-1111-4111-8111-111111111111.json",
+            "journalId": "11111111-1111-4111-8111-111111111111",
+            "canonicalSha256": "a" * 64,
+        }
         self.write_json(self.session_path().relative_to(self.root).as_posix(), session)
         result, status = self.pre()
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
@@ -3353,6 +3643,28 @@ class RunLifecycleContinuationTests(unittest.TestCase):
                 finally:
                     self.root = original_root
 
+    def test_recovery_quarantine_rename_uses_atomic_noreplace_boundary(self):
+        run = self.start()
+        lock, stale_owner = self.write_lock_owner(run)
+        observed = []
+
+        def atomic_rename_noreplace(source, destination):
+            observed.append((Path(source), Path(destination)))
+            raise FileExistsError(destination)
+
+        with mock.patch.object(
+            self.helper,
+            "atomic_rename_noreplace",
+            side_effect=atomic_rename_noreplace,
+        ):
+            with self.assertRaises(self.helper.RegistryBlockedError):
+                self.helper.recover_run_lock(self.root, "run-1")
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0][0], lock)
+        self.assertEqual(json.loads((lock / "owner.json").read_text(encoding="utf-8")), stale_owner)
+        self.assertFalse((run / ".state" / "lock-recovery-claim").exists())
+
     def test_pre_quarantine_recovery_faults_release_still_owned_claim(self):
         scenarios = ("after-claim", "rename-error")
         for scenario in scenarios:
@@ -3363,7 +3675,7 @@ class RunLifecycleContinuationTests(unittest.TestCase):
                     shutil.copytree(original_root / "ai", self.root / "ai")
                     run = self.start()
                     lock, stale_owner = self.write_lock_owner(run)
-                    original_rename = self.helper.os.rename
+                    original_rename = self.helper.atomic_rename_noreplace
 
                     def hook(name, **_context):
                         if scenario == "after-claim" and name == "recover.after_claim":
@@ -3374,7 +3686,7 @@ class RunLifecycleContinuationTests(unittest.TestCase):
                             raise OSError("injected quarantine rename failure")
                         return original_rename(source, destination)
 
-                    with mock.patch.object(self.helper, "run_lifecycle_hook", side_effect=hook), mock.patch.object(self.helper.os, "rename", side_effect=rename):
+                    with mock.patch.object(self.helper, "run_lifecycle_hook", side_effect=hook), mock.patch.object(self.helper, "atomic_rename_noreplace", side_effect=rename):
                         with self.assertRaises((OSError, self.helper.RegistryBlockedError)):
                             self.helper.recover_run_lock(self.root, "run-1")
                     self.assertFalse((run / ".state" / "lock-recovery-claim").exists())
@@ -3540,6 +3852,31 @@ class RunLifecycleContinuationTests(unittest.TestCase):
         self.assertFalse(lock.exists())
         acquired = self.helper.acquire_run_lock(self.root, "run-1")
         self.assertTrue(self.helper.release_run_lock(acquired))
+
+    def test_ownerless_recovery_quarantine_rename_uses_atomic_noreplace_boundary(self):
+        run = self.start()
+        lock = run / ".state" / "lock"
+        lock.mkdir()
+        expired = time.time() - self.helper.RUN_LOCK_MAX_RECENT_SECONDS - 10
+        os.utime(lock, (expired, expired))
+        observed = []
+
+        def atomic_rename_noreplace(source, destination):
+            observed.append((Path(source), Path(destination)))
+            raise FileExistsError(destination)
+
+        with mock.patch.object(
+            self.helper,
+            "atomic_rename_noreplace",
+            side_effect=atomic_rename_noreplace,
+        ):
+            with self.assertRaises(self.helper.RegistryBlockedError):
+                self.helper.recover_run_lock(self.root, "run-1")
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0][0], lock)
+        self.assertTrue(lock.is_dir())
+        self.assertFalse((run / ".state" / "lock-recovery-claim").exists())
 
     def test_ownerless_main_cleanup_resumes_after_initialization_quarantine_crash(self):
         run = self.start()
@@ -4733,7 +5070,7 @@ class PosixLaunchTests(unittest.TestCase):
             self.assertNotIn("Popen", names)
 
     def test_fake_gradlew_is_exact_posix_builtin_fixture(self):
-        content = (EXECUTION_FIXTURES_PATH / "fake-gradlew").read_bytes()
+        content = canonical_posix_fixture_bytes(EXECUTION_FIXTURES_PATH / "fake-gradlew")
         self.assertTrue(content.startswith(b"#!/bin/sh\n"))
         self.assertEqual(content, (
             b"#!/bin/sh\n"
@@ -4750,7 +5087,9 @@ class PosixLaunchTests(unittest.TestCase):
         self.assertTrue(shell.is_file())
         self.assertTrue(os.access(shell, os.X_OK))
         wrapper = self.root / "gradlew"
-        shutil.copyfile(EXECUTION_FIXTURES_PATH / "fake-gradlew", wrapper)
+        wrapper.write_bytes(
+            canonical_posix_fixture_bytes(EXECUTION_FIXTURES_PATH / "fake-gradlew")
+        )
         wrapper.chmod(0o755)
         token = "value with spaces;$(printf unsafe)*?"
         process = self.helper.launch_reserved(
@@ -5638,6 +5977,150 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         path.write_text(json.dumps(claim), encoding="utf-8")
         return ".ai-runs/run-1/claim-input.json"
 
+    def finalize(self, *, exit_code=0, claim=None):
+        self.publish_command_result(exit_code=exit_code)
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            return self.helper.prepare_done_claim(
+                self.root,
+                "run-1",
+                self.write_claim(self.done_claim() if claim is None else claim),
+            )
+
+    def rewrite_final_json(self, relative, mutate):
+        path = self.root / ".ai-runs" / "run-1" / relative
+        path.chmod(0o600)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        mutate(payload)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def repair_manifest_identity(self, artifact_path):
+        manifest_path = self.root / ".ai-runs" / "run-1" / "artifact-manifest.json"
+        manifest_path.chmod(0o600)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        reference = artifact_path.relative_to(self.root).as_posix()
+        encoded = artifact_path.read_bytes()
+        artifact = next(item for item in manifest["artifacts"] if item["path"] == reference)
+        artifact["sha256"] = hashlib.sha256(encoded).hexdigest()
+        artifact["size"] = len(encoded)
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    def partial_finalization_paths(self):
+        run = self.root / ".ai-runs" / "run-1"
+        return (
+            run / "done-claim.json",
+            run / "gate-results" / "pre-done-claim.json",
+            run / "artifact-manifest.json",
+        )
+
+    def inject_partial_finalization_failure(self, error, *, mutate_session=False):
+        for path in self.partial_finalization_paths():
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            path.write_text("{}\n", encoding="utf-8")
+        if mutate_session:
+            session = self.session()
+            session["startedAt"] = "2026-07-12T00:00:00Z"
+            self.session_path.write_text(json.dumps(session), encoding="utf-8")
+        raise error
+
+    def assert_partial_finalization_absent(self):
+        for path in self.partial_finalization_paths():
+            self.assertFalse(path.exists(), path)
+        for path in (self.root / ".ai-runs/run-1/.state/finalization-journals").glob("*.json"):
+            self.assertFalse(path.stat().st_mode & stat.S_IWRITE, path)
+
+    def journal_path(self, *, session=None, journal=None):
+        if journal is not None:
+            reference = journal["$id"]
+        else:
+            retained = self.session() if session is None else session
+            reference = retained["finalizationJournalIdentity"]["path"]
+        return self.root / reference
+
+    def crash_left_finalization(
+        self, *, sealed=False, partial=(),
+        claim_reference=".ai-runs/run-1/claim-input.json",
+    ):
+        self.publish_command_result(exit_code=0)
+        claim_ref = claim_reference
+        claim_path = self.root / claim_ref
+        claim_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        claim_path.write_text(json.dumps(self.done_claim()), encoding="utf-8")
+        acquired = self.helper.acquire_run_lock(self.root, "run-1")
+        try:
+            original = self.helper.active_open_session(self.root, "run-1")
+            finalizing = self.helper.expected_finalizing_session(original)
+            journal = self.helper.ensure_finalization_journal(
+                self.root, original, finalizing, claim_ref,
+            )
+            finalizing = json.loads(json.dumps(journal["finalizingSession"]))
+            self.helper.replace_run_session(
+                self.root, self.session_path, finalizing, acquired,
+                expected_session=original,
+            )
+            claim = self.helper.read_json(self.root / claim_ref)
+            result, reason = self.helper.done_claim_semantic_result(
+                self.root, finalizing, claim,
+            )
+            gate = self.helper.gate_result_artifact(self.root, "run-1", result, reason)
+            if result == "PASS":
+                gate["data"]["taskKey"] = finalizing["taskKey"]
+            projection = self.helper.final_run_projection(
+                finalizing, result, reason, "2026-07-12T03:20:00Z",
+            )
+            current = finalizing
+            if sealed:
+                current = self.helper.sealed_finalization_session(
+                    self.root, finalizing, journal, projection, claim, gate,
+                )
+                self.helper.replace_run_session(
+                    self.root, self.session_path, current, acquired,
+                    expected_session=finalizing,
+                )
+            run = self.root / ".ai-runs" / "run-1"
+            if "claim" in partial:
+                self.helper.publish_final_json(
+                    self.root, run / "done-claim.json", claim,
+                    "ai/schemas/done-claim.schema.json",
+                )
+            if "gate" in partial:
+                (run / "gate-results").mkdir(mode=0o700, exist_ok=True)
+                self.helper.publish_final_json(
+                    self.root, run / "gate-results" / "pre-done-claim.json", gate,
+                    "ai/schemas/gateway-result.schema.json",
+                )
+            if "manifest" in partial:
+                manifest = self.helper.final_artifact_manifest(
+                    self.root, "run-1", {claim_ref},
+                )
+                self.helper.publish_final_json(
+                    self.root, run / "artifact-manifest.json", manifest,
+                    "ai/schemas/artifact-manifest.schema.json",
+                )
+            return original, current
+        finally:
+            self.helper.release_run_lock(acquired)
+
+    def recover_finalization(self):
+        recover = getattr(self.helper, "recover_finalization", None)
+        self.assertIsNotNone(recover, "explicit finalization recovery operation is missing")
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            return recover(self.root, "run-1")
+
+    def open_finalization_journal(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        acquired = self.helper.acquire_run_lock(self.root, "run-1")
+        try:
+            source = self.helper.active_open_session(self.root, "run-1")
+            finalizing = self.helper.expected_finalizing_session(source)
+            journal = self.helper.ensure_finalization_journal(
+                self.root, source, finalizing, claim_ref,
+            )
+            return source, journal
+        finally:
+            self.helper.release_run_lock(acquired)
+
     def test_valid_all_pass_claim_finalizes_integrity_only_run(self):
         self.publish_command_result(exit_code=0)
         with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
@@ -5650,10 +6133,694 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         run = self.root / ".ai-runs" / "run-1"
         self.assertTrue((run / "artifact-manifest.json").is_file())
         self.assertTrue((run / "run.json").is_file())
-        self.assertFalse((run / ".state").exists())
+        self.assertTrue((run / ".state" / "run-session.json").is_file())
+        self.assertEqual(self.session()["state"], "FINALIZED")
+        self.assertIsNotNone(self.session()["finalizationReceipt"])
+        self.assertFalse(self.session_path.stat().st_mode & stat.S_IWRITE)
+        journal_path = self.journal_path()
+        self.assertTrue(journal_path.is_file())
+        self.assertFalse(journal_path.stat().st_mode & stat.S_IWRITE)
         verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
         self.assertEqual((verified["operation"], verified["result"], verify_status), ("PRE_DONE_CLAIM", "PASS", 0))
-        self.assertFalse((run / ".state").exists())
+        self.assertEqual(self.session()["state"], "FINALIZED")
+
+    def test_finalized_receipt_projection_covers_every_run_schema_field(self):
+        run_schema = json.loads(
+            (self.root / "ai/schemas/run.schema.json").read_text(encoding="utf-8")
+        )
+        session_schema = json.loads(
+            (self.root / "ai/schemas/run-session.schema.json").read_text(encoding="utf-8")
+        )
+        receipt_projection = session_schema["$defs"]["finalRunProjection"]
+
+        self.assertEqual(set(receipt_projection["required"]), set(run_schema["required"]))
+        self.assertEqual(set(receipt_projection["properties"]), set(run_schema["properties"]))
+
+    def test_finalization_receipt_binds_complete_pre_receipt_session_schema(self):
+        session_schema = json.loads(
+            (self.root / "ai/schemas/run-session.schema.json").read_text(encoding="utf-8")
+        )
+        receipt = session_schema["$defs"]["finalizationReceipt"]
+        snapshot = session_schema["$defs"].get("preReceiptSession")
+
+        self.assertIsNotNone(snapshot)
+        self.assertIn("preReceiptSession", receipt["required"])
+        self.assertIn("preReceiptSessionSha256", receipt["required"])
+        self.assertIn("journalIdentity", receipt["required"])
+        self.assertEqual(set(snapshot["required"]), set(session_schema["required"]))
+        self.assertEqual(set(snapshot["properties"]), set(session_schema["properties"]))
+
+    def test_finalization_journal_semantically_binds_exact_session_transition(self):
+        result, status = self.finalize()
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        journal_path = self.journal_path()
+        original = json.loads(journal_path.read_text(encoding="utf-8"))
+        self.helper.validate_finalization_journal(self.root, original, "run-1")
+        mutations = {
+            "source": lambda value: value["sourceOpenSession"].update({
+                "startedAt": "2026-07-12T00:00:00Z",
+            }),
+            "finalizing": lambda value: value["finalizingSession"].update({
+                "workingDirectory": "alternate",
+            }),
+            "history": lambda value: value.update({"expectedLockRecoveries": [{
+                "recoveryId": "recovery-forged", "runId": "run-1",
+                "recoveredOwnerId": "owner-old", "replacementOwnerId": "owner-new",
+                "previousPid": 999999, "previousAcquiredAt": "2026-07-12T01:00:00Z",
+                "recoveredAt": "2026-07-12T03:30:00Z", "reason": "DEAD_AND_EXPIRED",
+            }]}),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                journal = json.loads(json.dumps(original))
+                mutate(journal)
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate_finalization_journal(self.root, journal, "run-1")
+
+    def test_inactive_open_journal_is_retained_without_blocking_normal_session(self):
+        source, journal = self.open_finalization_journal()
+        journal_path = self.journal_path(journal=journal)
+
+        self.assertEqual(self.helper.active_open_session(self.root, "run-1"), source)
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "ALREADY_OPEN")
+        self.assertTrue(journal_path.exists())
+        self.assertFalse(journal_path.stat().st_mode & stat.S_IWRITE)
+        self.assertEqual(self.helper.active_open_session(self.root, "run-1"), source)
+
+    def test_legacy_fixed_journal_marker_remains_explicit_recovery_required(self):
+        marker = self.root / ".ai-runs/run-1/.state/finalization-journal.json"
+        marker.write_text("{}\n", encoding="utf-8")
+
+        with self.assertRaises(self.helper.RegistryBlockedError):
+            self.helper.active_open_session(self.root, "run-1")
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+        self.assertTrue(marker.exists())
+
+    def test_session_journal_identity_tracks_first_cas_and_sealed_receipt(self):
+        result, status = self.finalize()
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        session = self.session()
+        receipt = session["finalizationReceipt"]
+        journal = json.loads(self.journal_path().read_text(encoding="utf-8"))
+        identity = session.get("finalizationJournalIdentity")
+
+        self.assertIsNotNone(identity)
+        self.assertEqual(identity, receipt["journalIdentity"])
+        self.assertEqual(identity, journal["finalizingSession"]["finalizationJournalIdentity"])
+        self.assertIsNone(journal["sourceOpenSession"]["finalizationJournalIdentity"])
+
+    def test_finalizing_journal_identity_tamper_blocks_cleanup_and_open_normalization(self):
+        _source, journal = self.open_finalization_journal()
+        mutations = {
+            "reference": {
+                "path": ".ai-runs/run-1/.state/alternate-journal.json",
+                "journalId": journal["journalId"],
+                "canonicalSha256": journal["finalizingSession"]
+                    ["finalizationJournalIdentity"]["canonicalSha256"],
+            },
+            "journal-id": {
+                "path": journal["$id"],
+                "journalId": "journal-tampered",
+                "canonicalSha256": journal["finalizingSession"]
+                    ["finalizationJournalIdentity"]["canonicalSha256"],
+            },
+        }
+        for name, identity in mutations.items():
+            with self.subTest(name=name):
+                finalizing = json.loads(json.dumps(journal["finalizingSession"]))
+                finalizing["finalizationJournalIdentity"] = identity
+                self.session_path.write_text(json.dumps(finalizing), encoding="utf-8")
+                recovered, status = self.recover_finalization()
+                self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+                self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+                self.assertEqual(self.session()["state"], "FINALIZING")
+                self.assertTrue(
+                    self.journal_path(journal=journal).exists(),
+                )
+
+    def assert_prepare_uncertainty_has_structured_reconciliation(self, exception_type):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(
+                self.helper, "replace_run_session",
+                side_effect=exception_type("injected prepare uncertainty"),
+            ),
+        ):
+            try:
+                result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+            except RuntimeError:
+                result, status = None, None
+        self.assertIsNotNone(result)
+        self.helper.validate(self.root, result, "ai/schemas/gateway-result.schema.json")
+        self.assertIn((result["result"], status), {("INVALID_STATE", 5), ("BLOCKED", 2)})
+        if result["result"] == "INVALID_STATE":
+            self.assertEqual(self.session()["state"], "OPEN")
+            retained = list(
+                (self.root / ".ai-runs/run-1/.state/finalization-journals").glob("*.json"),
+            )
+            self.assertTrue(retained)
+            self.assertTrue(all(not path.stat().st_mode & stat.S_IWRITE for path in retained))
+
+    def test_prepare_evidence_uncertainty_has_no_traceback(self):
+        self.assert_prepare_uncertainty_has_structured_reconciliation(
+            self.helper.EvidenceWriteUncertainty,
+        )
+
+    def test_prepare_runtime_error_has_no_traceback(self):
+        self.assert_prepare_uncertainty_has_structured_reconciliation(RuntimeError)
+
+    def test_failed_finalized_recovery_reapplies_read_only_modes(self):
+        self.crash_left_finalization(sealed=True, partial=("claim",))
+        session = self.session()
+        session["finalizationReceipt"]["journalIdentity"]["canonicalSha256"] = "0" * 64
+        self.session_path.write_text(json.dumps(session), encoding="utf-8")
+        journal_path = self.journal_path(session=session)
+        journal_path.chmod(0o600)
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertFalse(self.session_path.stat().st_mode & stat.S_IWRITE)
+        self.assertFalse(journal_path.stat().st_mode & stat.S_IWRITE)
+
+    def test_final_json_is_read_only_before_link_visibility(self):
+        destination = self.root / ".ai-runs/run-1/pre-link-claim.json"
+        observed = {}
+
+        def reject_link(source, target):
+            observed["sourceWritable"] = bool(Path(source).stat().st_mode & stat.S_IWRITE)
+            raise OSError("injected post-chmod uncertainty")
+
+        with mock.patch.object(os, "link", side_effect=reject_link):
+            with self.assertRaises(OSError):
+                self.helper.publish_final_json(
+                    self.root, destination, self.done_claim(),
+                    "ai/schemas/done-claim.schema.json",
+                )
+
+        self.assertEqual(observed, {"sourceWritable": False})
+        self.assertFalse(destination.exists())
+        self.assertEqual(list(destination.parent.glob(f".{destination.name}.*")), [])
+
+    def test_post_link_uncertainty_leaves_visible_final_json_read_only(self):
+        destination = self.root / ".ai-runs/run-1/post-link-claim.json"
+        original_fsync = self.helper.fsync_directory
+
+        def fail_after_link(path):
+            if Path(path) == destination.parent and destination.exists():
+                raise OSError("injected post-link uncertainty")
+            return original_fsync(path)
+
+        with mock.patch.object(self.helper, "fsync_directory", side_effect=fail_after_link):
+            with self.assertRaises(OSError):
+                self.helper.publish_final_json(
+                    self.root, destination, self.done_claim(),
+                    "ai/schemas/done-claim.schema.json",
+                )
+
+        self.assertTrue(destination.is_file())
+        self.assertFalse(destination.stat().st_mode & stat.S_IWRITE)
+
+    def finalization_control_and_artifact_paths(self):
+        session = self.session()
+        identity = session["finalizationJournalIdentity"]
+        return (
+            self.root / ".ai-runs/run-1/done-claim.json",
+            self.root / ".ai-runs/run-1/gate-results/pre-done-claim.json",
+            self.root / ".ai-runs/run-1/artifact-manifest.json",
+            self.root / ".ai-runs/run-1/run.json",
+            self.session_path,
+            self.root / identity["path"],
+        )
+
+    def test_recovery_success_repairs_every_final_artifact_mode(self):
+        self.crash_left_finalization(
+            sealed=True, partial=("claim", "gate", "manifest"),
+        )
+        before = self.finalization_control_and_artifact_paths()
+        for path in before:
+            if path.exists():
+                path.chmod(0o600)
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], recovered["data"]["action"], status), (
+            "PASS", "RESUMED", 0,
+        ))
+        for path in self.finalization_control_and_artifact_paths():
+            self.assertTrue(path.is_file(), path)
+            self.assertFalse(path.stat().st_mode & stat.S_IWRITE, path)
+
+    def test_already_finalized_recovery_repairs_every_final_artifact_mode(self):
+        result, status = self.finalize()
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        paths = self.finalization_control_and_artifact_paths()
+        for path in paths:
+            path.chmod(0o600)
+
+        recovered, recovery_status = self.recover_finalization()
+
+        self.assertEqual((
+            recovered["result"], recovered["data"]["action"], recovery_status,
+        ), ("PASS", "ALREADY_FINALIZED", 0))
+        for path in paths:
+            self.assertFalse(path.stat().st_mode & stat.S_IWRITE, path)
+
+    def test_applied_open_rollback_retains_audit_and_next_attempt_uses_unique_journal(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        original_replace = self.helper.replace_run_session
+        first_journal = {}
+        open_observed = []
+        injected = False
+        failure = self.helper.InvalidStateError([self.helper.validation_error(
+            "INJECTED_FINALIZATION_FAILURE", message="injected final publication failure",
+        )])
+
+        def apply_then_fail(root, path, replacement, acquired, expected_session=None):
+            nonlocal injected
+            if replacement["state"] == "FINALIZING" and not first_journal:
+                first_journal.update(replacement["finalizationJournalIdentity"])
+            result = original_replace(root, path, replacement, acquired, expected_session)
+            if replacement["state"] == "OPEN" and not injected:
+                injected = True
+                open_observed.append(
+                    self.helper.active_open_session(self.root, "run-1")["state"],
+                )
+                raise RuntimeError("injected applied OPEN CAS uncertainty")
+            return result
+
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(self.helper, "replace_run_session", side_effect=apply_then_fail),
+            mock.patch.object(self.helper, "publish_done_gate_manifest_run", side_effect=failure),
+        ):
+            failed, failed_status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+
+        first_path = self.root / first_journal["path"]
+        self.assertEqual((failed["result"], failed_status), ("INVALID_STATE", 5))
+        self.assertEqual(open_observed, ["OPEN"])
+        self.assertIsNone(self.session()["finalizationJournalIdentity"])
+        self.assertTrue(first_path.is_file())
+        self.assertFalse(first_path.stat().st_mode & stat.S_IWRITE)
+
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            retry, retry_status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+
+        self.assertEqual((retry["result"], retry_status), ("PASS", 0))
+        second_identity = self.session()["finalizationJournalIdentity"]
+        second_path = self.root / second_identity["path"]
+        self.assertNotEqual(second_identity["journalId"], first_journal["journalId"])
+        self.assertNotEqual(second_path, first_path)
+        self.assertTrue(first_path.is_file())
+        self.assertFalse(first_path.stat().st_mode & stat.S_IWRITE)
+        self.assertFalse(second_path.stat().st_mode & stat.S_IWRITE)
+
+    def test_verify_finalized_rejects_pre_receipt_session_reference_mutation_matrix(self):
+        result, status = self.finalize()
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        original = self.session()
+        reservation = json.loads(json.dumps(original["reservations"][0]))
+        reservation.update({
+            "attemptId": "attempt-phantom",
+            "commandResultRef": ".ai-runs/run-1/commands/verify.unit/attempt-phantom.json",
+            "processAttemptRef": ".ai-runs/run-1/process-attempts/verify.unit/attempt-phantom.json",
+        })
+        recovery = {
+            "recoveryId": "recovery-phantom", "runId": "run-1",
+            "recoveredOwnerId": "owner-old", "replacementOwnerId": "owner-new",
+            "previousPid": 999999, "previousAcquiredAt": "2026-07-12T01:00:00Z",
+            "recoveredAt": "2026-07-12T03:30:00Z", "reason": "DEAD_AND_EXPIRED",
+        }
+        mutations = {
+            "process-add": lambda value: value["processAttemptRefs"].append(
+                ".ai-runs/run-1/process-attempts/verify.unit/attempt-phantom.json"
+            ),
+            "process-remove": lambda value: value.update({"processAttemptRefs": []}),
+            "gate-add": lambda value: value["gateResultRefs"].append(
+                ".ai-runs/run-1/gate-results/phantom.json"
+            ),
+            "reservation-add": lambda value: value["reservations"].append(reservation),
+            "reservation-remove": lambda value: value.update({"reservations": []}),
+            "lock-recovery-add": lambda value: value["lockRecoveries"].append(recovery),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                payload = json.loads(json.dumps(original))
+                mutate(payload)
+                self.session_path.chmod(0o600)
+                self.session_path.write_text(json.dumps(payload), encoding="utf-8")
+                verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+                self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.session_path.chmod(0o600)
+        self.session_path.write_text(json.dumps(original), encoding="utf-8")
+
+    def test_verify_finalized_rejects_pre_receipt_lock_recovery_reorder(self):
+        self.publish_command_result(exit_code=0)
+        session = self.session()
+        session["lockRecoveries"] = [
+            {
+                "recoveryId": f"recovery-{suffix}", "runId": "run-1",
+                "recoveredOwnerId": f"owner-old-{suffix}",
+                "replacementOwnerId": f"owner-new-{suffix}", "previousPid": pid,
+                "previousAcquiredAt": f"2026-07-12T0{index}:00:00Z",
+                "recoveredAt": f"2026-07-12T0{index}:30:00Z", "reason": "DEAD_AND_EXPIRED",
+            }
+            for index, (suffix, pid) in enumerate((("one", 999998), ("two", 999999)), start=1)
+        ]
+        self.session_path.write_text(json.dumps(session), encoding="utf-8")
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            result, status = self.helper.prepare_done_claim(
+                self.root, "run-1", self.write_claim(self.done_claim()),
+            )
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        payload = self.session()
+        payload["lockRecoveries"].reverse()
+        self.session_path.chmod(0o600)
+        self.session_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_explicit_recovery_rolls_back_crash_after_first_session_cas_and_is_idempotent(self):
+        original, _finalizing = self.crash_left_finalization(
+            sealed=False, partial=("claim",),
+        )
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["operation"], recovered["result"], status), (
+            "FINALIZATION_RECOVERY", "PASS", 0,
+        ))
+        self.assertEqual(recovered["data"]["action"], "ROLLED_BACK")
+        self.assertEqual(self.session(), original)
+        self.assert_partial_finalization_absent()
+        retry, retry_status = self.recover_finalization()
+        self.assertEqual((retry["result"], retry_status), ("PASS", 0))
+        self.assertEqual(retry["data"]["action"], "ALREADY_OPEN")
+
+    def test_explicit_recovery_resumes_crash_after_receipt_cas_with_partial_artifacts(self):
+        self.crash_left_finalization(sealed=True, partial=("claim", "gate"))
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["operation"], recovered["result"], status), (
+            "FINALIZATION_RECOVERY", "PASS", 0,
+        ))
+        self.assertEqual(recovered["data"]["action"], "RESUMED")
+        self.assertTrue((self.root / ".ai-runs" / "run-1" / "run.json").is_file())
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+        self.assertEqual((verified["result"], verify_status), ("PASS", 0))
+        retry, retry_status = self.recover_finalization()
+        self.assertEqual((retry["result"], retry_status), ("PASS", 0))
+        self.assertEqual(retry["data"]["action"], "ALREADY_FINALIZED")
+
+    def test_explicit_recovery_reclaims_stale_lock_with_immutable_history_suffix(self):
+        self.crash_left_finalization(sealed=True)
+        sealed = self.session()
+        lock = self.root / ".ai-runs" / "run-1" / ".state" / "lock"
+        lock.mkdir(mode=0o700)
+        (lock / "owner.json").write_text(json.dumps({
+            "ownerId": "11111111-1111-4111-8111-111111111111",
+            "runId": "run-1", "pid": 999999,
+            "acquiredAt": "2000-01-01T00:00:00Z",
+        }), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "RESUMED")
+        retained = self.session()
+        self.assertEqual(
+            retained["finalizationReceipt"]["preReceiptSession"],
+            sealed["finalizationReceipt"]["preReceiptSession"],
+        )
+        self.assertEqual(
+            retained["lockRecoveries"][:-1], sealed["lockRecoveries"],
+        )
+        self.assertEqual(len(retained["lockRecoveries"]), len(sealed["lockRecoveries"]) + 1)
+        suffix = retained["lockRecoveries"][-1]
+        self.assertEqual(suffix["reason"], "DEAD_AND_EXPIRED")
+        self.assertEqual(suffix["recoveredOwnerId"], "11111111-1111-4111-8111-111111111111")
+        self.assertEqual(
+            suffix["replacementOwnerId"],
+            suffix["recoveryId"].removeprefix("lock-recovery-"),
+        )
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+        self.assertEqual((verified["result"], verify_status), ("PASS", 0))
+
+    def test_prepare_publishes_exact_journal_before_finalizing_cas(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = ".ai-runs/run-1/inputs/custom-done-claim.json"
+        claim_path = self.root / claim_ref
+        claim_path.parent.mkdir(mode=0o700)
+        claim_path.write_text(json.dumps(self.done_claim()), encoding="utf-8")
+        original_replace = self.helper.replace_run_session
+        observed = {}
+
+        def inspect_before_cas(root, path, replacement, acquired, expected_session=None):
+            if replacement["state"] == "FINALIZING":
+                journal_path = self.root / replacement["finalizationJournalIdentity"]["path"]
+                if journal_path.is_file():
+                    observed.update(json.loads(journal_path.read_text(encoding="utf-8")))
+            return original_replace(root, path, replacement, acquired, expected_session)
+
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(self.helper, "replace_run_session", side_effect=inspect_before_cas),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        self.assertEqual(observed["claimInputRef"], claim_ref)
+        self.assertEqual(observed["sourceOpenSession"]["state"], "OPEN")
+        self.assertEqual(observed["finalizingSession"]["state"], "FINALIZING")
+        self.assertEqual(
+            observed["expectedLockRecoveries"],
+            observed["sourceOpenSession"]["lockRecoveries"],
+        )
+
+    def test_recovery_uses_sealed_custom_claim_input_reference(self):
+        custom_ref = ".ai-runs/run-1/inputs/custom-done-claim.json"
+        self.crash_left_finalization(sealed=True, claim_reference=custom_ref)
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "RESUMED")
+        self.assertTrue((self.root / ".ai-runs/run-1/run.json").is_file())
+
+    def test_recovery_resumes_crash_after_valid_manifest_publication(self):
+        self.crash_left_finalization(
+            sealed=True, partial=("claim", "gate", "manifest"),
+        )
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "RESUMED")
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+        self.assertEqual((verified["result"], verify_status), ("PASS", 0))
+
+    def test_missing_finalization_journal_never_normalizes_to_open(self):
+        self.crash_left_finalization(sealed=True, partial=("claim",))
+        journal_path = self.journal_path()
+        journal_path.chmod(0o600)
+        journal_path.unlink()
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+        self.assertEqual(self.session()["state"], "FINALIZED")
+        self.assertFalse((self.root / ".ai-runs/run-1/run.json").exists())
+
+    def test_mutated_finalization_journal_never_normalizes_to_open(self):
+        self.crash_left_finalization(sealed=True, partial=("claim",))
+        journal_path = self.journal_path()
+        journal_path.chmod(0o600)
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        journal["claimInputRef"] = ".ai-runs/run-1/alternate-claim-input.json"
+        journal_path.write_text(json.dumps(journal), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+        self.assertEqual(self.session()["state"], "FINALIZED")
+        self.assertTrue(journal_path.exists())
+
+    def test_mutated_receipt_journal_identity_never_normalizes_to_open(self):
+        self.crash_left_finalization(sealed=True, partial=("claim",))
+        session = self.session()
+        journal_path = self.journal_path(session=session)
+        session["finalizationReceipt"]["journalIdentity"]["canonicalSha256"] = "0" * 64
+        self.session_path.write_text(json.dumps(session), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+        self.assertEqual(self.session()["state"], "FINALIZED")
+        self.assertTrue(journal_path.exists())
+
+    def test_schema_invalid_receipt_never_normalizes_to_open(self):
+        self.crash_left_finalization(sealed=True, partial=("claim",))
+        session = self.session()
+        del session["finalizationReceipt"]["journalIdentity"]
+        self.session_path.write_text(json.dumps(session), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+        self.assertEqual(
+            json.loads(self.session_path.read_text(encoding="utf-8"))["state"],
+            "FINALIZED",
+        )
+
+    def assert_recovery_uncertainty_is_fail_closed(self, exception_type):
+        self.crash_left_finalization(sealed=True)
+        with mock.patch.object(
+            self.helper, "resume_sealed_finalization",
+            side_effect=exception_type("injected recovery uncertainty"),
+        ):
+            recovered, status = self.recover_finalization()
+        self.helper.validate(
+            self.root, recovered, "ai/schemas/gateway-result.schema.json",
+        )
+        self.assertEqual((recovered["result"], status), ("BLOCKED", 2))
+        self.assertEqual(recovered["reason"], "FINALIZATION_RECOVERY_REQUIRED")
+
+    def test_recovery_evidence_uncertainty_returns_schema_valid_fail_closed_result(self):
+        self.assert_recovery_uncertainty_is_fail_closed(
+            self.helper.EvidenceWriteUncertainty,
+        )
+
+    def test_recovery_runtime_error_returns_schema_valid_fail_closed_result(self):
+        self.assert_recovery_uncertainty_is_fail_closed(RuntimeError)
+
+    def test_explicit_recovery_rolls_back_inconsistent_partial_artifact(self):
+        original, _sealed = self.crash_left_finalization(
+            sealed=True, partial=("claim",),
+        )
+        claim_path = self.root / ".ai-runs" / "run-1" / "done-claim.json"
+        claim_path.chmod(0o600)
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        claim["overallResult"] = "FAIL"
+        claim_path.write_text(json.dumps(claim), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "ROLLED_BACK")
+        self.assertEqual(self.session(), original)
+        self.assert_partial_finalization_absent()
+
+    def test_stale_lock_suffix_survives_exact_rollback_to_open(self):
+        self.crash_left_finalization(sealed=True, partial=("claim",))
+        claim_path = self.root / ".ai-runs/run-1/done-claim.json"
+        claim_path.chmod(0o600)
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        claim["overallResult"] = "FAIL"
+        claim_path.write_text(json.dumps(claim), encoding="utf-8")
+        lock = self.root / ".ai-runs/run-1/.state/lock"
+        lock.mkdir(mode=0o700)
+        (lock / "owner.json").write_text(json.dumps({
+            "ownerId": "22222222-2222-4222-8222-222222222222",
+            "runId": "run-1", "pid": 999999, "acquiredAt": "2000-01-01T00:00:00Z",
+        }), encoding="utf-8")
+
+        recovered, status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "ROLLED_BACK")
+        session = self.session()
+        self.assertEqual(session["state"], "OPEN")
+        self.assertEqual(len(session["lockRecoveries"]), 1)
+        self.assertEqual(
+            session["lockRecoveries"][0]["recoveredOwnerId"],
+            "22222222-2222-4222-8222-222222222222",
+        )
+        self.assert_partial_finalization_absent()
+
+    def test_finalization_recovery_cli_dispatches_documented_operation(self):
+        with (
+            mock.patch.object(self.helper, "recover_finalization", return_value=(
+                self.helper.gateway_result(
+                    "PASS", None,
+                    {"runId": "run-1", "state": "OPEN", "action": "ALREADY_OPEN"},
+                    operation="FINALIZATION_RECOVERY",
+                ),
+                0,
+            )) as recover,
+            mock.patch.object(
+                sys, "argv",
+                [
+                    "workflow_helper.py", "finalization-recover", "--repository-root",
+                    str(self.root), "--run-id", "run-1",
+                ],
+            ),
+            mock.patch("builtins.print"),
+        ):
+            status = self.helper.main()
+
+        self.assertEqual(status, 0)
+        recover.assert_called_once()
+        shell = (REPOSITORY_ROOT / "scripts/ai/done-claim-check.sh").read_text(encoding="utf-8")
+        self.assertIn("recover-finalization", shell)
+        self.assertIn("finalization-recover", shell)
+        policy = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "done-claim-check.sh recover-finalization <run-id>", policy,
+        )
+        self.assertIn(".state/finalization-journals/<journal-id>.json", policy)
+        self.assertIn("invalid or missing journal/receipt authority", policy)
+        self.assertIn("legacy fixed `.state/finalization-journal.json` marker remain `BLOCKED`", policy)
+
+    def test_recovery_never_rolls_back_published_run_and_repairs_session_read_only(self):
+        result, status = self.finalize()
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        self.session_path.chmod(0o600)
+
+        recovered, recovery_status = self.recover_finalization()
+
+        self.assertEqual((recovered["result"], recovery_status), ("PASS", 0))
+        self.assertEqual(recovered["data"]["action"], "ALREADY_FINALIZED")
+        self.assertTrue((self.root / ".ai-runs" / "run-1" / "run.json").is_file())
+        self.assertEqual(self.session()["state"], "FINALIZED")
+        self.assertFalse(self.session_path.stat().st_mode & stat.S_IWRITE)
+
+    def test_check_evidence_must_be_top_level_and_bound_to_session(self):
+        self.publish_command_result(exit_code=0)
+        claim = self.done_claim()
+        claim["checks"][0]["evidenceRefs"] = ["ai/verification-policy.json"]
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            result, status = self.helper.prepare_done_claim(
+                self.root, "run-1", self.write_claim(claim),
+            )
+        self.assertEqual((result["result"], status), ("INVALID_STATE", 5))
+        self.assertEqual(result["reason"], "DONE_CLAIM_CHECK_EVIDENCE_UNBOUND")
+
+    def test_pass_check_cannot_also_be_declared_not_run(self):
+        self.publish_command_result(exit_code=0)
+        claim = self.done_claim()
+        claim["notRunItems"] = [{"id": "verify.unit", "reason": "not executed"}]
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            result, status = self.helper.prepare_done_claim(
+                self.root, "run-1", self.write_claim(claim),
+            )
+        self.assertEqual((result["result"], status), ("INVALID_STATE", 5))
+        self.assertEqual(result["reason"], "DONE_CLAIM_NOT_RUN_CONTRADICTION")
 
     def test_unreferenced_process_attempt_blocks_finalization(self):
         self.publish_command_result(exit_code=0)
@@ -5698,6 +6865,122 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual(verified["reason"], "ARTIFACT_DIGEST_MISMATCH")
         self.assertEqual(before, after)
 
+    def test_verify_finalized_rejects_tampered_run_json(self):
+        self.publish_command_result(exit_code=0)
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            result, status = self.helper.prepare_done_claim(
+                self.root, "run-1", self.write_claim(self.done_claim()),
+            )
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        path = self.root / ".ai-runs" / "run-1" / "run.json"
+        path.chmod(0o600)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["taskKey"] = "other-task"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_verify_finalized_rejects_stale_run_result(self):
+        self.publish_command_result(exit_code=0)
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            result, status = self.helper.prepare_done_claim(
+                self.root, "run-1", self.write_claim(self.done_claim()),
+            )
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        path = self.root / ".ai-runs" / "run-1" / "run.json"
+        path.chmod(0o600)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["result"] = "BLOCKED"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_verify_finalized_rejects_every_unbound_run_field_mutation(self):
+        result, status = self.finalize()
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        path = self.root / ".ai-runs" / "run-1" / "run.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        mutations = {
+            "$id": ".ai-runs/run-1/forged-run.json",
+            "startedAt": "2026-07-12T02:59:59Z",
+            "endedAt": "2026-07-12T03:59:59Z",
+            "workingDirectory": "alternate",
+            "environment": "CI",
+            "redactionApplied": not original["redactionApplied"],
+            "reason": "schema-valid forged finalization reason",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                path.chmod(0o600)
+                payload = json.loads(json.dumps(original))
+                payload[field] = value
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+                self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+                self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+        path.chmod(0o600)
+        path.write_text(json.dumps(original), encoding="utf-8")
+
+    def test_verify_non_pass_finalized_rejects_manifest_identity_mutation(self):
+        result, status = self.finalize(exit_code=9)
+        self.assertEqual((result["result"], status), ("FAIL", 1))
+        self.rewrite_final_json("artifact-manifest.json", lambda manifest: manifest.update({
+            "$id": ".ai-runs/other-run/artifact-manifest.json",
+            "runId": "other-run",
+        }))
+
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_verify_non_pass_finalized_rejects_manifest_artifact_identity_mutation(self):
+        result, status = self.finalize(exit_code=9)
+        self.assertEqual((result["result"], status), ("FAIL", 1))
+
+        def forge_artifact_kind(manifest):
+            process_attempt = next(
+                artifact for artifact in manifest["artifacts"]
+                if artifact["kind"] == "PROCESS_ATTEMPT"
+            )
+            process_attempt["kind"] = "GATE_RESULT"
+
+        self.rewrite_final_json("artifact-manifest.json", forge_artifact_kind)
+
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_verify_non_pass_finalized_rejects_repaired_claim_outcome_mutation(self):
+        result, status = self.finalize(exit_code=9)
+        self.assertEqual((result["result"], status), ("FAIL", 1))
+        claim_path = self.rewrite_final_json(
+            "done-claim.json", lambda claim: claim.update({"overallResult": "FAIL"}),
+        )
+        self.repair_manifest_identity(claim_path)
+
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_verify_non_pass_finalized_rejects_repaired_gate_outcome_mutation(self):
+        result, status = self.finalize(exit_code=9)
+        self.assertEqual((result["result"], status), ("FAIL", 1))
+        gate_path = self.rewrite_final_json(
+            "gate-results/pre-done-claim.json",
+            lambda gate: gate.update({"reason": "schema-valid forged gate reason"}),
+        )
+        self.repair_manifest_identity(gate_path)
+
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
     def test_evidence_free_pass_claim_is_blocked(self):
         claim = self.done_claim(checks=[])
         claim["evidenceRefs"] = []
@@ -5738,8 +7021,14 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
     def test_stale_generated_summary_blocks_finalization(self):
         self.publish_command_result(exit_code=0)
         summary = self.root / "ai" / "project-state.md"
+        project_state = json.loads(
+            (self.root / "ai" / "project-state.json").read_text(encoding="utf-8")
+        )
+        current_marker = f"Updated at: `{project_state['updatedAt']}`"
+        summary_text = summary.read_text(encoding="utf-8")
+        self.assertIn(current_marker, summary_text)
         summary.write_text(
-            summary.read_text(encoding="utf-8").replace("Updated at: `2026-07-10T14:17:27Z`", "Updated at: `1999-01-01T00:00:00Z`"),
+            summary_text.replace(current_marker, "Updated at: `1999-01-01T00:00:00Z`"),
             encoding="utf-8",
         )
         with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
@@ -5749,6 +7038,181 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual((result["operation"], result["result"], status), ("PRE_DONE_CLAIM", "INVALID_STATE", 5))
         self.assertEqual(result["reason"], "PROJECT_STATE_SUMMARY_STALE")
         self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+
+    def test_validation_failure_before_run_publication_rolls_back_and_retries(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        failure = self.helper.InvalidStateError([self.helper.validation_error(
+            "INJECTED_FINALIZATION_FAILURE", message="injected finalization validation failure",
+        )])
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(
+                self.helper,
+                "publish_done_gate_manifest_run",
+                side_effect=lambda *args: self.inject_partial_finalization_failure(failure),
+            ),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "INJECTED_FINALIZATION_FAILURE", 5,
+        ))
+        self.assertEqual(self.session()["state"], "OPEN")
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        self.assert_partial_finalization_absent()
+
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            retry, retry_status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((retry["result"], retry_status), ("PASS", 0))
+
+    def test_io_failure_before_run_publication_rolls_back_and_retries(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        failure = OSError("injected finalization I/O failure")
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(
+                self.helper,
+                "publish_done_gate_manifest_run",
+                side_effect=lambda *args: self.inject_partial_finalization_failure(failure),
+            ),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "PRE_DONE_CLAIM_FAILED", 5,
+        ))
+        self.assertEqual(self.session()["state"], "OPEN")
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        self.assert_partial_finalization_absent()
+
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            retry, retry_status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((retry["result"], retry_status), ("PASS", 0))
+
+    def test_mutated_sealed_session_requires_explicit_recovery(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        failure = self.helper.InvalidStateError([self.helper.validation_error(
+            "INJECTED_FINALIZATION_FAILURE", message="injected finalization validation failure",
+        )])
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(
+                self.helper,
+                "publish_done_gate_manifest_run",
+                side_effect=lambda *args: self.inject_partial_finalization_failure(
+                    failure, mutate_session=True,
+                ),
+            ),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "FINALIZATION_RECOVERY_REQUIRED", 2,
+        ))
+        self.assertEqual(self.session()["state"], "FINALIZED")
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        for path in self.partial_finalization_paths():
+            self.assertTrue(path.exists(), path)
+
+    def test_transition_exception_after_finalizing_replace_rolls_back_exact_open_session(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        original_session = self.session()
+        original_fsync = self.helper.fsync_directory
+        injected = False
+
+        def fail_after_finalizing_replace(path):
+            nonlocal injected
+            if (
+                not injected
+                and Path(path) == self.session_path.parent
+                and self.session()["state"] == "FINALIZING"
+            ):
+                injected = True
+                raise OSError("injected failure after FINALIZING replacement")
+            return original_fsync(path)
+
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(self.helper, "fsync_directory", side_effect=fail_after_finalizing_replace),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "PRE_DONE_CLAIM_FAILED", 5,
+        ))
+        self.assertEqual(self.session(), original_session)
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        self.assert_partial_finalization_absent()
+
+    def test_transition_exception_after_finalized_seal_rolls_back_exact_open_session(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        original_session = self.session()
+        original_fsync = self.helper.fsync_directory
+        injected = False
+
+        def fail_after_finalized_seal(path):
+            nonlocal injected
+            if (
+                not injected
+                and Path(path) == self.session_path.parent
+                and self.session()["state"] == "FINALIZED"
+            ):
+                injected = True
+                raise OSError("injected failure after FINALIZED receipt seal")
+            return original_fsync(path)
+
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(self.helper, "fsync_directory", side_effect=fail_after_finalized_seal),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "PRE_DONE_CLAIM_FAILED", 5,
+        ))
+        self.assertEqual(self.session(), original_session)
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        self.assert_partial_finalization_absent()
+
+    def test_restore_exception_after_open_replace_preserves_original_failure_and_snapshot(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        original_session = self.session()
+        failure = self.helper.InvalidStateError([self.helper.validation_error(
+            "INJECTED_FINALIZATION_FAILURE", message="injected finalization validation failure",
+        )])
+        original_fsync = self.helper.fsync_directory
+        finalizing_observed = False
+        injected = False
+
+        def fail_after_open_restore(path):
+            nonlocal finalizing_observed, injected
+            if Path(path) == self.session_path.parent:
+                state = self.session()["state"]
+                if state == "FINALIZING":
+                    finalizing_observed = True
+                elif finalizing_observed and state == "OPEN" and not injected:
+                    injected = True
+                    raise OSError("injected failure after OPEN replacement")
+            return original_fsync(path)
+
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(
+                self.helper,
+                "publish_done_gate_manifest_run",
+                side_effect=lambda *args: self.inject_partial_finalization_failure(failure),
+            ),
+            mock.patch.object(self.helper, "fsync_directory", side_effect=fail_after_open_restore),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "INJECTED_FINALIZATION_FAILURE", 5,
+        ))
+        self.assertEqual(self.session(), original_session)
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        self.assert_partial_finalization_absent()
 
 
 class Phase1B2Task7RepositoryBoundaryTests(unittest.TestCase):
@@ -5925,6 +7389,55 @@ class Phase2AContextCacheTests(unittest.TestCase):
         self.assertTrue(context["routes"])
         self.assertIsInstance(cache["entries"], list)
 
+    def test_verification_decision_cache_schema_requires_complete_identity(self):
+        cache = {
+            "$schema": "./schemas/workflow-cache.schema.json",
+            "$id": "ai/workflow-cache.json",
+            "schemaVersion": 1,
+            "updatedAt": "2026-07-14T00:00:00Z",
+            "entries": [{
+                "id": "review-decision",
+                "kind": "VERIFICATION_DECISION",
+                "status": "FRESH",
+                "key": {
+                    "taskKey": "issue-10",
+                    "gateInvocationId": "gate-review",
+                    "commitSha": "0123456789abcdef0123456789abcdef01234567",
+                    "changeType": "documentation-only",
+                    "entryPoint": "review",
+                    "policySha256": "a" * 64,
+                    "checkBindings": [{
+                        "checkId": "review-gate",
+                        "producerId": "review-gate",
+                        "leafResultRef": "ai/fixtures/phase-2c/review-gate.json",
+                        "leafResultSha256": "b" * 64,
+                        "evidence": {
+                            "path": "ai/agent-handoff.json",
+                            "sha256": "c" * 64,
+                            "schema": "ai/schemas/gateway-result.schema.json",
+                        },
+                    }],
+                    "environmentFingerprint": None,
+                    "expiresAt": "2026-07-14T00:05:00Z",
+                },
+                "summary": "Bound review decision fixture.",
+                "evidenceRefs": ["ai/agent-handoff.json"],
+                "createdAt": "2026-07-14T00:00:00Z",
+            }],
+            "handoffNotes": [],
+            "invalidationEvents": [],
+        }
+        self.helper.validate(REPOSITORY_ROOT, cache, "ai/schemas/workflow-cache.schema.json")
+
+        newline_digest = json.loads(json.dumps(cache))
+        newline_digest["entries"][0]["key"]["checkBindings"][0]["leafResultSha256"] += "\n"
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                REPOSITORY_ROOT,
+                newline_digest,
+                "ai/schemas/workflow-cache.schema.json",
+            )
+
     def test_phase_2a_policy_text_preserves_repository_boundary(self):
         combined = "\n".join(self.read_repository_text(path) for path in (
             "ai/context-map.md",
@@ -6017,6 +7530,465 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
         self.assertEqual(invalidation["read-agents"], "STALE")
         self.assertEqual(invalidation["unmapped"], "UNCERTAIN")
 
+    def verification_cache_entry(self):
+        policy_path = self.root / "ai" / "verification-policy.json"
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        policy_sha256 = hashlib.sha256(policy_path.read_bytes()).hexdigest()
+        commit_sha = "0123456789abcdef0123456789abcdef01234567"
+        task_key = "issue-10"
+        gate_invocation_id = "gate-review"
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        produced_at = now - dt.timedelta(minutes=1)
+        checks = {item["id"]: item for item in policy["checks"]}
+        change = next(item for item in policy["changeTypes"] if item["id"] == "documentation-only")
+        check_bindings = []
+        for check_id in change["requiredChecks"] + change["optionalChecks"]:
+            check = checks[check_id]
+            if check_id == "native-runtime-adapter":
+                leaf = {
+                    "$schema": "ai/schemas/native-adapter-result.schema.json",
+                    "$id": "ai/native-adapter-result.json",
+                    "schemaVersion": 1,
+                    "operation": "NATIVE_ADAPTER_GATE",
+                    "result": "UNSUPPORTED",
+                    "phase2cLeafResult": "NOT_APPLICABLE",
+                    "reason": "The current host has no supported native adapter.",
+                    "data": {
+                        "hostId": "codex-desktop",
+                        "hostVersion": None,
+                        "versionProvenance": "UNPROBED",
+                        "claimedSurfaces": [
+                            {"surface": surface, "status": "UNSUPPORTED", "reasonCode": "HOST_UNSUPPORTED"}
+                            for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+                        ],
+                        "trustedSurfaces": [
+                            {"surface": surface, "status": "UNSUPPORTED", "reasonCode": "HOST_UNSUPPORTED"}
+                            for surface in ("COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL")
+                        ],
+                        "bypassAttemptRefs": [],
+                        "repositoryOnlyQualification": True,
+                        "phase2CLeafResult": "NOT_APPLICABLE",
+                    },
+                }
+                leaf_path = self.root / "ai" / "native-adapter-result.json"
+                leaf_path.write_text(json.dumps(leaf, sort_keys=True), encoding="utf-8")
+                evidence_path = self.root / "ai" / "native-runtime-adapters.json"
+                evidence = {
+                    "path": evidence_path.relative_to(self.root).as_posix(),
+                    "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+                    "schema": "ai/schemas/native-runtime-adapters.schema.json",
+                }
+            else:
+                evidence_path = self.root / "ai" / f"cache-{check_id}-evidence.json"
+                if check["evidenceSchema"] == "ai/schemas/gateway-result.schema.json":
+                    evidence_value = preflight_pass()
+                else:
+                    evidence_value = json.loads(
+                        (self.root / "ai" / "fixtures" / "phase-1a" / "valid" / "command-result.json")
+                        .read_text(encoding="utf-8")
+                    )
+                evidence_path.write_text(json.dumps(evidence_value, sort_keys=True), encoding="utf-8")
+                evidence = {
+                    "path": evidence_path.relative_to(self.root).as_posix(),
+                    "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+                    "schema": check["evidenceSchema"],
+                }
+                leaf_path = self.root / "ai" / f"cache-{check_id}-leaf.json"
+                leaf_ref = leaf_path.relative_to(self.root).as_posix()
+                leaf = {
+                    "$schema": "ai/schemas/verification-leaf-result.schema.json",
+                    "$id": leaf_ref,
+                    "schemaVersion": 1,
+                    "checkId": check_id,
+                    "result": "PASS",
+                    "taskKey": task_key,
+                    "gateInvocationId": gate_invocation_id,
+                    "commitSha": commit_sha,
+                    "policySha256": policy_sha256,
+                    "producerId": check["producerId"],
+                    "producedAt": produced_at.isoformat().replace("+00:00", "Z"),
+                    "expiresAt": (produced_at + dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                    "evidence": {
+                        "ref": evidence["path"],
+                        "sha256": evidence["sha256"],
+                        "schema": evidence["schema"],
+                    },
+                    "reason": None,
+                }
+                leaf_path.write_text(json.dumps(leaf, sort_keys=True), encoding="utf-8")
+            check_bindings.append({
+                "checkId": check_id,
+                "producerId": check["producerId"],
+                "leafResultRef": leaf_path.relative_to(self.root).as_posix(),
+                "leafResultSha256": hashlib.sha256(leaf_path.read_bytes()).hexdigest(),
+                "evidence": evidence,
+            })
+        return {
+            "id": "review-decision",
+            "kind": "VERIFICATION_DECISION",
+            "status": "FRESH",
+            "key": {
+                "taskKey": "issue-10",
+                "gateInvocationId": "gate-review",
+                "commitSha": "0123456789abcdef0123456789abcdef01234567",
+                "changeType": "documentation-only",
+                "entryPoint": "review",
+                "policySha256": policy_sha256,
+                "checkBindings": check_bindings,
+                "environmentFingerprint": None,
+                "expiresAt": (
+                    dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=4)
+                ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            },
+            "summary": "Bound review decision fixture.",
+            "evidenceRefs": [
+                binding["evidence"]["path"] for binding in check_bindings
+            ],
+            "createdAt": "2026-07-14T00:00:00Z",
+        }
+
+    def legacy_review_only_cache_entry(self):
+        evidence_path = self.root / "ai" / "cache-arbitrary.json"
+        evidence_path.write_text("{}\n", encoding="utf-8")
+        entry = self.verification_cache_entry()
+        entry["key"].pop("checkBindings")
+        entry["key"]["producerIds"] = ["review-gate"]
+        entry["key"]["evidence"] = [{
+            "path": evidence_path.relative_to(self.root).as_posix(),
+            "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+        }]
+        entry["evidenceRefs"] = [evidence_path.relative_to(self.root).as_posix()]
+        return entry
+
+    def test_verification_cache_review_only_arbitrary_evidence_is_never_fresh(self):
+        entry = self.legacy_review_only_cache_entry()
+        with mock.patch.object(
+                self.helper, "repository_commit_sha", return_value=entry["key"]["commitSha"]):
+            actual = self.helper.cache_invalidation_report(
+                self.root, {"entries": [entry]},
+            )[0]
+        self.assertEqual(actual["status"], "STALE")
+
+    def test_verification_cache_exact_full_consumed_check_set_is_uncertain_without_durable_native_leaf(self):
+        entry = self.verification_cache_entry()
+        with mock.patch.object(
+                self.helper, "repository_commit_sha", return_value=entry["key"]["commitSha"]):
+            actual = self.helper.cache_invalidation_report(
+                self.root, {"entries": [entry]},
+            )[0]
+        self.assertEqual(actual["status"], "UNCERTAIN")
+        self.assertIn("durable", actual["reason"].lower())
+
+    def test_verification_cache_copied_native_result_path_is_stale(self):
+        entry = self.verification_cache_entry()
+        native_binding = entry["key"]["checkBindings"][0]
+        source = self.root / native_binding["leafResultRef"]
+        copied = self.root / "ai" / "copied-native-adapter-result.json"
+        copied.write_bytes(source.read_bytes())
+        native_binding["leafResultRef"] = copied.relative_to(self.root).as_posix()
+        native_binding["leafResultSha256"] = hashlib.sha256(copied.read_bytes()).hexdigest()
+        native_binding["evidence"] = {
+            "path": native_binding["leafResultRef"],
+            "sha256": native_binding["leafResultSha256"],
+            "schema": "ai/schemas/native-adapter-result.schema.json",
+        }
+        entry["evidenceRefs"][0] = native_binding["evidence"]["path"]
+        with mock.patch.object(
+                self.helper, "repository_commit_sha", return_value=entry["key"]["commitSha"]):
+            actual = self.helper.cache_invalidation_report(
+                self.root, {"entries": [entry]},
+            )[0]
+        self.assertEqual(actual["status"], "STALE")
+
+    def test_verification_cache_schema_accepts_actual_native_evidence_schema(self):
+        entry = self.verification_cache_entry()
+        cache = {
+            "$schema": "./schemas/workflow-cache.schema.json",
+            "$id": "ai/workflow-cache.json",
+            "schemaVersion": 1,
+            "updatedAt": "2026-07-14T00:00:00Z",
+            "entries": [entry],
+            "handoffNotes": [],
+            "invalidationEvents": [],
+        }
+        self.helper.validate(
+            self.root, cache, "ai/schemas/workflow-cache.schema.json",
+        )
+
+    def test_verification_cache_identity_covers_every_decision_input(self):
+        entry = self.verification_cache_entry()
+        baseline = self.helper.cache_entry_identity(entry)
+        mutations = {
+            "taskKey": "issue-11",
+            "gateInvocationId": "gate-other",
+            "commitSha": "fedcba9876543210fedcba9876543210fedcba98",
+            "changeType": "documentation-only-other",
+            "entryPoint": "done-claim",
+            "policySha256": "c" * 64,
+            "environmentFingerprint": "d" * 64,
+            "expiresAt": "2099-01-01T00:00:00Z",
+        }
+        for field, value in mutations.items():
+            candidate = json.loads(json.dumps(entry))
+            candidate["key"][field] = value
+            with self.subTest(field=field):
+                self.assertNotEqual(self.helper.cache_entry_identity(candidate), baseline)
+
+        for field in ("checkId", "producerId", "leafResultRef", "leafResultSha256"):
+            candidate = json.loads(json.dumps(entry))
+            candidate["key"]["checkBindings"][0][field] = (
+                "done-claim-gate" if field in ("checkId", "producerId")
+                else "ai/other.json" if field == "leafResultRef"
+                else "e" * 64
+            )
+            with self.subTest(binding_field=field):
+                self.assertNotEqual(self.helper.cache_entry_identity(candidate), baseline)
+
+        for field, value in (
+            ("path", "ai/other-evidence.json"),
+            ("sha256", "e" * 64),
+            ("schema", "ai/schemas/command-result.schema.json"),
+        ):
+            candidate = json.loads(json.dumps(entry))
+            candidate["key"]["checkBindings"][0]["evidence"][field] = value
+            with self.subTest(evidence_field=field):
+                self.assertNotEqual(self.helper.cache_entry_identity(candidate), baseline)
+
+    def test_verification_cache_report_fails_closed_for_stale_or_unmapped_identity(self):
+        entry = self.verification_cache_entry()
+        commit_sha = entry["key"]["commitSha"]
+        with mock.patch.object(self.helper, "repository_commit_sha", return_value=commit_sha):
+            report = self.helper.cache_invalidation_report(self.root, {"entries": [entry]})
+            self.assertEqual(report[0]["status"], "UNCERTAIN")
+
+            mutations = (
+                ("policy digest", "policySha256", "c" * 64, "STALE"),
+                ("commit", "commitSha", "fedcba9876543210fedcba9876543210fedcba98", "STALE"),
+                ("task key", "taskKey", "", "UNCERTAIN"),
+                ("gate ID", "gateInvocationId", "", "UNCERTAIN"),
+                ("change type", "changeType", "unknown-change", "UNCERTAIN"),
+                ("entry point", "entryPoint", "api-smoke", "UNCERTAIN"),
+                ("environment", "environmentFingerprint", "d" * 64, "UNCERTAIN"),
+                ("expiry", "expiresAt", "2000-01-01T00:00:00Z", "STALE"),
+            )
+            for name, field, value, expected_status in mutations:
+                candidate = json.loads(json.dumps(entry))
+                candidate["key"][field] = value
+                with self.subTest(name=name):
+                    actual = self.helper.cache_invalidation_report(
+                        self.root, {"entries": [candidate]},
+                    )[0]
+                    self.assertEqual(actual["status"], expected_status)
+
+            binding_cases = []
+            missing = json.loads(json.dumps(entry))
+            missing["key"]["checkBindings"].pop()
+            binding_cases.append(("missing", missing, "STALE"))
+            extra = json.loads(json.dumps(entry))
+            extra["key"]["checkBindings"].append(
+                json.loads(json.dumps(extra["key"]["checkBindings"][0]))
+            )
+            binding_cases.append(("extra", extra, "STALE"))
+            duplicate = json.loads(json.dumps(entry))
+            duplicate["key"]["checkBindings"][-1] = json.loads(json.dumps(
+                duplicate["key"]["checkBindings"][0]
+            ))
+            binding_cases.append(("duplicate", duplicate, "STALE"))
+            reordered = json.loads(json.dumps(entry))
+            reordered["key"]["checkBindings"][0:2] = reversed(
+                reordered["key"]["checkBindings"][0:2]
+            )
+            binding_cases.append(("reordered", reordered, "STALE"))
+            for name, path, value in (
+                ("wrong check", (0, "checkId"), "done-claim-gate"),
+                ("wrong producer", (0, "producerId"), "done-claim-gate"),
+                ("wrong leaf digest", (0, "leafResultSha256"), "e" * 64),
+                ("wrong evidence digest", (0, "evidence", "sha256"), "e" * 64),
+                ("wrong evidence schema", (4, "evidence", "schema"), "ai/schemas/gateway-result.schema.json"),
+            ):
+                candidate = json.loads(json.dumps(entry))
+                target = candidate["key"]["checkBindings"][path[0]]
+                if len(path) == 2:
+                    target[path[1]] = value
+                else:
+                    target[path[1]][path[2]] = value
+                binding_cases.append((name, candidate, "STALE"))
+            arbitrary_evidence = json.loads(json.dumps(entry))
+            arbitrary_path = self.root / "ai" / "cache-arbitrary-bound-evidence.json"
+            arbitrary_path.write_text("{}\n", encoding="utf-8")
+            arbitrary_binding = arbitrary_evidence["key"]["checkBindings"][1]
+            arbitrary_binding["evidence"].update({
+                "path": arbitrary_path.relative_to(self.root).as_posix(),
+                "sha256": hashlib.sha256(arbitrary_path.read_bytes()).hexdigest(),
+            })
+            original_leaf_path = self.root / arbitrary_binding["leafResultRef"]
+            arbitrary_leaf = json.loads(original_leaf_path.read_text(encoding="utf-8"))
+            arbitrary_leaf_path = self.root / "ai" / "cache-arbitrary-bound-leaf.json"
+            arbitrary_binding["leafResultRef"] = arbitrary_leaf_path.relative_to(self.root).as_posix()
+            arbitrary_leaf["$id"] = arbitrary_binding["leafResultRef"]
+            arbitrary_leaf["evidence"].update({
+                "ref": arbitrary_binding["evidence"]["path"],
+                "sha256": arbitrary_binding["evidence"]["sha256"],
+            })
+            arbitrary_leaf_path.write_text(
+                json.dumps(arbitrary_leaf, sort_keys=True), encoding="utf-8",
+            )
+            arbitrary_binding["leafResultSha256"] = hashlib.sha256(
+                arbitrary_leaf_path.read_bytes()
+            ).hexdigest()
+            binding_cases.append(("schema-invalid arbitrary evidence", arbitrary_evidence, "STALE"))
+            unavailable_leaf = json.loads(json.dumps(entry))
+            unavailable_leaf["key"]["checkBindings"][1]["leafResultRef"] = "ai/missing-leaf.json"
+            binding_cases.append(("unavailable leaf", unavailable_leaf, "UNCERTAIN"))
+            for name, candidate, expected_status in binding_cases:
+                with self.subTest(binding=name):
+                    actual = self.helper.cache_invalidation_report(
+                        self.root, {"entries": [candidate]},
+                    )[0]
+                    self.assertEqual(actual["status"], expected_status)
+
+            unavailable_evidence = json.loads(json.dumps(entry))
+            evidence_path = self.root / unavailable_evidence["key"]["checkBindings"][1]["evidence"]["path"]
+            evidence_path.unlink()
+            actual = self.helper.cache_invalidation_report(
+                self.root, {"entries": [unavailable_evidence]},
+            )[0]
+            self.assertEqual(actual["status"], "UNCERTAIN")
+
+    def test_verification_cache_stale_findings_precede_compound_uncertainty(self):
+        entry = self.verification_cache_entry()
+        commit_sha = entry["key"]["commitSha"]
+        cases = []
+
+        environment_and_expired = json.loads(json.dumps(entry))
+        environment_and_expired["key"]["environmentFingerprint"] = "d" * 64
+        environment_and_expired["key"]["expiresAt"] = "2000-01-01T00:00:00Z"
+        cases.append(("environment plus expiry", environment_and_expired))
+
+        unmapped_and_evidence_mismatch = json.loads(json.dumps(entry))
+        unmapped_and_evidence_mismatch["key"]["changeType"] = "unknown-change"
+        unmapped_and_evidence_mismatch["key"]["checkBindings"][0]["evidence"]["sha256"] = "e" * 64
+        cases.append(("unmapped classification plus evidence mismatch", unmapped_and_evidence_mismatch))
+
+        unmapped_and_expired = json.loads(json.dumps(entry))
+        unmapped_and_expired["key"]["changeType"] = "unknown-change"
+        unmapped_and_expired["key"]["expiresAt"] = "2000-01-01T00:00:00Z"
+        cases.append(("unmapped classification plus expiry", unmapped_and_expired))
+
+        with mock.patch.object(self.helper, "repository_commit_sha", return_value=commit_sha):
+            for name, candidate in cases:
+                with self.subTest(name=name):
+                    actual = self.helper.cache_invalidation_report(
+                        self.root, {"entries": [candidate]},
+                    )[0]
+                    self.assertEqual(actual["status"], "STALE")
+
+            purely_unmapped = json.loads(json.dumps(entry))
+            purely_unmapped["key"]["changeType"] = "unknown-change"
+            actual = self.helper.cache_invalidation_report(
+                self.root, {"entries": [purely_unmapped]},
+            )[0]
+            self.assertEqual(actual["status"], "UNCERTAIN")
+
+    def test_verification_cache_policy_is_parsed_hashed_and_mapped_from_one_read(self):
+        entry = self.verification_cache_entry()
+        policy_path = self.root / "ai" / "verification-policy.json"
+        accepted_bytes = policy_path.read_bytes()
+        replacement_policy = json.loads(accepted_bytes.decode("utf-8"))
+        next(
+            check for check in replacement_policy["checks"]
+            if check["id"] == "review-gate"
+        )["producerId"] = "done-claim-gate"
+        replacement_bytes = json.dumps(replacement_policy, sort_keys=True).encode("utf-8")
+        entry["key"]["policySha256"] = hashlib.sha256(replacement_bytes).hexdigest()
+        commit_sha = entry["key"]["commitSha"]
+        original_open = Path.open
+        policy_open_count = 0
+
+        def race_open(path, *args, **kwargs):
+            nonlocal policy_open_count
+            if Path(path) == policy_path:
+                policy_open_count += 1
+                payload = accepted_bytes if policy_open_count == 1 else replacement_bytes
+                return io.BytesIO(payload)
+            return original_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.helper.Path, "open", autospec=True, side_effect=race_open):
+            with mock.patch.object(self.helper, "repository_commit_sha", return_value=commit_sha):
+                actual = self.helper.cache_invalidation_report(
+                    self.root, {"entries": [entry]},
+                )[0]
+
+        self.assertEqual(policy_open_count, 1)
+        self.assertEqual(actual["status"], "STALE")
+
+    def test_verification_cache_evidence_read_faults_continue_to_safe_stale_checks(self):
+        entry = self.verification_cache_entry()
+        first_binding = entry["key"]["checkBindings"][1]
+        second_binding = entry["key"]["checkBindings"][2]
+        first_path = self.root / first_binding["evidence"]["path"]
+        second_path = self.root / second_binding["evidence"]["path"]
+        commit_sha = entry["key"]["commitSha"]
+        original_open = Path.open
+
+        class ReadFailure(io.BytesIO):
+            def read(self, *_args, **_kwargs):
+                raise OSError("injected evidence read failure")
+
+        cases = (
+            ("disappears", "open", False, False, "UNCERTAIN"),
+            ("read failure", "read", False, False, "UNCERTAIN"),
+            ("disappears then expired", "open", True, False, "STALE"),
+            ("read failure then digest mismatch", "read", False, True, "STALE"),
+        )
+        for name, fault, expired, second_mismatch, expected_status in cases:
+            candidate = json.loads(json.dumps(entry))
+            if expired:
+                candidate["key"]["expiresAt"] = "2000-01-01T00:00:00Z"
+            if second_mismatch:
+                candidate["key"]["checkBindings"][2]["evidence"]["sha256"] = "e" * 64
+            remaining_evidence_opens = 0
+
+            def fault_open(path, *args, **kwargs):
+                nonlocal remaining_evidence_opens
+                if Path(path) == first_path:
+                    if fault == "open":
+                        raise FileNotFoundError("injected disappearance after is_file")
+                    return ReadFailure()
+                if Path(path) == second_path:
+                    remaining_evidence_opens += 1
+                return original_open(path, *args, **kwargs)
+
+            with self.subTest(name=name):
+                with mock.patch.object(self.helper.Path, "open", autospec=True, side_effect=fault_open):
+                    with mock.patch.object(self.helper, "repository_commit_sha", return_value=commit_sha):
+                        actual = self.helper.cache_invalidation_report(
+                            self.root, {"entries": [candidate]},
+                        )[0]
+                self.assertEqual(actual["status"], expected_status)
+                self.assertIn("unavailable", actual["reason"].lower())
+                self.assertEqual(remaining_evidence_opens, 1)
+                if expired:
+                    self.assertIn("expired", actual["reason"].lower())
+                if second_mismatch:
+                    self.assertIn("digest changed", actual["reason"].lower())
+
+    def test_repo_intake_rejects_duplicate_skill_catalog_ids(self):
+        catalog_path = self.root / "ai" / "skill-catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        catalog["skills"][-1]["id"] = catalog["skills"][0]["id"]
+        catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+        result, status = self.helper.repo_intake(self.root)
+        self.assertEqual((result["result"], status), ("INVALID_STATE", 5))
+
+    def test_repo_intake_rejects_handoff_missing_a_distinct_required_skill(self):
+        handoff_path = self.root / "ai" / "agent-handoff.json"
+        handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        handoff["skillIds"][-1] = handoff["skillIds"][0]
+        handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+        result, status = self.helper.repo_intake(self.root)
+        self.assertEqual((result["result"], status), ("INVALID_STATE", 5))
+
 
 class Phase2BSkillsHandoffTests(unittest.TestCase):
     REQUIRED_SKILLS = (
@@ -6053,6 +8025,7 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
     def test_phase_2b_skill_catalog_and_documents_are_complete(self):
         self.assertIn("skill-catalog", self.helper.SCHEMA_NAMES)
         catalog = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/skill-catalog.json")
+        self.helper.validate_skill_catalog_semantics(catalog)
         self.assertEqual(catalog["schemaVersion"], 1)
         self.assertEqual({entry["id"] for entry in catalog["skills"]}, set(self.REQUIRED_SKILLS))
 
@@ -6084,6 +8057,8 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
     def test_agent_handoff_and_workflow_cache_reuse_validate(self):
         self.assertIn("agent-handoff", self.helper.SCHEMA_NAMES)
         handoff = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
+        catalog = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/skill-catalog.json")
+        self.helper.validate_handoff_skill_set(handoff, catalog)
         cache = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/workflow-cache.json")
         self.assertEqual(handoff["routeId"], "repo-wide-ai-workflow")
         self.assertEqual(handoff["owningFeature"], "none")
@@ -6133,6 +8108,21 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
         self.assertIn("ai/work-logs/issue-6/README.md", refs)
         self.assertFalse(any(ref.startswith(".ai-runs/") for ref in refs))
         self.assertTrue(any(note["id"] == "phase-2b-skills-handoff" for note in cache["handoffNotes"]))
+
+    def test_catalog_and_handoff_semantics_reject_duplicate_or_missing_skill_ids(self):
+        catalog = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/skill-catalog.json")
+        duplicate_catalog = json.loads(json.dumps(catalog))
+        duplicate_catalog["skills"][-1]["id"] = duplicate_catalog["skills"][0]["id"]
+        with self.assertRaises(self.helper.InvalidStateError) as catalog_error:
+            self.helper.validate_skill_catalog_semantics(duplicate_catalog)
+        self.assertEqual(catalog_error.exception.errors[0]["code"], "SKILL_CATALOG_ID_SET_INVALID")
+
+        handoff = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
+        duplicate_handoff = json.loads(json.dumps(handoff))
+        duplicate_handoff["skillIds"][-1] = duplicate_handoff["skillIds"][0]
+        with self.assertRaises(self.helper.InvalidStateError) as handoff_error:
+            self.helper.validate_handoff_skill_set(duplicate_handoff, catalog)
+        self.assertEqual(handoff_error.exception.errors[0]["code"], "HANDOFF_REQUIRED_SKILL_MISSING")
 
     def test_work_log_and_routing_docs_link_phase_2b_reuse_contracts(self):
         combined_routing = "\n".join(self.read_repository_text(path) for path in (
@@ -6201,6 +8191,7 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
 
 
 class Phase2CVerificationGateTests(unittest.TestCase):
+    COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567"
     ENTRY_POINTS = (
         "verification-level",
         "api-smoke",
@@ -6223,15 +8214,122 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp()) / "repository"
         self.addCleanup(remove_readonly_tree, self.root.parent)
         shutil.copytree(REPOSITORY_ROOT, self.root, ignore=shutil.ignore_patterns(".git", ".ai-runs", "__pycache__"))
+        self.commit_probe = mock.patch.object(
+            self.helper, "repository_commit_sha", return_value=self.COMMIT_SHA, create=True,
+        )
+        self.commit_probe.start()
+        self.addCleanup(self.commit_probe.stop)
+        self.leaf_sequence = 0
 
     def read_repository_text(self, relative_path):
         return (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
 
-    def write_leaf_results(self, results):
+    def write_legacy_leaf_results(self, results):
         path = self.root / "ai" / "fixtures" / "phase-2c-leaf-results.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"results": results}), encoding="utf-8")
         return "ai/fixtures/phase-2c-leaf-results.json"
+
+    def write_leaf_results(self, results, gate_invocation_id):
+        references = []
+        for result in results:
+            self.leaf_sequence += 1
+            references.append(self.write_bound_leaf(
+                result["checkId"],
+                result=result["result"],
+                reason=result.get("reason"),
+                gate_invocation_id=gate_invocation_id,
+                name=f"{result['checkId']}-{self.leaf_sequence}",
+            ))
+        self.leaf_sequence += 1
+        return self.write_leaf_result_refs(
+            references, name=f"phase-2c-leaf-result-refs-{self.leaf_sequence}.json",
+        )
+
+    def write_leaf_result_refs(self, references, name="phase-2c-leaf-result-refs.json"):
+        path = self.root / "ai" / "fixtures" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"leafResultRefs": references}), encoding="utf-8")
+        return path.relative_to(self.root).as_posix()
+
+    def write_bound_leaf(
+            self, check_id="review-gate", result="PASS", *, reason=None,
+            gate_invocation_id="gate-review", mutate=None, name="review-gate"):
+        policy = json.loads((self.root / "ai" / "verification-policy.json").read_text(encoding="utf-8"))
+        policy_check = next(check for check in policy["checks"] if check["id"] == check_id)
+        evidence = None
+        if result in ("PASS", "FAIL"):
+            if policy_check["evidenceSchema"] == "ai/schemas/gateway-result.schema.json":
+                evidence_path = self.root / "ai" / "fixtures" / "phase-2c" / f"{name}-evidence.json"
+                evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                evidence_path.write_text(json.dumps(preflight_pass(), sort_keys=True), encoding="utf-8")
+            else:
+                evidence_path = self.root / "ai" / "fixtures" / "phase-1a" / "valid" / "command-result.json"
+            evidence = {
+                "ref": evidence_path.relative_to(self.root).as_posix(),
+                "schema": policy_check["evidenceSchema"],
+                "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+            }
+
+        leaf_path = self.root / "ai" / "fixtures" / "phase-2c" / f"{name}.json"
+        leaf_path.parent.mkdir(parents=True, exist_ok=True)
+        leaf_ref = leaf_path.relative_to(self.root).as_posix()
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        produced_at = now - dt.timedelta(minutes=1)
+        leaf = {
+            "$schema": "ai/schemas/verification-leaf-result.schema.json",
+            "$id": leaf_ref,
+            "schemaVersion": 1,
+            "checkId": check_id,
+            "result": result,
+            "taskKey": "issue-10",
+            "gateInvocationId": gate_invocation_id,
+            "commitSha": self.COMMIT_SHA,
+            "policySha256": hashlib.sha256(
+                (self.root / "ai" / "verification-policy.json").read_bytes()
+            ).hexdigest(),
+            "producerId": check_id,
+            "producedAt": produced_at.isoformat().replace("+00:00", "Z"),
+            "expiresAt": (produced_at + dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+            "evidence": evidence,
+            "reason": reason,
+        }
+        if mutate is not None:
+            mutate(leaf)
+        leaf_path.write_text(json.dumps(leaf, sort_keys=True), encoding="utf-8")
+        return leaf_ref
+
+    def run_gate_with_refs(self, change_type, entry_point, references):
+        policy = json.loads(
+            (self.root / "ai" / "verification-policy.json").read_text(encoding="utf-8")
+        )
+        change = next(item for item in policy["changeTypes"] if item["id"] == change_type)
+        supplied = {
+            json.loads((self.root / reference).read_text(encoding="utf-8"))["checkId"]
+            for reference in references
+        }
+        references = list(references)
+        for check_id in change["requiredChecks"]:
+            if check_id == "native-runtime-adapter" or check_id in supplied:
+                continue
+            self.leaf_sequence += 1
+            references.append(self.write_bound_leaf(
+                check_id,
+                gate_invocation_id="gate-review",
+                name=f"task-5-required-{check_id}-{self.leaf_sequence}",
+            ))
+        self.leaf_sequence += 1
+        refs = self.write_leaf_result_refs(
+            references, name=f"task-5-leaf-result-refs-{self.leaf_sequence}.json",
+        )
+        return self.helper.verification_gate(
+            self.root,
+            change_type,
+            entry_point,
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
 
     def write_json_fixture(self, name, payload):
         path = self.root / "ai" / "fixtures" / name
@@ -6239,9 +8337,540 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path.relative_to(self.root).as_posix()
 
+    def test_evidence_free_legacy_leaf_result_is_rejected(self):
+        legacy = self.write_legacy_leaf_results([
+            {"checkId": "review-gate", "result": "PASS", "evidenceRef": None, "reason": None},
+        ])
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            legacy,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "VERIFICATION_LEAF_RESULTS_INVALID", 5,
+        ))
+
+    def test_bound_leaf_mismatches_are_rejected_before_aggregation(self):
+        future = (
+            dt.datetime.now(dt.timezone.utc).replace(microsecond=0) + dt.timedelta(minutes=1)
+        ).isoformat().replace("+00:00", "Z")
+        matrix = (
+            ("leaf-id", lambda leaf: leaf.update({"$id": "ai/fixtures/phase-2c/other.json"}), "VERIFICATION_LEAF_ID_MISMATCH"),
+            ("task-key", lambda leaf: leaf.update(taskKey="other-task"), "VERIFICATION_LEAF_CORRELATION_MISMATCH"),
+            ("gate-invocation", lambda leaf: leaf.update(gateInvocationId="other-gate"), "VERIFICATION_LEAF_CORRELATION_MISMATCH"),
+            ("commit", lambda leaf: leaf.update(commitSha="f" * 40), "VERIFICATION_LEAF_CORRELATION_MISMATCH"),
+            ("policy", lambda leaf: leaf.update(policySha256="a" * 64), "VERIFICATION_LEAF_POLICY_MISMATCH"),
+            ("producer", lambda leaf: leaf.update(producerId="done-claim-gate"), "VERIFICATION_LEAF_PRODUCER_MISMATCH"),
+            (
+                "evidence-schema",
+                lambda leaf: leaf["evidence"].update(
+                    schema="ai/schemas/command-result.schema.json",
+                    ref="ai/fixtures/phase-2c/missing-evidence.json",
+                ),
+                "VERIFICATION_LEAF_EVIDENCE_SCHEMA_MISMATCH",
+            ),
+            ("evidence-digest", lambda leaf: leaf["evidence"].update(sha256="b" * 64), "VERIFICATION_LEAF_DIGEST_MISMATCH"),
+            ("produced-at", lambda leaf: leaf.update(producedAt=future), "VERIFICATION_LEAF_STALE"),
+            (
+                "expires-at",
+                lambda leaf: leaf.update(expiresAt=(
+                    dt.datetime.fromisoformat(leaf["producedAt"].replace("Z", "+00:00"))
+                    + dt.timedelta(minutes=6)
+                ).isoformat().replace("+00:00", "Z")),
+                "VERIFICATION_LEAF_STALE",
+            ),
+        )
+
+        for name, mutate, expected_reason in matrix:
+            with self.subTest(field=name):
+                leaf_ref = self.write_bound_leaf(mutate=mutate, name=f"review-gate-{name}")
+                refs = self.write_leaf_result_refs([leaf_ref], name=f"refs-{name}.json")
+                result, status = self.helper.verification_gate(
+                    self.root,
+                    "documentation-only",
+                    "review",
+                    refs,
+                    task_key="issue-10",
+                    gate_invocation_id="gate-review",
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "INVALID_STATE", expected_reason, 5,
+                ))
+                self.assertIsNone(result["data"])
+
+    def test_repository_commit_probe_is_strict_and_missing_git_blocks(self):
+        self.commit_probe.stop()
+        try:
+            completed = SimpleNamespace(stdout=self.COMMIT_SHA + "\n")
+            with mock.patch.object(self.helper.subprocess, "run", return_value=completed) as run:
+                self.assertEqual(self.helper.repository_commit_sha(self.root), self.COMMIT_SHA)
+            run.assert_called_once_with(
+                ["git", "-C", str(self.root.resolve()), "rev-parse", "HEAD"],
+                shell=False,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+            for malformed in (self.COMMIT_SHA.upper() + "\n", self.COMMIT_SHA + " trailing\n", "", None):
+                with self.subTest(malformed=repr(malformed)):
+                    with mock.patch.object(
+                            self.helper.subprocess, "run", return_value=SimpleNamespace(stdout=malformed)):
+                        with self.assertRaises(self.helper.VerificationNotConfiguredError):
+                            self.helper.repository_commit_sha(self.root)
+        finally:
+            self.commit_probe.start()
+
+        leaf_ref = self.write_bound_leaf()
+        refs = self.write_leaf_result_refs([leaf_ref])
+        unavailable = self.helper.VerificationNotConfiguredError([
+            self.helper.validation_error("VERIFICATION_REPOSITORY_COMMIT_NOT_CONFIGURED")
+        ])
+        with mock.patch.object(self.helper, "repository_commit_sha", side_effect=unavailable):
+            result, status = self.helper.verification_gate(
+                self.root,
+                "documentation-only",
+                "review",
+                refs,
+                task_key="issue-10",
+                gate_invocation_id="gate-review",
+            )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "VERIFICATION_REPOSITORY_COMMIT_NOT_CONFIGURED", 2,
+        ))
+
+    def test_leaf_schema_patterns_reject_terminal_newlines(self):
+        leaf_ref = self.write_bound_leaf()
+        leaf = json.loads((self.root / leaf_ref).read_text(encoding="utf-8"))
+        cases = (
+            ("id", lambda value: value.update({"$id": value["$id"] + "\n"})),
+            ("task-key", lambda value: value.update(taskKey=value["taskKey"] + "\n")),
+            ("commit", lambda value: value.update(commitSha=value["commitSha"] + "\n")),
+            ("policy-digest", lambda value: value.update(policySha256=value["policySha256"] + "\n")),
+            ("evidence-digest", lambda value: value["evidence"].update(sha256=value["evidence"]["sha256"] + "\n")),
+        )
+        for field, mutate in cases:
+            with self.subTest(field=field):
+                invalid = json.loads(json.dumps(leaf))
+                mutate(invalid)
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        self.root, invalid, "ai/schemas/verification-leaf-result.schema.json",
+                    )
+
+    def test_valid_bound_leaf_reaches_aggregation(self):
+        leaf_ref = self.write_bound_leaf()
+        refs = self.write_leaf_result_refs([leaf_ref])
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+        checks = {check["checkId"]: check for check in result["data"]["checks"]}
+        self.assertEqual(checks["review-gate"]["rawResult"], "PASS")
+
+    def test_required_caller_not_applicable_is_blocked(self):
+        ref = self.write_bound_leaf("review-gate", "NOT_APPLICABLE")
+        result, status = self.run_gate_with_refs("documentation-only", "review", [ref])
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_optional_fail_remains_visible(self):
+        ref = self.write_bound_leaf("verify.api-smoke", "FAIL")
+        result, status = self.run_gate_with_refs(
+            "documentation-only", "verification-level", [ref],
+        )
+        self.assertEqual((result["result"], status), ("FAIL", 1))
+
+    def test_missing_required_static_leaf_is_not_policy_pass(self):
+        references = [
+            self.write_bound_leaf("review-gate", name="missing-static-review"),
+            self.write_bound_leaf("done-claim-gate", name="missing-static-done"),
+        ]
+        refs = self.write_leaf_result_refs(references, name="missing-static-refs.json")
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "static-workflow",
+            "verification-level",
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], status), ("BLOCKED", 2))
+        checks = {check["checkId"]: check for check in result["data"]["checks"]}
+        self.assertEqual(
+            (checks["verify.static"]["rawResult"], checks["verify.static"]["mappedResult"]),
+            ("NOT_CONFIGURED", "BLOCKED"),
+        )
+
+    def test_verified_leaf_and_native_identity_are_exposed(self):
+        leaf_ref = self.write_bound_leaf("review-gate", name="identity-review")
+        accepted_leaf_bytes = (self.root / leaf_ref).read_bytes()
+        result, status = self.run_gate_with_refs("documentation-only", "review", [leaf_ref])
+
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        checks = {check["checkId"]: check for check in result["data"]["checks"]}
+        review = checks["review-gate"]
+        leaf = json.loads(accepted_leaf_bytes.decode("utf-8"))
+        self.assertEqual(review["leafResultRef"], leaf_ref)
+        self.assertEqual(
+            review["leafResultSha256"], hashlib.sha256(accepted_leaf_bytes).hexdigest(),
+        )
+        for field in ("producerId", "commitSha", "policySha256"):
+            self.assertEqual(review[field], leaf[field])
+
+        native = checks["native-runtime-adapter"]
+        self.assertEqual(native["leafResultRef"], "ai/native-adapter-result.json")
+        self.assertRegex(native["leafResultSha256"], r"[0-9a-f]{64}\Z")
+        self.assertEqual(native["producerId"], "native-runtime-adapter")
+        self.assertEqual(native["commitSha"], self.COMMIT_SHA)
+        self.assertEqual(
+            native["policySha256"],
+            hashlib.sha256((self.root / "ai" / "verification-policy.json").read_bytes()).hexdigest(),
+        )
+        self.helper.validate(self.root, result, "ai/schemas/verification-gate-result.schema.json")
+
+    def test_verification_policy_snapshot_is_bounded_validated_and_deeply_immutable(self):
+        policy, policy_sha256 = self.helper.load_verification_policy_snapshot(self.root)
+
+        self.assertEqual(
+            policy_sha256,
+            hashlib.sha256((self.root / "ai" / "verification-policy.json").read_bytes()).hexdigest(),
+        )
+        self.assertEqual(policy["$id"], "ai/verification-policy.json")
+        with self.assertRaises(TypeError):
+            policy["updatedAt"] = "2026-07-15T00:00:00Z"
+        with self.assertRaises(TypeError):
+            policy["checks"][0]["producerId"] = "replacement-producer"
+        with self.assertRaises(AttributeError):
+            policy["checks"].append({})
+
+    def test_gate_reads_policy_once_and_binds_one_identity_after_replacement(self):
+        review_ref = self.write_bound_leaf("review-gate", name="policy-race-review")
+        done_ref = self.write_bound_leaf("done-claim-gate", name="policy-race-done")
+        refs = self.write_leaf_result_refs(
+            [review_ref, done_ref], name="policy-race-refs.json",
+        )
+        policy_path = self.root / "ai" / "verification-policy.json"
+        accepted_bytes = policy_path.read_bytes()
+        accepted_policy = json.loads(accepted_bytes.decode("utf-8"))
+        replacement_policy = json.loads(json.dumps(accepted_policy))
+        documentation_change = next(
+            item for item in replacement_policy["changeTypes"]
+            if item["id"] == "documentation-only"
+        )
+        documentation_change["requiredChecks"].append("verify.static")
+        documentation_change["optionalChecks"].remove("verify.static")
+        replacement_bytes = json.dumps(replacement_policy, sort_keys=True).encode("utf-8")
+        accepted_sha256 = hashlib.sha256(accepted_bytes).hexdigest()
+        replacement_sha256 = hashlib.sha256(replacement_bytes).hexdigest()
+        self.assertNotEqual(accepted_sha256, replacement_sha256)
+        original_open = Path.open
+        policy_open_count = 0
+
+        def race_open(path, *args, **kwargs):
+            nonlocal policy_open_count
+            if Path(path) == policy_path:
+                policy_open_count += 1
+                payload = accepted_bytes if policy_open_count == 1 else replacement_bytes
+                return io.BytesIO(payload)
+            return original_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.helper.Path, "open", autospec=True, side_effect=race_open):
+            result, status = self.helper.verification_gate(
+                self.root,
+                "documentation-only",
+                "review",
+                refs,
+                task_key="issue-10",
+                gate_invocation_id="gate-review",
+            )
+
+        self.assertEqual(policy_open_count, 1)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "PASS", "REPOSITORY_ONLY_HOST_UNSUPPORTED", 0,
+        ))
+        checks = {check["checkId"]: check for check in result["data"]["checks"]}
+        for check_id in ("native-runtime-adapter", "review-gate", "done-claim-gate"):
+            with self.subTest(check_id=check_id):
+                self.assertEqual(checks[check_id]["policySha256"], accepted_sha256)
+                self.assertNotEqual(checks[check_id]["policySha256"], replacement_sha256)
+
+    def test_gate_result_schema_distinguishes_verified_and_synthesized_checks(self):
+        leaf_ref = self.write_bound_leaf("review-gate", name="identity-shape-review")
+        result, status = self.run_gate_with_refs("documentation-only", "review", [leaf_ref])
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        self.helper.validate(self.root, result, "ai/schemas/verification-gate-result.schema.json")
+
+        checks = {check["checkId"]: check for check in result["data"]["checks"]}
+        identity_fields = (
+            "leafResultRef", "leafResultSha256", "producerId", "commitSha", "policySha256",
+        )
+        for check_id in ("review-gate", "native-runtime-adapter"):
+            for field in identity_fields:
+                for mutation in ("null", "missing"):
+                    with self.subTest(check_id=check_id, field=field, mutation=mutation):
+                        invalid = json.loads(json.dumps(result))
+                        invalid_check = next(
+                            check for check in invalid["data"]["checks"]
+                            if check["checkId"] == check_id
+                        )
+                        if mutation == "null":
+                            invalid_check[field] = None
+                        else:
+                            invalid_check.pop(field)
+                        with self.assertRaises(self.helper.InvalidStateError):
+                            self.helper.validate(
+                                self.root,
+                                invalid,
+                                "ai/schemas/verification-gate-result.schema.json",
+                            )
+
+        synthesized_result, synthesized_status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+        self.assertEqual((synthesized_result["result"], synthesized_status), ("BLOCKED", 2))
+        synthesized = next(
+            check for check in synthesized_result["data"]["checks"]
+            if check["checkId"] == "review-gate"
+        )
+        self.assertEqual({synthesized[field] for field in identity_fields}, {None})
+        self.helper.validate(
+            self.root, synthesized_result, "ai/schemas/verification-gate-result.schema.json",
+        )
+
+        for mapped_result in ("PASS", "FAIL"):
+            with self.subTest(mapped_result=mapped_result):
+                invalid_mapped = json.loads(json.dumps(synthesized_result))
+                invalid_mapped_check = next(
+                    check for check in invalid_mapped["data"]["checks"]
+                    if check["checkId"] == "review-gate"
+                )
+                self.assertEqual(invalid_mapped_check["rawResult"], "NOT_CONFIGURED")
+                invalid_mapped_check["mappedResult"] = mapped_result
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        self.root,
+                        invalid_mapped,
+                        "ai/schemas/verification-gate-result.schema.json",
+                    )
+
+        invalid_synthesized = json.loads(json.dumps(synthesized_result))
+        invalid_synthesized_check = next(
+            check for check in invalid_synthesized["data"]["checks"]
+            if check["checkId"] == "review-gate"
+        )
+        invalid_synthesized_check["rawResult"] = "PASS"
+        invalid_synthesized_check["mappedResult"] = "PASS"
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                self.root,
+                invalid_synthesized,
+                "ai/schemas/verification-gate-result.schema.json",
+            )
+
+    def test_gate_uses_single_read_leaf_identity_after_replacement(self):
+        leaf_ref = self.write_bound_leaf("review-gate", name="single-read-leaf")
+        done_ref = self.write_bound_leaf("done-claim-gate", name="single-read-done")
+        refs = self.write_leaf_result_refs(
+            [leaf_ref, done_ref], name="single-read-leaf-refs.json",
+        )
+        leaf_path = self.root / leaf_ref
+        accepted_bytes = leaf_path.read_bytes()
+        accepted_leaf = json.loads(accepted_bytes.decode("utf-8"))
+        replacement_leaf = json.loads(json.dumps(accepted_leaf))
+        replacement_leaf["result"] = "FAIL"
+        replacement_leaf["reason"] = "replacement leaf must not be observed"
+        replacement_bytes = json.dumps(replacement_leaf, sort_keys=True).encode("utf-8")
+        original_open = Path.open
+        leaf_open_count = 0
+
+        def race_open(path, *args, **kwargs):
+            nonlocal leaf_open_count
+            if Path(path) == leaf_path:
+                leaf_open_count += 1
+                payload = accepted_bytes if leaf_open_count == 1 else replacement_bytes
+                return io.BytesIO(payload)
+            return original_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.helper.Path, "open", autospec=True, side_effect=race_open):
+            result, status = self.helper.verification_gate(
+                self.root,
+                "documentation-only",
+                "review",
+                refs,
+                task_key="issue-10",
+                gate_invocation_id="gate-review",
+            )
+
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        review = next(
+            check for check in result["data"]["checks"]
+            if check["checkId"] == "review-gate"
+        )
+        self.assertEqual(leaf_open_count, 1)
+        self.assertEqual(review["rawResult"], accepted_leaf["result"])
+        self.assertEqual(review["reason"], accepted_leaf["reason"])
+        self.assertEqual(review["leafResultRef"], leaf_ref)
+        self.assertEqual(
+            review["leafResultSha256"], hashlib.sha256(accepted_bytes).hexdigest(),
+        )
+        for field in ("producerId", "commitSha", "policySha256"):
+            self.assertEqual(review[field], accepted_leaf[field])
+
+    def test_leaf_evidence_is_opened_once_and_verified_from_the_same_bytes(self):
+        leaf_ref = self.write_bound_leaf(name="single-read-evidence")
+        leaf_bytes = (self.root / leaf_ref).read_bytes()
+        leaf = json.loads(leaf_bytes.decode("utf-8"))
+        loaded_leaf = {"reference": leaf_ref, "encoded": leaf_bytes, "leaf": leaf}
+        evidence_path = self.root / leaf["evidence"]["ref"]
+        evidence_bytes = evidence_path.read_bytes()
+        replacement_bytes = json.dumps(
+            {**preflight_pass(), "result": "FAIL", "reason": "replacement"},
+            sort_keys=True,
+        ).encode("utf-8")
+        expected = {
+            "checkId": leaf["checkId"],
+            "taskKey": leaf["taskKey"],
+            "gateInvocationId": leaf["gateInvocationId"],
+            "commitSha": leaf["commitSha"],
+            "producerId": leaf["producerId"],
+            "evidenceSchema": leaf["evidence"]["schema"],
+        }
+        original_open = Path.open
+        evidence_open_count = 0
+
+        def race_open(path, *args, **kwargs):
+            nonlocal evidence_open_count
+            if Path(path) == evidence_path:
+                evidence_open_count += 1
+                payload = evidence_bytes if evidence_open_count == 1 else replacement_bytes
+                return io.BytesIO(payload)
+            return original_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.helper.Path, "open", autospec=True, side_effect=race_open):
+            verified = self.helper.verified_leaf_result(
+                self.root, loaded_leaf, expected, leaf["policySha256"],
+            )
+
+        self.assertEqual(verified["checkId"], "review-gate")
+        self.assertEqual(evidence_open_count, 1)
+
+    def test_malformed_leaf_evidence_preserves_strict_json_reason(self):
+        leaf_ref = self.write_bound_leaf(name="malformed-evidence")
+        leaf_path = self.root / leaf_ref
+        leaf = json.loads(leaf_path.read_text(encoding="utf-8"))
+        evidence_path = self.root / leaf["evidence"]["ref"]
+        evidence_path.write_bytes(b'{"result":')
+        leaf["evidence"]["sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+        leaf_path.write_text(json.dumps(leaf, sort_keys=True), encoding="utf-8")
+        refs = self.write_leaf_result_refs([leaf_ref], name="malformed-evidence-refs.json")
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "MALFORMED_JSON", 5,
+        ))
+
+    def test_oversized_leaf_evidence_is_rejected_before_schema_validation(self):
+        leaf_ref = self.write_bound_leaf(name="oversized-evidence")
+        leaf_path = self.root / leaf_ref
+        leaf = json.loads(leaf_path.read_text(encoding="utf-8"))
+        evidence_path = self.root / leaf["evidence"]["ref"]
+        oversized = preflight_pass()
+        oversized["data"]["pythonVersion"] = "x" * 65536
+        evidence_path.write_text(json.dumps(oversized, sort_keys=True), encoding="utf-8")
+        leaf["evidence"]["sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+        leaf_path.write_text(json.dumps(leaf, sort_keys=True), encoding="utf-8")
+        refs = self.write_leaf_result_refs([leaf_ref], name="oversized-evidence-refs.json")
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "VERIFICATION_LEAF_EVIDENCE_TOO_LARGE", 5,
+        ))
+
+    def test_evidence_schema_validation_precedes_digest_mismatch(self):
+        leaf_ref = self.write_bound_leaf(name="invalid-schema-and-digest")
+        leaf = json.loads((self.root / leaf_ref).read_text(encoding="utf-8"))
+        evidence_path = self.root / leaf["evidence"]["ref"]
+        evidence_path.write_text(json.dumps({"not": "a gateway result"}), encoding="utf-8")
+        refs = self.write_leaf_result_refs(
+            [leaf_ref], name="invalid-schema-and-digest-refs.json",
+        )
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "review",
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "SCHEMA_VALIDATION_ERROR", 5,
+        ))
+
+    def test_external_native_bound_leaf_is_rejected_before_evidence_lookup(self):
+        def forge_native(leaf):
+            leaf.update(checkId="native-runtime-adapter", producerId="native-runtime-adapter")
+            leaf["evidence"].update({
+                "ref": "ai/fixtures/phase-2c/missing-native-result.json",
+                "schema": "ai/schemas/native-adapter-result.schema.json",
+                "sha256": "c" * 64,
+            })
+
+        leaf_ref = self.write_bound_leaf(mutate=forge_native, name="forged-native")
+        refs = self.write_leaf_result_refs([leaf_ref], name="forged-native-refs.json")
+
+        result, status = self.helper.verification_gate(
+            self.root,
+            "documentation-only",
+            "verification-level",
+            refs,
+            task_key="issue-10",
+            gate_invocation_id="gate-review",
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "NATIVE_ADAPTER_LEAF_FORGED", 5,
+        ))
+
     def test_verification_policy_and_result_schemas_are_allowlisted(self):
         self.assertIn("verification-policy", self.helper.SCHEMA_NAMES)
         self.assertIn("verification-gate-result", self.helper.SCHEMA_NAMES)
+        self.assertIn("verification-leaf-result", self.helper.SCHEMA_NAMES)
         policy = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/verification-policy.json")
         self.assertEqual(policy["schemaVersion"], 1)
         self.assertEqual({entry["id"] for entry in policy["entryPoints"]}, set(self.ENTRY_POINTS))
@@ -6253,13 +8882,18 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.assertIn("verify.api-smoke", by_change["auth-permission"]["requiredChecks"])
         self.assertIn("verify.e2e", by_change["critical-data"]["requiredChecks"])
         self.assertIn("failure-triage", by_change["static-workflow"]["entryPoints"])
+        by_check = {item["id"]: item for item in policy["checks"]}
+        self.assertEqual(by_check["review-gate"]["evidenceSchema"], "ai/schemas/gateway-result.schema.json")
+        self.assertEqual(by_check["verify.api-smoke"]["evidenceSchema"], "ai/schemas/command-result.schema.json")
+        self.assertEqual(by_check["native-runtime-adapter"]["producerId"], "native-runtime-adapter")
 
     def test_verification_gate_maps_leaf_results_by_change_type(self):
-        not_configured = self.write_leaf_results([
+        leaf_results = [
             {"checkId": "review-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/reviewer.md", "reason": "Independent static review evidence is present."},
             {"checkId": "done-claim-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/README.md", "reason": "Completion claim checklist evidence is present."},
             {"checkId": "verify.api-smoke", "result": "NOT_CONFIGURED", "evidenceRef": None, "reason": "No API smoke runner is configured."},
-        ])
+        ]
+        not_configured = self.write_leaf_results(leaf_results, "gate-doc")
         doc_result, doc_status = self.helper.verification_gate(
             self.root, "documentation-only", "verification-level", not_configured,
             task_key="issue-10", gate_invocation_id="gate-doc",
@@ -6270,12 +8904,13 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.assertEqual(doc_result["data"]["completenessEvaluated"], True)
 
         not_applicable_result, not_applicable_status = self.helper.verification_gate(
-            self.root, "documentation-only", "api-smoke", not_configured,
+            self.root, "documentation-only", "api-smoke",
             task_key="issue-10", gate_invocation_id="gate-na",
         )
         self.assertEqual((not_applicable_result["result"], not_applicable_status), ("NOT_APPLICABLE", 6))
         self.assertEqual(not_applicable_result["data"]["entryPoint"], "api-smoke")
 
+        not_configured = self.write_leaf_results(leaf_results, "gate-api")
         api_result, api_status = self.helper.verification_gate(
             self.root, "db-api", "api-smoke", not_configured,
             task_key="issue-10", gate_invocation_id="gate-api",
@@ -6286,7 +8921,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
 
         failed = self.write_leaf_results([
             {"checkId": "verify.unit", "result": "FAIL", "evidenceRef": "ai/fixtures/fake-unit-result.json", "reason": "Fixture failure."},
-        ])
+        ], "gate-logic")
         logic_result, logic_status = self.helper.verification_gate(
             self.root, "domain-logic", "verification-level", failed,
             task_key="issue-10", gate_invocation_id="gate-logic",
@@ -6317,7 +8952,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         explicit = self.write_leaf_results([
             {"checkId": "review-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/reviewer.md", "reason": "Independent static review evidence is present."},
             {"checkId": "done-claim-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/README.md", "reason": "Completion claim checklist evidence is present."},
-        ])
+        ], "gate-review-pass")
         passed_result, passed_status = self.helper.verification_gate(
             self.root, "documentation-only", "review", explicit,
             task_key="issue-10", gate_invocation_id="gate-review-pass",
@@ -6341,11 +8976,6 @@ class Phase2CVerificationGateTests(unittest.TestCase):
             "issue-10",
             "--gate-invocation-id",
             "gate-shell",
-            "--leaf-results-file",
-            str(self.write_leaf_results([
-                {"checkId": "review-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/reviewer.md", "reason": "Independent static review evidence is present."},
-                {"checkId": "done-claim-gate", "result": "PASS", "evidenceRef": "ai/work-logs/issue-7/README.md", "reason": "Completion claim checklist evidence is present."},
-            ])),
             "--runtime-snapshot",
             self.write_json_fixture("runtime-snapshot.json", {"producerId": "fixture", "surfaces": []}),
             "--bypass-attempts",
@@ -6363,9 +8993,9 @@ class Phase2CVerificationGateTests(unittest.TestCase):
             stderr=subprocess.PIPE,
             check=False,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        self.assertEqual(completed.returncode, 2, completed.stderr + completed.stdout)
         result = json.loads(completed.stdout)
-        self.assertEqual((result["operation"], result["result"]), ("VERIFICATION_GATE", "PASS"))
+        self.assertEqual((result["operation"], result["result"]), ("VERIFICATION_GATE", "BLOCKED"))
         self.assertFalse((REPOSITORY_ROOT / ".ai-runs").exists())
 
         not_applicable = subprocess.run(
@@ -6491,7 +9121,9 @@ class Phase2CVerificationGateTests(unittest.TestCase):
 
 
 class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
+    COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567"
     SCHEMA_PATHS = {
+        "host-native-trust": "ai/schemas/host-native-trust.schema.json",
         "native-runtime-adapters": "ai/schemas/native-runtime-adapters.schema.json",
         "native-bypass-attempt": "ai/schemas/native-bypass-attempt.schema.json",
         "native-runtime-snapshot": "ai/schemas/native-runtime-snapshot.schema.json",
@@ -6515,11 +9147,177 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             self.root / "ai" / "verification-policy.json",
         )
         (self.root / "ai" / "fixtures").mkdir()
+        commit_probe = mock.patch.object(
+            self.helper, "repository_commit_sha", return_value=self.COMMIT_SHA,
+        )
+        commit_probe.start()
+        self.addCleanup(commit_probe.stop)
         if hasattr(self.helper, "NATIVE_CONSUMED_CHALLENGES"):
             self.helper.NATIVE_CONSUMED_CHALLENGES.clear()
+        self.test_native_ledger_records = set()
+        self.native_ledger_stub_patcher = None
+        backend_supported = getattr(
+            self.helper, "native_safe_ledger_backend_supported", lambda: True,
+        )
+        if not backend_supported():
+            def consume_test_attestation(_ledger_root, identity):
+                canonical = json.dumps(
+                    identity, sort_keys=True, separators=(",", ":"),
+                ).encode("utf-8")
+                key = hashlib.sha256(canonical).hexdigest()
+                if key in self.test_native_ledger_records:
+                    raise self.helper.NativeReplayError(
+                        "NATIVE_ADAPTER_CHALLENGE_REPLAYED",
+                    )
+                self.test_native_ledger_records.add(key)
+
+            self.native_ledger_stub_patcher = mock.patch.object(
+                self.helper,
+                "consume_native_attestation",
+                side_effect=consume_test_attestation,
+            )
+            self.native_ledger_stub_patcher.start()
+            self.addCleanup(self.native_ledger_stub_patcher.stop)
 
     def tearDown(self):
         self.temporary_directory.cleanup()
+
+    def stop_test_native_ledger_stub(self):
+        if self.native_ledger_stub_patcher is not None:
+            self.native_ledger_stub_patcher.stop()
+            self.native_ledger_stub_patcher = None
+
+    @staticmethod
+    def native_ledger_identity(gate_invocation_id="gate-ledger-unit"):
+        return {
+            "repositorySha256": "a" * 64,
+            "producerId": "example.native.adapter",
+            "taskKey": "issue-10",
+            "gateInvocationId": gate_invocation_id,
+            "attestationId": "ai/native-runtime-snapshot.json",
+            "nonce": gate_invocation_id,
+            "eventSetSha256": "b" * 64,
+        }
+
+    @contextlib.contextmanager
+    def mocked_safe_native_ledger(self, ledger_root, *, fault=None,
+                                  directory_identity_mismatch=False):
+        self.stop_test_native_ledger_stub()
+        faults = set() if fault is None else set(fault.split("+"))
+        expected = ledger_root.stat()
+        state = SimpleNamespace(
+            directory_fds=set(),
+            file_fds=set(),
+            next_fd=100,
+            record_exists=False,
+            record_bytes=bytearray(),
+            open_calls=[],
+            fsync_calls=[],
+            close_calls=[],
+            unlink_calls=[],
+            lock=threading.Lock(),
+            directory_sync_failures=0,
+            file_close_failures=0,
+        )
+
+        def allocate_fd(collection):
+            with state.lock:
+                descriptor = state.next_fd
+                state.next_fd += 1
+                collection.add(descriptor)
+                return descriptor
+
+        def fake_open(path, flags, mode=0o777, *, dir_fd=None):
+            state.open_calls.append((os.fspath(path), flags, mode, dir_fd))
+            if dir_fd is None:
+                if Path(path) != ledger_root:
+                    raise AssertionError("ledger directory must be opened before its record")
+                return allocate_fd(state.directory_fds)
+            if dir_fd not in state.directory_fds:
+                raise AssertionError("record creation must use the pinned ledger descriptor")
+            if Path(path).name != os.fspath(path) or not str(path).endswith(".json"):
+                raise AssertionError("record creation must use a digest filename only")
+            with state.lock:
+                if state.record_exists:
+                    raise FileExistsError(path)
+                state.record_exists = True
+            return allocate_fd(state.file_fds)
+
+        def fake_fstat(descriptor):
+            if descriptor in state.directory_fds:
+                return SimpleNamespace(
+                    st_mode=stat.S_IFDIR | 0o700,
+                    st_dev=expected.st_dev + (1 if directory_identity_mismatch else 0),
+                    st_ino=expected.st_ino,
+                    st_uid=getattr(expected, "st_uid", 0),
+                )
+            if descriptor in state.file_fds:
+                return SimpleNamespace(
+                    st_mode=stat.S_IFREG | 0o600,
+                    st_dev=expected.st_dev,
+                    st_ino=expected.st_ino + 1,
+                    st_uid=getattr(expected, "st_uid", 0),
+                )
+            raise OSError("unknown ledger descriptor")
+
+        def fake_write(descriptor, value):
+            if descriptor not in state.file_fds:
+                raise OSError("write did not target the ledger record")
+            if "write" in faults:
+                raise OSError("injected ledger write failure")
+            state.record_bytes.extend(bytes(value))
+            return len(value)
+
+        def fake_fsync(descriptor):
+            state.fsync_calls.append(descriptor)
+            if descriptor in state.file_fds and "file-fsync" in faults:
+                raise OSError("injected record fsync failure")
+            if descriptor in state.directory_fds:
+                if "directory-fsync" in faults and state.directory_sync_failures == 0:
+                    state.directory_sync_failures += 1
+                    raise OSError("injected publication directory fsync failure")
+                if "cleanup-fsync" in faults:
+                    raise OSError("injected cleanup directory fsync failure")
+
+        def fake_close(descriptor):
+            state.close_calls.append(descriptor)
+            if descriptor in state.file_fds and "file-close" in faults and state.file_close_failures == 0:
+                state.file_close_failures += 1
+                raise OSError("injected record close failure")
+            if descriptor in state.directory_fds and "directory-close" in faults:
+                raise OSError("injected directory close failure")
+
+        def fake_unlink(path, *, dir_fd=None):
+            state.unlink_calls.append((os.fspath(path), dir_fd))
+            if dir_fd not in state.directory_fds:
+                raise AssertionError("cleanup must use the pinned ledger descriptor")
+            if "cleanup-unlink" in faults:
+                raise OSError("injected relative cleanup failure")
+            with state.lock:
+                if not state.record_exists:
+                    raise FileNotFoundError(path)
+                state.record_exists = False
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(
+                self.helper,
+                "native_safe_ledger_backend_supported",
+                return_value=True,
+                create=True,
+            ))
+            for name, value in (
+                ("O_DIRECTORY", 0x10000),
+                ("O_NOFOLLOW", 0x20000),
+                ("O_CLOEXEC", 0x40000),
+            ):
+                stack.enter_context(mock.patch.object(self.helper.os, name, value, create=True))
+            stack.enter_context(mock.patch.object(self.helper.os, "open", side_effect=fake_open))
+            stack.enter_context(mock.patch.object(self.helper.os, "fstat", side_effect=fake_fstat))
+            stack.enter_context(mock.patch.object(self.helper.os, "write", side_effect=fake_write))
+            stack.enter_context(mock.patch.object(self.helper.os, "fsync", side_effect=fake_fsync))
+            stack.enter_context(mock.patch.object(self.helper.os, "close", side_effect=fake_close))
+            stack.enter_context(mock.patch.object(self.helper.os, "unlink", side_effect=fake_unlink))
+            yield state
 
     def write_fixture(self, name, value):
         path = self.root / "ai" / "fixtures" / name
@@ -6528,6 +9326,42 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
     def write_verification_leaf_results(self, results, name="phase-3a-leaf-results.json"):
         return self.write_fixture(name, {"results": results})
+
+    def write_bound_verification_leaf_results(self, results, gate_invocation_id):
+        references = []
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        produced_at = now - dt.timedelta(minutes=1)
+        policy_sha256 = hashlib.sha256(
+            (self.root / "ai" / "verification-policy.json").read_bytes()
+        ).hexdigest()
+        for index, result in enumerate(results):
+            check_id = result["checkId"]
+            evidence_ref = self.write_fixture(f"{check_id}-{index}-gateway-result.json", preflight_pass())
+            evidence_path = self.root / evidence_ref
+            leaf_ref = f"ai/fixtures/{check_id}-{index}-leaf-result.json"
+            leaf = {
+                "$schema": "ai/schemas/verification-leaf-result.schema.json",
+                "$id": leaf_ref,
+                "schemaVersion": 1,
+                "checkId": check_id,
+                "result": result["result"],
+                "taskKey": "issue-10",
+                "gateInvocationId": gate_invocation_id,
+                "commitSha": self.COMMIT_SHA,
+                "policySha256": policy_sha256,
+                "producerId": check_id,
+                "producedAt": produced_at.isoformat().replace("+00:00", "Z"),
+                "expiresAt": (produced_at + dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                "evidence": {
+                    "ref": evidence_ref,
+                    "schema": "ai/schemas/gateway-result.schema.json",
+                    "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+                },
+                "reason": result.get("reason"),
+            }
+            self.write_fixture(Path(leaf_ref).name, leaf)
+            references.append(leaf_ref)
+        return self.write_fixture("phase-3a-bound-leaf-results.json", {"leafResultRefs": references})
 
     def copy_repository_fixture(self):
         directory = tempfile.TemporaryDirectory()
@@ -6561,6 +9395,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     def valid_attempt(self, **overrides):
         attempt = self.bypass_attempt()
         attempt.update(overrides)
+        if attempt["lifecycle"] == "RESOLVED":
+            attempt.update({
+                "detectionEventId": overrides.get("detectionEventId", "event-1"),
+                "detectionGateInvocationId": overrides.get(
+                    "detectionGateInvocationId", "gate-prior",
+                ),
+                "detectionEventSha256": overrides.get("detectionEventSha256", "a" * 64),
+            })
         return attempt
 
     def validator(self, schema_name):
@@ -6607,6 +9449,55 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 str(REPOSITORY_ROOT / "scripts" / "ai" / "workflow_helper.py"),
                 "verification-gate",
                 *arguments,
+            ],
+            cwd=str(REPOSITORY_ROOT),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+    def run_external_native_evaluator_subprocess(
+            self, descriptor_path, probe_path, ledger_root, snapshot_ref,
+            gate_invocation_id):
+        script = """
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+helper_path, root, descriptor, probe, ledger, snapshot_ref, gate = sys.argv[1:]
+specification = importlib.util.spec_from_file_location(
+    "workflow_helper_cross_process", helper_path,
+)
+helper = importlib.util.module_from_spec(specification)
+specification.loader.exec_module(helper)
+host_trust = helper.load_host_native_trust(
+    Path(root), Path(descriptor), Path(probe), Path(ledger),
+)
+result, status = helper.native_adapter_gate(
+    Path(root),
+    "issue-10",
+    gate,
+    runtime_snapshot_ref=snapshot_ref,
+    host_trust=host_trust,
+)
+print(json.dumps({"result": result, "status": status}))
+"""
+        return subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(HELPER_PATH),
+                str(self.root),
+                str(descriptor_path),
+                str(probe_path),
+                str(ledger_root),
+                snapshot_ref,
+                gate_invocation_id,
             ],
             cwd=str(REPOSITORY_ROOT),
             text=True,
@@ -6717,6 +9608,9 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "lifecycle": "DETECTED",
             "resolvedAt": None,
             "resolutionReason": None,
+            "detectionEventId": None,
+            "detectionGateInvocationId": None,
+            "detectionEventSha256": None,
             "summary": {
                 "target": {
                     "classification": "REPOSITORY_PATH",
@@ -6835,6 +9729,9 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             lifecycle="RESOLVED",
             resolvedAt="2026-07-13T01:01:00Z",
             resolutionReason="REMEDIATED",
+            detectionEventId=prior_detection["eventId"],
+            detectionGateInvocationId=prior_detection["gateInvocationId"],
+            detectionEventSha256=self.helper.native_detection_digest(prior_detection),
         )
         return [prior_detection, current_resolution]
 
@@ -6850,6 +9747,12 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             {"NOT_CONFIGURED"},
         )
 
+    def native_ledger_record_count(self, host_trust):
+        durable_records = len(list(host_trust.ledger_root.iterdir()))
+        stub_records = len(self.test_native_ledger_records)
+        self.assertFalse(durable_records and stub_records)
+        return durable_records or stub_records
+
     def supported_policy_with_fingerprint(self, fingerprint):
         policy = self.supported_host_policy()
         policy["supportedHosts"][0].update({
@@ -6858,6 +9761,306 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "ed25519PublicKeyFingerprint": fingerprint,
         })
         return policy
+
+    def repository_policy(self):
+        policy = self.supported_host_policy()
+        policy["supportedHosts"] = []
+        return policy
+
+    @staticmethod
+    def host_trust_descriptor(fingerprint="a" * 64, *, host_id="codex-desktop",
+                              producer_id="example.native.adapter", minimum_version="1.0.0"):
+        return {
+            "$schema": "ai/schemas/host-native-trust.schema.json",
+            "schemaVersion": 1,
+            "producerId": producer_id,
+            "hostId": host_id,
+            "minimumHostVersion": minimum_version,
+            "adapterVersionRange": ">=1.0.0 <2.0.0",
+            "ed25519PublicKeyFingerprint": fingerprint,
+            "surfaces": ["COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL"],
+        }
+
+    def external_host_trust(self, fingerprint, *, host_id="codex-desktop",
+                            producer_id="example.native.adapter", host_version="1.0.0"):
+        descriptor = self.host_trust_descriptor(
+            fingerprint, host_id=host_id, producer_id=producer_id,
+        )
+        probe = {
+            "hostId": host_id,
+            "hostVersion": host_version,
+            "versionProvenance": "PROBED",
+            "producerId": producer_id,
+            "observedAt": dt.datetime.now(dt.timezone.utc).replace(
+                microsecond=0,
+            ).isoformat().replace("+00:00", "Z"),
+        }
+        descriptor_path, probe_path, ledger_root = self.write_external_host_documents(
+            descriptor, probe,
+        )
+        return self.helper.load_host_native_trust(
+            self.root, descriptor_path, probe_path, ledger_root,
+        )
+
+    def write_external_host_documents(self, descriptor=None, probe=None):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        if descriptor is None:
+            descriptor = self.host_trust_descriptor()
+        if probe is None:
+            probe = {
+                "hostId": descriptor["hostId"],
+                "hostVersion": descriptor["minimumHostVersion"],
+                "versionProvenance": "PROBED",
+                "producerId": descriptor["producerId"],
+                "observedAt": dt.datetime.now(dt.timezone.utc).replace(
+                    microsecond=0,
+                ).isoformat().replace("+00:00", "Z"),
+            }
+        descriptor_path = root / "descriptor.json"
+        probe_path = root / "probe.json"
+        ledger_root = root / "ledger"
+        descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+        probe_path.write_text(json.dumps(probe), encoding="utf-8")
+        ledger_root.mkdir(mode=0o700)
+        return descriptor_path, probe_path, ledger_root
+
+    def test_repository_supported_host_and_temporary_key_cannot_promote_public_cli(self):
+        snapshot, fingerprint, _ = self.signed_snapshot()
+        copied_root = self.copy_repository_fixture()
+        policy = self.supported_policy_with_fingerprint(fingerprint)
+        (copied_root / "ai/native-runtime-adapters.json").write_text(
+            json.dumps(policy), encoding="utf-8",
+        )
+        snapshot_ref = "ai/fixtures/runtime-snapshot.json"
+        (copied_root / snapshot_ref).write_text(json.dumps(snapshot), encoding="utf-8")
+
+        completed = self.run_native_adapter_cli_subprocess(
+            "--repository-root", str(copied_root),
+            "--task-key", "issue-10",
+            "--gate-invocation-id", "gate-signed",
+            "--runtime-snapshot", snapshot_ref,
+            "--output", "-",
+        )
+
+        self.assertNotEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        result = json.loads(completed.stdout)
+        self.assertNotEqual(result["result"], "PASS")
+
+    def test_repository_probed_host_fixture_remains_host_unsupported(self):
+        policy = self.supported_host_policy()
+        policy["supportedHosts"] = []
+        policy["currentHost"].update({
+            "hostId": "supported-host",
+            "hostVersion": "1.2.3",
+            "versionProvenance": "PROBED",
+        })
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-probed-repository",
+            policy_ref=self.write_fixture("repository-probed-policy.json", policy),
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "UNSUPPORTED", "HOST_UNSUPPORTED", 6,
+        ))
+
+    def test_external_host_context_can_verify_signed_snapshot_in_lower_level_evaluator(self):
+        snapshot, fingerprint, _ = self.signed_snapshot()
+        host_trust = self.external_host_trust(fingerprint)
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-signed",
+            runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
+            host_trust=host_trust,
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
+        self.assertEqual(
+            {surface["status"] for surface in result["data"]["trustedSurfaces"]},
+            {"ENFORCED"},
+        )
+
+    def test_host_native_trust_deep_freezes_values_and_detaches_input_aliases(self):
+        snapshot, fingerprint, _ = self.signed_snapshot()
+        descriptor = self.host_trust_descriptor(fingerprint)
+        probe = {
+            "hostId": "codex-desktop",
+            "hostVersion": "1.0.0",
+            "versionProvenance": "PROBED",
+            "producerId": "example.native.adapter",
+            "observedAt": "2026-07-14T01:00:00Z",
+        }
+        _descriptor_path, _probe_path, ledger_root = self.write_external_host_documents(
+            descriptor, probe,
+        )
+        host_trust = self.helper.HostNativeTrust(descriptor, probe, ledger_root)
+
+        for target, field, replacement in (
+            (host_trust.descriptor, "ed25519PublicKeyFingerprint", "f" * 64),
+            (host_trust.descriptor, "producerId", "mutated-producer"),
+            (host_trust.descriptor, "hostId", "mutated-host"),
+            (host_trust.probe, "producerId", "mutated-producer"),
+            (host_trust.probe, "hostId", "mutated-host"),
+            (host_trust.probe, "hostVersion", "9.9.9"),
+        ):
+            with self.subTest(
+                field=field,
+                target="descriptor" if target is host_trust.descriptor else "probe",
+            ):
+                with self.assertRaises(TypeError):
+                    target[field] = replacement
+        with self.assertRaises(TypeError):
+            host_trust.descriptor["surfaces"][0] = "TOOL_CALL"
+
+        descriptor.update({
+            "ed25519PublicKeyFingerprint": "f" * 64,
+            "producerId": "mutated-producer",
+            "hostId": "mutated-host",
+        })
+        descriptor["surfaces"][0] = "TOOL_CALL"
+        probe.update({
+            "producerId": "mutated-producer",
+            "hostId": "mutated-host",
+            "hostVersion": "9.9.9",
+        })
+
+        self.assertEqual(host_trust.descriptor["ed25519PublicKeyFingerprint"], fingerprint)
+        self.assertEqual(host_trust.descriptor["producerId"], "example.native.adapter")
+        self.assertEqual(host_trust.descriptor["hostId"], "codex-desktop")
+        self.assertEqual(tuple(host_trust.descriptor["surfaces"]), (
+            "COMMAND", "FILE_READ", "SEARCH", "TOOL_CALL",
+        ))
+        self.assertEqual(host_trust.probe["producerId"], "example.native.adapter")
+        self.assertEqual(host_trust.probe["hostId"], "codex-desktop")
+        self.assertEqual(host_trust.probe["hostVersion"], "1.0.0")
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-signed",
+            runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
+            host_trust=host_trust,
+        )
+        self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
+
+    def test_host_native_trust_rejects_closed_contract_and_identity_mutations(self):
+        descriptor_cases = {
+            "unknown-key": lambda value: value.update({"unexpected": True}),
+            "identifier": lambda value: value.update({"producerId": "bad producer"}),
+            "minimum-version": lambda value: value.update({"minimumHostVersion": "01.0.0"}),
+            "version-range": lambda value: value.update({"adapterVersionRange": ">=2.0.0 <1.0.0"}),
+            "fingerprint": lambda value: value.update({"ed25519PublicKeyFingerprint": "A" * 64}),
+            "surfaces": lambda value: value.update({"surfaces": ["COMMAND"] * 4}),
+        }
+        for name, mutate in descriptor_cases.items():
+            with self.subTest(document="descriptor", name=name):
+                descriptor = self.host_trust_descriptor()
+                mutate(descriptor)
+                paths = self.write_external_host_documents(descriptor=descriptor)
+                with self.assertRaises((self.helper.InvalidStateError, ValueError)):
+                    self.helper.load_host_native_trust(self.root, *paths)
+
+        valid_descriptor = self.host_trust_descriptor()
+        valid_probe = {
+            "hostId": valid_descriptor["hostId"],
+            "hostVersion": "1.0.0",
+            "versionProvenance": "PROBED",
+            "producerId": valid_descriptor["producerId"],
+            "observedAt": "2026-07-14T01:00:00Z",
+        }
+        probe_cases = {
+            "unknown-key": lambda value: value.update({"unexpected": True}),
+            "host-identity": lambda value: value.update({"hostId": "other-host"}),
+            "producer-identity": lambda value: value.update({"producerId": "other-producer"}),
+            "unprobed": lambda value: value.update({"versionProvenance": "UNPROBED"}),
+            "version": lambda value: value.update({"hostVersion": "1.0"}),
+            "timestamp": lambda value: value.update({"observedAt": "2026-02-30T01:00:00Z"}),
+        }
+        for name, mutate in probe_cases.items():
+            with self.subTest(document="probe", name=name):
+                probe = dict(valid_probe)
+                mutate(probe)
+                paths = self.write_external_host_documents(valid_descriptor, probe)
+                with self.assertRaises((self.helper.InvalidStateError, ValueError)):
+                    self.helper.load_host_native_trust(self.root, *paths)
+
+    def test_host_native_trust_paths_must_be_external_regular_and_non_symlinked(self):
+        descriptor_path, probe_path, ledger_root = self.write_external_host_documents()
+        repository_descriptor = self.root / "ai/fixtures/host-trust.json"
+        repository_descriptor.write_bytes(descriptor_path.read_bytes())
+        with self.assertRaises(ValueError):
+            self.helper.load_host_native_trust(
+                self.root, repository_descriptor, probe_path, ledger_root,
+            )
+
+        repository_ledger = self.root / "ai/fixtures/host-ledger"
+        repository_ledger.mkdir()
+        with self.assertRaises(ValueError):
+            self.helper.load_host_native_trust(
+                self.root, descriptor_path, probe_path, repository_ledger,
+            )
+
+        symlink_path = descriptor_path.with_name("descriptor-link.json")
+        try:
+            symlink_path.symlink_to(descriptor_path)
+        except OSError:
+            return
+        with self.assertRaises(ValueError):
+            self.helper.load_host_native_trust(
+                self.root, symlink_path, probe_path, ledger_root,
+            )
+
+    def test_compiled_trust_checks_survive_weakened_repository_schemas(self):
+        copied_root = self.copy_repository_fixture()
+        descriptor_schema_path = copied_root / self.SCHEMA_PATHS["host-native-trust"]
+        descriptor_schema = json.loads(descriptor_schema_path.read_text(encoding="utf-8"))
+        descriptor_schema["additionalProperties"] = True
+        descriptor_schema["properties"]["producerId"] = {}
+        descriptor_schema_path.write_text(json.dumps(descriptor_schema), encoding="utf-8")
+        descriptor = self.host_trust_descriptor()
+        descriptor["producerId"] = "bad producer"
+        paths = self.write_external_host_documents(descriptor=descriptor)
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.load_host_native_trust(copied_root, *paths)
+
+        policy_schema_path = copied_root / self.SCHEMA_PATHS["native-runtime-adapters"]
+        policy_schema = json.loads(policy_schema_path.read_text(encoding="utf-8"))
+        policy_schema["properties"]["supportedHosts"] = {"type": "array"}
+        policy_schema_path.write_text(json.dumps(policy_schema), encoding="utf-8")
+        (copied_root / "ai/native-runtime-adapters.json").write_text(
+            json.dumps(self.supported_host_policy()), encoding="utf-8",
+        )
+        result, status = self.helper.native_adapter_gate(
+            copied_root, "issue-10", "gate-weakened-schema",
+        )
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
+        ))
+
+    def test_public_native_adapter_cli_rejects_all_trust_and_fixture_arguments(self):
+        for option in (
+            "--descriptor", "--probe", "--ledger-root", "--policy",
+            "--runtime-snapshot", "--bypass-attempts",
+        ):
+            with self.subTest(option=option):
+                completed = self.run_native_adapter_cli_subprocess(
+                    "--repository-root", str(self.root),
+                    "--task-key", "issue-10",
+                    "--gate-invocation-id", "gate-public-boundary",
+                    option, "ai/fixtures/injected.json",
+                    "--output", "-",
+                )
+                self.assertEqual(completed.returncode, 2, completed.stderr + completed.stdout)
+                result = json.loads(completed.stdout)
+                self.assertEqual((result["result"], result["reason"]), (
+                    "BLOCKED", "INVALID_NATIVE_ADAPTER_GATE_ARGUMENTS",
+                ))
 
     def test_runtime_snapshot_schema_and_canonicalizer_are_available(self):
         self.assertIn("native-runtime-snapshot", self.helper.SCHEMA_NAMES)
@@ -6907,15 +10110,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         altered = json.loads(json.dumps(attempts))
         for attempt in altered:
             attempt["deduplicationKey"] = "grafted-group"
+        altered[1]["detectionEventSha256"] = self.helper.native_detection_digest(altered[0])
         altered_result, altered_status = self.helper.native_adapter_gate(
             self.root,
             "issue-10",
             "gate-event-set",
             runtime_snapshot_ref=self.write_fixture("snapshot-event-set.json", snapshot),
             bypass_attempts_ref=self.write_fixture("attempts-event-set.json", {"attempts": altered}),
-            policy_ref=self.write_fixture(
-                "policy-event-set.json", self.supported_policy_with_fingerprint(fingerprint),
-            ),
+            host_trust=self.external_host_trust(fingerprint),
         )
         self.assertEqual((altered_result["result"], altered_result["reason"], altered_status), (
             "BLOCKED", "NATIVE_BYPASS_EVENT_SET_MISMATCH", 2,
@@ -6930,9 +10132,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "gate-event-set",
             runtime_snapshot_ref=self.write_fixture("snapshot-wrong-task.json", wrong_task),
             bypass_attempts_ref=self.write_fixture("attempts-wrong-task.json", {"attempts": attempts}),
-            policy_ref=self.write_fixture(
-                "policy-wrong-task.json", self.supported_policy_with_fingerprint(fingerprint),
-            ),
+            host_trust=self.external_host_trust(fingerprint),
         )
         self.assertEqual((task_result["result"], task_result["reason"], task_status), (
             "BLOCKED", "NATIVE_ADAPTER_TASK_MISMATCH", 2,
@@ -6978,7 +10178,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 "issue-10",
                 "gate-signed",
                 runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
-                policy_ref=self.write_supported_policy(fingerprint),
+                host_trust=self.external_host_trust(fingerprint),
             )
         self.assertEqual((result["result"], result["reason"], status), (
             "BLOCKED", "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE", 2,
@@ -7002,14 +10202,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     canonicalizer(invalid)
 
-    def test_temporary_supported_policy_accepts_real_signed_enforced_snapshot(self):
+    def test_external_host_trust_accepts_real_signed_enforced_snapshot(self):
         snapshot, fingerprint, _ = self.signed_snapshot()
-        policy_ref = self.write_supported_policy(fingerprint)
+        host_trust = self.external_host_trust(fingerprint)
         missing, missing_status = self.helper.native_adapter_gate(
             self.root,
             "issue-10",
             "gate-missing",
-            policy_ref=policy_ref,
+            host_trust=host_trust,
         )
         self.assertEqual((missing["result"], missing_status), ("NOT_CONFIGURED", 3))
         self.assert_trusted_not_enforced(missing)
@@ -7019,7 +10219,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "issue-10",
             "gate-signed",
             runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
-            policy_ref=policy_ref,
+            host_trust=host_trust,
         )
         self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
         self.assertEqual({surface["status"] for surface in result["data"]["claimedSurfaces"]}, {"ENFORCED"})
@@ -7040,7 +10240,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "gate-resolution",
             runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
             bypass_attempts_ref=self.write_attempts(attempts),
-            policy_ref=self.write_supported_policy(fingerprint),
+            host_trust=self.external_host_trust(fingerprint),
         )
 
         self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
@@ -7048,6 +10248,93 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             {surface["status"] for surface in result["data"]["trustedSurfaces"]},
             {"ENFORCED"},
         )
+
+    def test_resolution_must_bind_the_exact_original_detection(self):
+        detection = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        detection_digest = hashlib.sha256(json.dumps(
+            {
+                key: value for key, value in detection.items()
+                if key not in {
+                    "resolvedAt", "resolutionReason", "detectionEventId",
+                    "detectionGateInvocationId", "detectionEventSha256",
+                }
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        resolution = self.valid_attempt(
+            attemptId="attempt-resolution",
+            eventId="event-resolution",
+            gateInvocationId="gate-resolution-binding",
+            observedAt="2026-07-13T01:00:00Z",
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            detectionEventId=detection["eventId"],
+            detectionGateInvocationId=detection["gateInvocationId"],
+            detectionEventSha256=detection_digest,
+        )
+        invalid_cases = {
+            "event": {"detectionEventId": "event-unrelated"},
+            "task": {"taskKey": "issue-unrelated"},
+            "original-gate": {"detectionGateInvocationId": "gate-unrelated"},
+            "digest": {"detectionEventSha256": "b" * 64},
+        }
+
+        for name, changes in invalid_cases.items():
+            with self.subTest(name=name):
+                unrelated_resolution = dict(resolution)
+                unrelated_resolution.update(changes)
+                state, resolution_ids = self.helper.native_bypass_lifecycle_state(
+                    [detection, unrelated_resolution], "gate-resolution-binding",
+                )
+                self.assertEqual((state, resolution_ids), ("INVALID_RESOLUTION", []))
+
+    def test_unrelated_resolution_cannot_clear_detection_at_gate(self):
+        detection = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:59:00Z",
+        )
+        resolution = self.valid_attempt(
+            attemptId="attempt-resolution",
+            eventId="event-resolution",
+            gateInvocationId="gate-resolution-unrelated",
+            observedAt="2026-07-13T01:00:00Z",
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            detectionEventId=detection["eventId"],
+            detectionGateInvocationId=detection["gateInvocationId"],
+            detectionEventSha256=self.helper.native_detection_digest(detection),
+        )
+        invalid_cases = {
+            "event": {"detectionEventId": "event-unrelated"},
+            "task": {"taskKey": "issue-unrelated"},
+            "original-gate": {"detectionGateInvocationId": "gate-unrelated"},
+            "digest": {"detectionEventSha256": "b" * 64},
+        }
+
+        for name, changes in invalid_cases.items():
+            with self.subTest(name=name):
+                unrelated_resolution = dict(resolution)
+                unrelated_resolution.update(changes)
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    "gate-resolution-unrelated",
+                    bypass_attempts_ref=self.write_fixture(
+                        f"bypass-attempts-{name}.json",
+                        {"attempts": [detection, unrelated_resolution]},
+                    ),
+                )
+
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", 2,
+                ))
 
     def test_signed_resolution_binding_missing_mismatched_or_extra_blocks_precisely(self):
         cases = (
@@ -7077,10 +10364,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                         f"attempts-{name}.json",
                         {"attempts": attempts},
                     ),
-                    policy_ref=self.write_fixture(
-                        f"policy-binding-{name}.json",
-                        self.supported_policy_with_fingerprint(fingerprint),
-                    ),
+                    host_trust=self.external_host_trust(fingerprint),
                 )
                 self.assertEqual((result["result"], result["reason"], status), (
                     "BLOCKED", expected_reason, 2,
@@ -7125,10 +10409,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                         f"resolution-attempts-{name}.json",
                         {"attempts": self.resolved_transition_attempts(gate_invocation_id)},
                     ),
-                    policy_ref=self.write_fixture(
-                        f"resolution-policy-{name}.json",
-                        self.supported_policy_with_fingerprint(fingerprint),
-                    ),
+                    host_trust=self.external_host_trust(fingerprint),
                 )
                 self.assertEqual((result["result"], result["reason"], status), (
                     "BLOCKED", expected_reason, 2,
@@ -7151,23 +10432,24 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "issue-10",
             "gate-resolution",
             bypass_attempts_ref=attempts_ref,
-            policy_ref=self.write_supported_policy(),
+            host_trust=self.external_host_trust("a" * 64),
         )
         self.assertEqual((no_snapshot["result"], no_snapshot["reason"], no_snapshot_status), (
             "BLOCKED", "NATIVE_BYPASS_RESOLUTION_SNAPSHOT_REQUIRED", 2,
         ))
 
-        unprobed_policy = self.supported_policy_with_fingerprint("a" * 64)
-        unprobed_policy["currentHost"].update({
-            "hostVersion": None,
-            "versionProvenance": "UNPROBED",
-        })
+        valid_trust = self.external_host_trust("a" * 64)
+        unprobed = dict(valid_trust.probe)
+        unprobed.update({"hostVersion": None, "versionProvenance": "UNPROBED"})
+        unprobed_trust = self.helper.HostNativeTrust(
+            valid_trust.descriptor, unprobed, valid_trust.ledger_root,
+        )
         unprobed, unprobed_status = self.helper.native_adapter_gate(
             self.root,
             "issue-10",
             "gate-resolution",
             bypass_attempts_ref=attempts_ref,
-            policy_ref=self.write_fixture("resolution-unprobed-policy.json", unprobed_policy),
+            host_trust=unprobed_trust,
         )
         self.assertEqual((unprobed["result"], unprobed["reason"], unprobed_status), (
             "BLOCKED", "NATIVE_BYPASS_RESOLUTION_HOST_UNSUPPORTED", 2,
@@ -7182,7 +10464,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "gate-unresolved",
             runtime_snapshot_ref=self.write_temp_snapshot(snapshot),
             bypass_attempts_ref=self.write_attempts([unresolved]),
-            policy_ref=self.write_supported_policy(fingerprint),
+            host_trust=self.external_host_trust(fingerprint),
         )
 
         self.assertEqual((result["result"], result["reason"], status), (
@@ -7245,10 +10527,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                     "issue-10",
                     gate_invocation_id,
                     runtime_snapshot_ref=self.write_fixture(f"runtime-{name}.json", snapshot),
-                    policy_ref=self.write_fixture(
-                        f"policy-{name}.json",
-                        self.supported_policy_with_fingerprint(policy_fingerprint),
-                    ),
+                    host_trust=self.external_host_trust(policy_fingerprint),
                 )
                 self.assertEqual((result["result"], result["reason"], status), (
                     "BLOCKED", expected_reason, 2,
@@ -7262,14 +10541,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
     def test_replayed_challenge_and_missing_crypto_block_without_trusted_enforcement(self):
         snapshot, fingerprint, _ = self.signed_snapshot(gate_invocation_id="gate-one-use")
         snapshot_ref = self.write_temp_snapshot(snapshot)
-        policy_ref = self.write_supported_policy(fingerprint)
+        host_trust = self.external_host_trust(fingerprint)
         first, first_status = self.helper.native_adapter_gate(
-            self.root, "issue-10", "gate-one-use", snapshot_ref, policy_ref=policy_ref,
+            self.root, "issue-10", "gate-one-use", snapshot_ref, host_trust=host_trust,
         )
         self.assertEqual((first["result"], first_status), ("PASS", 0))
 
         replay, replay_status = self.helper.native_adapter_gate(
-            self.root, "issue-10", "gate-one-use", snapshot_ref, policy_ref=policy_ref,
+            self.root, "issue-10", "gate-one-use", snapshot_ref, host_trust=host_trust,
         )
         self.assertEqual((replay["result"], replay["reason"], replay_status), (
             "BLOCKED", "NATIVE_ADAPTER_CHALLENGE_REPLAYED", 2,
@@ -7283,14 +10562,420 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 "issue-10",
                 "gate-no-crypto",
                 runtime_snapshot_ref=self.write_fixture("runtime-no-crypto.json", crypto_snapshot),
-                policy_ref=self.write_fixture(
-                    "policy-no-crypto.json", self.supported_policy_with_fingerprint(crypto_fingerprint),
-                ),
+                host_trust=self.external_host_trust(crypto_fingerprint),
             )
         self.assertEqual((unavailable["result"], unavailable["reason"], unavailable_status), (
             "BLOCKED", "NATIVE_ADAPTER_CRYPTO_UNAVAILABLE", 2,
         ))
         self.assert_trusted_not_enforced(unavailable)
+
+    def test_post_signature_semantic_blocks_do_not_consume_native_attestation(self):
+        cases = []
+
+        incomplete, fingerprint, private_key = self.signed_snapshot(
+            gate_invocation_id="gate-ledger-incomplete-enforcement",
+        )
+        incomplete["surfaces"][0].update({
+            "status": "NOT_CONFIGURED",
+            "reasonCode": "ADAPTER_CONFIGURATION_REQUIRED",
+            "callbackProof": None,
+        })
+        cases.append((
+            "incomplete-enforcement",
+            self.resign_snapshot(incomplete, private_key),
+            fingerprint,
+            [],
+            "NATIVE_ADAPTER_ENFORCEMENT_INCOMPLETE",
+        ))
+
+        wrong_count, fingerprint, private_key = self.signed_snapshot(
+            gate_invocation_id="gate-ledger-event-count",
+        )
+        wrong_count["bypassEventCount"] = 1
+        cases.append((
+            "event-count",
+            self.resign_snapshot(wrong_count, private_key),
+            fingerprint,
+            [],
+            "NATIVE_BYPASS_EVENT_SET_MISMATCH",
+        ))
+
+        wrong_set, fingerprint, private_key = self.signed_snapshot(
+            gate_invocation_id="gate-ledger-event-set",
+        )
+        wrong_set["bypassEventSetSha256"] = "f" * 64
+        cases.append((
+            "event-set",
+            self.resign_snapshot(wrong_set, private_key),
+            fingerprint,
+            [],
+            "NATIVE_BYPASS_EVENT_SET_MISMATCH",
+        ))
+
+        for name, resolution_ids, expected_reason in (
+            ("resolution-missing", [], "NATIVE_BYPASS_RESOLUTION_BINDING_MISSING"),
+            ("resolution-mismatch", ["event-wrong"], "NATIVE_BYPASS_RESOLUTION_BINDING_MISMATCH"),
+            (
+                "resolution-extra",
+                ["event-resolution-2", "event-extra"],
+                "NATIVE_BYPASS_RESOLUTION_BINDING_EXTRA",
+            ),
+        ):
+            gate_invocation_id = f"gate-ledger-{name}"
+            attempts = self.resolved_transition_attempts(gate_invocation_id)
+            snapshot, fingerprint, _ = self.signed_snapshot(
+                gate_invocation_id=gate_invocation_id,
+                resolution_event_ids=resolution_ids,
+                bypass_attempts=attempts,
+            )
+            cases.append((name, snapshot, fingerprint, attempts, expected_reason))
+
+        for name, snapshot, fingerprint, attempts, expected_reason in cases:
+            with self.subTest(name=name):
+                self.test_native_ledger_records.clear()
+                host_trust = self.external_host_trust(fingerprint)
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    snapshot["gateInvocationId"],
+                    runtime_snapshot_ref=self.write_fixture(
+                        f"runtime-post-signature-{name}.json", snapshot,
+                    ),
+                    bypass_attempts_ref=(
+                        None if not attempts else self.write_fixture(
+                            f"attempts-post-signature-{name}.json",
+                            {"attempts": attempts},
+                        )
+                    ),
+                    host_trust=host_trust,
+                )
+
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", expected_reason, 2,
+                ))
+                self.assertEqual(self.native_ledger_record_count(host_trust), 0)
+
+    def test_valid_retry_with_same_nonce_passes_after_semantic_block(self):
+        gate_invocation_id = "gate-ledger-valid-retry"
+        valid_snapshot, fingerprint, private_key = self.signed_snapshot(
+            gate_invocation_id=gate_invocation_id,
+        )
+        invalid_snapshot = json.loads(json.dumps(valid_snapshot))
+        invalid_snapshot["surfaces"][0].update({
+            "status": "NOT_CONFIGURED",
+            "reasonCode": "ADAPTER_CONFIGURATION_REQUIRED",
+            "callbackProof": None,
+        })
+        self.resign_snapshot(invalid_snapshot, private_key)
+        host_trust = self.external_host_trust(fingerprint)
+
+        invalid, invalid_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            gate_invocation_id,
+            runtime_snapshot_ref=self.write_fixture(
+                "runtime-semantic-block-before-retry.json", invalid_snapshot,
+            ),
+            host_trust=host_trust,
+        )
+        retry, retry_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            gate_invocation_id,
+            runtime_snapshot_ref=self.write_fixture(
+                "runtime-valid-after-semantic-block.json", valid_snapshot,
+            ),
+            host_trust=host_trust,
+        )
+
+        self.assertEqual((invalid["result"], invalid["reason"], invalid_status), (
+            "BLOCKED", "NATIVE_ADAPTER_ENFORCEMENT_INCOMPLETE", 2,
+        ))
+        self.assertEqual((retry["result"], retry["reason"], retry_status), (
+            "PASS", None, 0,
+        ))
+        self.assertEqual(self.native_ledger_record_count(host_trust), 1)
+
+    def test_signed_attestation_replay_is_blocked_across_processes(self):
+        backend_supported = getattr(
+            self.helper, "native_safe_ledger_backend_supported", lambda: True,
+        )
+        if not backend_supported():
+            self.skipTest("real handle-relative ledger backend is unavailable")
+        gate_invocation_id = "gate-cross-process"
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id=gate_invocation_id,
+        )
+        snapshot_ref = self.write_fixture("runtime-cross-process.json", snapshot)
+        descriptor = self.host_trust_descriptor(fingerprint)
+        descriptor_path, probe_path, ledger_root = self.write_external_host_documents(
+            descriptor=descriptor,
+        )
+
+        first = self.run_external_native_evaluator_subprocess(
+            descriptor_path, probe_path, ledger_root, snapshot_ref, gate_invocation_id,
+        )
+        second = self.run_external_native_evaluator_subprocess(
+            descriptor_path, probe_path, ledger_root, snapshot_ref, gate_invocation_id,
+        )
+
+        self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
+        first_payload = json.loads(first.stdout)
+        self.assertEqual(
+            (first_payload["result"]["result"], first_payload["status"]),
+            ("PASS", 0),
+        )
+        self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
+        second_payload = json.loads(second.stdout)
+        self.assertEqual((
+            second_payload["result"]["result"],
+            second_payload["result"]["reason"],
+            second_payload["status"],
+        ), ("BLOCKED", "NATIVE_ADAPTER_CHALLENGE_REPLAYED", 2))
+
+        records = list(ledger_root.iterdir())
+        self.assertEqual(len(records), 1)
+        self.assertTrue(records[0].is_file())
+        self.assertFalse(records[0].is_symlink())
+        identity = json.loads(records[0].read_text(encoding="utf-8"))
+        self.assertEqual(set(identity), {
+            "repositorySha256",
+            "producerId",
+            "taskKey",
+            "gateInvocationId",
+            "attestationId",
+            "nonce",
+            "eventSetSha256",
+        })
+        self.assertEqual(identity["producerId"], snapshot["producerId"])
+        self.assertEqual(identity["taskKey"], snapshot["taskKey"])
+        self.assertEqual(identity["gateInvocationId"], gate_invocation_id)
+        self.assertEqual(identity["attestationId"], snapshot["$id"])
+        self.assertEqual(identity["nonce"], gate_invocation_id)
+        self.assertEqual(identity["eventSetSha256"], snapshot["bypassEventSetSha256"])
+        self.assertRegex(identity["repositorySha256"], r"^[a-f0-9]{64}$")
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(records[0].stat().st_mode), 0o600)
+
+    def test_safe_ledger_backend_is_required_for_supported_host_pass(self):
+        backend_supported = getattr(
+            self.helper, "native_safe_ledger_backend_supported", None,
+        )
+        self.assertIsNotNone(backend_supported)
+        if backend_supported is None:
+            return
+        self.stop_test_native_ledger_stub()
+        gate_invocation_id = "gate-ledger-backend-unavailable"
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id=gate_invocation_id,
+        )
+        host_trust = self.external_host_trust(fingerprint)
+        with mock.patch.object(
+            self.helper, "native_safe_ledger_backend_supported", return_value=False,
+        ):
+            result, status = self.helper.native_adapter_gate(
+                self.root,
+                "issue-10",
+                gate_invocation_id,
+                runtime_snapshot_ref=self.write_fixture(
+                    "runtime-ledger-backend-unavailable.json", snapshot,
+                ),
+                host_trust=host_trust,
+            )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
+        ))
+        self.assert_trusted_not_enforced(result)
+        self.assertEqual(list(host_trust.ledger_root.iterdir()), [])
+
+    def test_safe_ledger_pins_directory_and_fsyncs_published_entry(self):
+        _descriptor, _probe, ledger_root = self.write_external_host_documents()
+        identity = self.native_ledger_identity()
+        with self.mocked_safe_native_ledger(ledger_root) as state:
+            self.helper.consume_native_attestation(ledger_root, identity)
+
+        self.assertEqual(len(state.open_calls), 2)
+        self.assertEqual(Path(state.open_calls[0][0]), ledger_root)
+        self.assertIsNone(state.open_calls[0][3])
+        self.assertEqual(Path(state.open_calls[1][0]).name, state.open_calls[1][0])
+        self.assertIn(state.open_calls[1][3], state.directory_fds)
+        self.assertEqual(len(state.fsync_calls), 2)
+        self.assertIn(state.fsync_calls[0], state.file_fds)
+        self.assertIn(state.fsync_calls[1], state.directory_fds)
+        self.assertTrue(state.record_exists)
+        self.assertEqual(
+            bytes(state.record_bytes),
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        )
+
+    def test_simultaneous_safe_ledger_contenders_yield_one_pass_and_one_replay(self):
+        gate_invocation_id = "gate-ledger-simultaneous"
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id=gate_invocation_id,
+        )
+        snapshot_ref = self.write_fixture("runtime-ledger-simultaneous.json", snapshot)
+        host_trust = self.external_host_trust(fingerprint)
+        with self.mocked_safe_native_ledger(host_trust.ledger_root):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(
+                        self.helper.native_adapter_gate,
+                        self.root,
+                        "issue-10",
+                        gate_invocation_id,
+                        snapshot_ref,
+                        None,
+                        "ai/native-runtime-adapters.json",
+                        host_trust,
+                    )
+                    for _ in range(2)
+                ]
+                outcomes = [future.result() for future in futures]
+
+        actual = sorted(
+            (result["result"], result["reason"], status)
+            for result, status in outcomes
+        )
+        self.assertEqual(actual, sorted([
+            ("PASS", None, 0),
+            ("BLOCKED", "NATIVE_ADAPTER_CHALLENGE_REPLAYED", 2),
+        ]))
+
+    def test_safe_ledger_publication_and_cleanup_faults_never_return_success(self):
+        cases = (
+            "write",
+            "file-fsync",
+            "file-close",
+            "directory-fsync",
+            "directory-close",
+            "write+cleanup-unlink",
+            "write+cleanup-fsync",
+        )
+        for fault_name in cases:
+            with self.subTest(fault=fault_name):
+                _descriptor, _probe, ledger_root = self.write_external_host_documents()
+                identity = self.native_ledger_identity(f"gate-{fault_name.replace('+', '-')}")
+                with self.mocked_safe_native_ledger(
+                    ledger_root, fault=fault_name,
+                ) as state:
+                    with self.assertRaises(OSError):
+                        self.helper.consume_native_attestation(ledger_root, identity)
+                if fault_name == "directory-fsync":
+                    directory_syncs = [
+                        descriptor for descriptor in state.fsync_calls
+                        if descriptor in state.directory_fds
+                    ]
+                    self.assertEqual(len(directory_syncs), 2)
+                    self.assertFalse(state.record_exists)
+                if fault_name not in (
+                    "directory-close", "write+cleanup-unlink",
+                ):
+                    self.assertFalse(state.record_exists)
+
+    def test_safe_ledger_rejects_validation_to_open_directory_swap(self):
+        _descriptor, _probe, ledger_root = self.write_external_host_documents()
+        identity = self.native_ledger_identity("gate-ledger-swap-race")
+        if self.helper.native_safe_ledger_backend_supported():
+            self.stop_test_native_ledger_stub()
+            original_root = ledger_root.with_name("ledger-before-swap")
+            real_open = os.open
+            swapped = False
+
+            def swap_before_directory_open(path, flags, mode=0o777, *, dir_fd=None):
+                nonlocal swapped
+                if dir_fd is None and not swapped:
+                    ledger_root.rename(original_root)
+                    ledger_root.mkdir(mode=0o700)
+                    swapped = True
+                if dir_fd is None:
+                    return real_open(path, flags, mode)
+                return real_open(path, flags, mode, dir_fd=dir_fd)
+
+            with mock.patch.object(
+                self.helper,
+                "native_safe_ledger_backend_supported",
+                return_value=True,
+            ), mock.patch.object(self.helper.os, "open", side_effect=swap_before_directory_open):
+                with self.assertRaises(OSError):
+                    self.helper.consume_native_attestation(ledger_root, identity)
+            self.assertTrue(swapped)
+            self.assertEqual(list(ledger_root.iterdir()), [])
+            return
+
+        with self.mocked_safe_native_ledger(
+                ledger_root, directory_identity_mismatch=True,
+        ) as state:
+            with self.assertRaises(OSError):
+                self.helper.consume_native_attestation(ledger_root, identity)
+
+        self.assertEqual(len(state.open_calls), 1)
+        self.assertFalse(state.record_exists)
+
+    def test_stale_and_future_attestations_never_touch_durable_ledger(self):
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        cases = (
+            (
+                "stale",
+                now - dt.timedelta(seconds=self.helper.NATIVE_SNAPSHOT_MAX_AGE_SECONDS + 1),
+                "NATIVE_ADAPTER_SNAPSHOT_STALE",
+            ),
+            ("future", now + dt.timedelta(minutes=1), "NATIVE_ADAPTER_SNAPSHOT_FUTURE"),
+        )
+        for name, observed_at, expected_reason in cases:
+            with self.subTest(name=name):
+                gate_invocation_id = f"gate-ledger-{name}"
+                snapshot, fingerprint, _ = self.signed_snapshot(
+                    gate_invocation_id=gate_invocation_id,
+                    observed_at=observed_at.isoformat().replace("+00:00", "Z"),
+                )
+                host_trust = self.external_host_trust(fingerprint)
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    gate_invocation_id,
+                    runtime_snapshot_ref=self.write_fixture(
+                        f"runtime-ledger-{name}.json", snapshot,
+                    ),
+                    host_trust=host_trust,
+                )
+
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", expected_reason, 2,
+                ))
+                self.assertEqual(list(host_trust.ledger_root.iterdir()), [])
+
+    def test_ledger_root_symlink_swap_is_blocked_without_repository_write(self):
+        self.stop_test_native_ledger_stub()
+        gate_invocation_id = "gate-ledger-symlink-swap"
+        snapshot, fingerprint, _ = self.signed_snapshot(
+            gate_invocation_id=gate_invocation_id,
+        )
+        host_trust = self.external_host_trust(fingerprint)
+        ledger_root = host_trust.ledger_root
+        original_root = ledger_root.with_name("ledger-original")
+        ledger_root.rename(original_root)
+        forbidden_target = self.root / "forbidden-ledger"
+        forbidden_target.mkdir()
+        try:
+            ledger_root.symlink_to(forbidden_target, target_is_directory=True)
+        except OSError:
+            original_root.rename(ledger_root)
+            self.skipTest("directory symlink creation is unavailable")
+
+        result, status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            gate_invocation_id,
+            runtime_snapshot_ref=self.write_fixture("runtime-ledger-symlink.json", snapshot),
+            host_trust=host_trust,
+        )
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
+        ))
+        self.assertEqual(list(forbidden_target.iterdir()), [])
+        self.assertFalse((self.root / ".ai-runs").exists())
 
     def test_version_provenance_conditionals_and_supported_matching_require_probe(self):
         canonical = json.loads(
@@ -7302,7 +10987,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
         for provenance, version in (("UNPROBED", "1.0.0"), ("PROBED", None)):
             with self.subTest(provenance=provenance, version=version):
-                policy = self.supported_host_policy()
+                policy = self.repository_policy()
                 policy["currentHost"].update({"versionProvenance": provenance, "hostVersion": version})
                 self.assert_invalid("native-runtime-adapters", policy)
 
@@ -7310,7 +10995,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         result["data"].update({"versionProvenance": "PROBED", "hostVersion": None})
         self.assert_invalid("native-adapter-result", result)
 
-        unprobed = self.supported_policy_with_fingerprint("a" * 64)
+        unprobed = self.repository_policy()
         unprobed["currentHost"].update({"versionProvenance": "UNPROBED", "hostVersion": None})
         result, status = self.helper.native_adapter_gate(
             self.root,
@@ -7324,11 +11009,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
     def test_repository_supported_host_policy_cannot_declare_runtime_enforcement(self):
         policy = self.supported_host_policy()
-        self.assert_valid("native-runtime-adapters", policy)
-        policy["supportedHosts"][0]["surfaces"][0]["status"] = "ENFORCED"
         self.assert_invalid("native-runtime-adapters", policy)
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                self.root, policy, "ai/schemas/native-runtime-adapters.schema.json",
+            )
 
     def test_phase_3a_schemas_are_allowlisted_and_work_log_is_issue_backed(self):
+        self.assertIn("host-native-trust", self.helper.SCHEMA_NAMES)
         self.assertIn("native-runtime-adapters", self.helper.SCHEMA_NAMES)
         self.assertIn("native-bypass-attempt", self.helper.SCHEMA_NAMES)
         self.assertIn("native-adapter-result", self.helper.SCHEMA_NAMES)
@@ -7424,7 +11112,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 self.assertIn(surface["reasonCode"], document)
 
     def test_closed_native_adapter_schemas_accept_complete_supported_host_vectors(self):
-        self.assert_valid("native-runtime-adapters", self.supported_host_policy())
+        self.assert_valid("native-runtime-adapters", self.repository_policy())
+        self.assert_valid("host-native-trust", self.host_trust_descriptor())
         self.assert_valid("native-bypass-attempt", self.bypass_attempt())
         self.assert_valid("native-adapter-result", self.adapter_result())
 
@@ -7506,8 +11195,8 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             "01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-", "1.0.0\n",
         )
         vectors = (
-            ("native-runtime-adapters", self.supported_host_policy, ("currentHost", "hostVersion")),
-            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "minimumHostVersion")),
+            ("native-runtime-adapters", self.repository_policy, ("currentHost", "hostVersion")),
+            ("host-native-trust", self.host_trust_descriptor, ("minimumHostVersion",)),
             ("native-bypass-attempt", self.bypass_attempt, ("hostVersion",)),
             ("native-bypass-attempt", self.bypass_attempt, ("adapterVersion",)),
             ("native-adapter-result", self.adapter_result, ("data", "hostVersion")),
@@ -7536,10 +11225,10 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
 
     def test_native_adapter_schema_patterns_use_portable_exact_end_and_reject_terminal_newlines(self):
         vectors = (
-            ("native-runtime-adapters", self.supported_host_policy, ("updatedAt",), "2026-07-13T01:00:00Z"),
-            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "producerId"), "example.native.adapter"),
-            ("native-runtime-adapters", self.supported_host_policy, ("supportedHosts", 0, "ed25519PublicKeyFingerprint"), "a" * 64),
-            ("native-runtime-adapters", self.supported_host_policy, ("currentHost", "probeRefs", 0), "ai/native-runtime-adapters.md"),
+            ("native-runtime-adapters", self.repository_policy, ("updatedAt",), "2026-07-13T01:00:00Z"),
+            ("host-native-trust", self.host_trust_descriptor, ("producerId",), "example.native.adapter"),
+            ("host-native-trust", self.host_trust_descriptor, ("ed25519PublicKeyFingerprint",), "a" * 64),
+            ("native-runtime-adapters", self.repository_policy, ("currentHost", "probeRefs", 0), "ai/native-runtime-adapters.md"),
             ("native-bypass-attempt", self.bypass_attempt, ("eventId",), "event-1"),
             ("native-bypass-attempt", self.bypass_attempt, ("observedAt",), "2026-07-13T01:00:00Z"),
             ("native-bypass-attempt", self.bypass_attempt, ("summary", "argumentSummary", "sha256"), "a" * 64),
@@ -7573,6 +11262,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assert_invalid("native-adapter-result", result)
 
         for schema_name in (
+            "host-native-trust",
             "native-runtime-adapters",
             "native-bypass-attempt",
             "native-adapter-result",
@@ -7632,6 +11322,39 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 attempt[field] = "a" * (maximum_length + 1)
                 self.assert_invalid("native-bypass-attempt", attempt)
 
+    def test_detection_binding_fields_are_closed_by_lifecycle(self):
+        detected = self.bypass_attempt()
+        self.assert_valid("native-bypass-attempt", detected)
+        binding_values = {
+            "detectionEventId": "event-original",
+            "detectionGateInvocationId": "gate-original",
+            "detectionEventSha256": "a" * 64,
+        }
+        for field, value in binding_values.items():
+            with self.subTest(lifecycle="DETECTED", field=field):
+                missing = dict(detected)
+                missing.pop(field)
+                self.assert_invalid("native-bypass-attempt", missing)
+                non_null = dict(detected)
+                non_null[field] = value
+                self.assert_invalid("native-bypass-attempt", non_null)
+
+        resolved = self.valid_attempt(
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            **binding_values,
+        )
+        self.assert_valid("native-bypass-attempt", resolved)
+        for field in binding_values:
+            with self.subTest(lifecycle="RESOLVED", field=field):
+                missing = dict(resolved)
+                missing.pop(field)
+                self.assert_invalid("native-bypass-attempt", missing)
+                null = dict(resolved)
+                null[field] = None
+                self.assert_invalid("native-bypass-attempt", null)
+
     def test_bypass_lifecycle_requires_consistent_resolution_and_correlation(self):
         attempt = self.bypass_attempt()
         attempt.update({
@@ -7672,6 +11395,9 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 "lifecycle": "RESOLVED",
                 "resolvedAt": "2026-07-13T01:00:01Z",
                 "resolutionReason": "REMEDIATED",
+                "detectionEventId": "event-original",
+                "detectionGateInvocationId": "gate-original",
+                "detectionEventSha256": "a" * 64,
             })
             attempt_path.write_text(json.dumps(valid_attempt), encoding="utf-8")
             self.helper.validate_repository_instance(root, "ai/native-bypass-attempt.json")
@@ -7693,14 +11419,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 self.assertIn("native-runtime-adapter", change["requiredChecks"])
 
     def test_every_change_type_aggregates_explicit_native_adapter_state(self):
-        supported_root = self.copy_repository_fixture()
-        supported_policy = self.supported_host_policy()
-        supported_policy["supportedHosts"][0].update({
+        forged_root = self.copy_repository_fixture()
+        forged_policy = self.supported_host_policy()
+        forged_policy["supportedHosts"][0].update({
             "hostId": "codex-desktop",
             "minimumHostVersion": "1.0.0",
         })
-        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
-            json.dumps(supported_policy), encoding="utf-8",
+        (forged_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(forged_policy), encoding="utf-8",
         )
         policy = self.helper.validate_repository_instance(self.root, "ai/verification-policy.json")
         for change in policy["changeTypes"]:
@@ -7717,22 +11443,25 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 self.assertEqual((native["rawResult"], native["mappedResult"], native["reason"]), (
                     "NOT_APPLICABLE", "NOT_APPLICABLE", "HOST_UNSUPPORTED",
                 ))
-            with self.subTest(change_type=change_type, host="supported"):
+            with self.subTest(change_type=change_type, host="forged-repository-policy"):
                 blocked_result, blocked_status = self.helper.verification_gate(
-                    supported_root,
+                    forged_root,
                     change_type,
                     "verification-level",
                     task_key="issue-10",
                     gate_invocation_id=f"gate-b-{change_type}",
                 )
                 self.assertEqual((blocked_result["result"], blocked_status), ("BLOCKED", 2))
-                self.assertEqual(self.native_check(blocked_result)["rawResult"], "NOT_CONFIGURED")
+                self.assertEqual(
+                    (self.native_check(blocked_result)["rawResult"], self.native_check(blocked_result)["reason"]),
+                    ("BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID"),
+                )
 
     def test_unsupported_host_pass_is_explicitly_repository_qualified(self):
-        explicit = self.write_verification_leaf_results([
+        explicit = self.write_bound_verification_leaf_results([
             {"checkId": "review-gate", "result": "PASS"},
             {"checkId": "done-claim-gate", "result": "PASS"},
-        ])
+        ], "gate-qualified")
         result, status = self.helper.verification_gate(
             self.root,
             "documentation-only",
@@ -7889,21 +11618,21 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 ))
                 self.assertEqual(self.native_check(result)["reason"], "NATIVE_ADAPTER_EVALUATION_INVALID")
 
-    def test_early_native_not_configured_preserves_blocking_for_inapplicable_entry_point(self):
-        supported_root = self.copy_repository_fixture()
-        supported_policy = self.supported_host_policy()
-        supported_policy["supportedHosts"][0].update({
+    def test_early_forged_repository_trust_preserves_blocking_for_inapplicable_entry_point(self):
+        forged_root = self.copy_repository_fixture()
+        forged_policy = self.supported_host_policy()
+        forged_policy["supportedHosts"][0].update({
             "hostId": "codex-desktop",
             "minimumHostVersion": "1.0.0",
         })
-        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
-            json.dumps(supported_policy), encoding="utf-8",
+        (forged_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(forged_policy), encoding="utf-8",
         )
         bypass_ref = "ai/fixtures/empty-bypass-attempts.json"
-        (supported_root / bypass_ref).write_text(json.dumps({"attempts": []}), encoding="utf-8")
+        (forged_root / bypass_ref).write_text(json.dumps({"attempts": []}), encoding="utf-8")
 
         result, status = self.helper.verification_gate(
-            supported_root,
+            forged_root,
             "documentation-only",
             "api-smoke",
             task_key="issue-10",
@@ -7916,8 +11645,9 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         ))
         native = self.native_check(result)
         self.assertEqual((native["rawResult"], native["mappedResult"]), (
-            "NOT_CONFIGURED", "BLOCKED",
+            "BLOCKED", "BLOCKED",
         ))
+        self.assertEqual(native["reason"], "NATIVE_ADAPTER_EVALUATION_INVALID")
 
     def test_early_native_not_applicable_preserves_inapplicable_entry_point_result(self):
         snapshot_ref = self.write_temp_snapshot({
@@ -7948,7 +11678,13 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         calls = []
 
         def counted_leaf(*args, **kwargs):
-            calls.append((args[3:], kwargs))
+            calls.append({
+                "runtimeSnapshotRef": args[3],
+                "bypassAttemptsRef": args[4],
+                "policy": args[5],
+                "policySha256": args[6],
+                "kwargs": kwargs,
+            })
             return original_leaf(*args, **kwargs)
 
         self.helper.native_adapter_phase2c_leaf = counted_leaf
@@ -7965,23 +11701,39 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         )
 
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
-        self.assertEqual(calls, [((snapshot_ref, bypass_ref), {})])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual((calls[0]["runtimeSnapshotRef"], calls[0]["bypassAttemptsRef"]), (
+            snapshot_ref, bypass_ref,
+        ))
+        self.assertEqual(calls[0]["kwargs"], {})
+        self.assertEqual(
+            calls[0]["policySha256"],
+            hashlib.sha256((self.root / "ai" / "verification-policy.json").read_bytes()).hexdigest(),
+        )
+        self.assertEqual(calls[0]["policy"]["$id"], "ai/verification-policy.json")
 
     def test_verification_gate_evaluates_native_leaf_once_without_optional_inputs_before_inapplicability(self):
-        supported_root = self.copy_repository_fixture()
-        supported_policy = self.supported_host_policy()
-        supported_policy["supportedHosts"][0].update({
+        forged_root = self.copy_repository_fixture()
+        forged_policy = self.supported_host_policy()
+        forged_policy["supportedHosts"][0].update({
             "hostId": "codex-desktop",
             "minimumHostVersion": "1.0.0",
         })
-        (supported_root / "ai" / "native-runtime-adapters.json").write_text(
-            json.dumps(supported_policy), encoding="utf-8",
+        (forged_root / "ai" / "native-runtime-adapters.json").write_text(
+            json.dumps(forged_policy), encoding="utf-8",
         )
         original_leaf = self.helper.native_adapter_phase2c_leaf
         calls = []
 
         def counted_leaf(*args, **kwargs):
-            calls.append((args[0], args[3:], kwargs))
+            calls.append((
+                args[0],
+                args[3],
+                args[4],
+                args[5]["$id"],
+                args[6],
+                kwargs,
+            ))
             return original_leaf(*args, **kwargs)
 
         self.helper.native_adapter_phase2c_leaf = counted_leaf
@@ -8009,7 +11761,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(self.native_check(unsupported_result)["reason"], "HOST_UNSUPPORTED")
 
         blocked_result, blocked_status = self.helper.verification_gate(
-            supported_root,
+            forged_root,
             "documentation-only",
             "api-smoke",
             task_key="issue-10",
@@ -8018,11 +11770,14 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual((blocked_result["result"], blocked_result["reason"], blocked_status), (
             "BLOCKED", "VERIFICATION_GATE_BLOCKED", 2,
         ))
-        self.assertEqual(self.native_check(blocked_result)["reason"], "NATIVE_ADAPTER_NOT_CONFIGURED")
+        self.assertEqual(self.native_check(blocked_result)["reason"], "NATIVE_ADAPTER_EVALUATION_INVALID")
+        policy_sha256 = hashlib.sha256(
+            (self.root / "ai" / "verification-policy.json").read_bytes()
+        ).hexdigest()
         self.assertEqual(calls, [
-            (self.root, (None, None), {}),
-            (self.root, (None, None), {}),
-            (supported_root, (None, None), {}),
+            (self.root, None, None, "ai/verification-policy.json", policy_sha256, {}),
+            (self.root, None, None, "ai/verification-policy.json", policy_sha256, {}),
+            (forged_root, None, None, "ai/verification-policy.json", policy_sha256, {}),
         ])
 
     def test_native_adapter_phase2c_leaf_validates_correlation_fail_closed(self):
@@ -8517,6 +12272,9 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             observedAt="2026-07-13T01:01:00Z",
             resolvedAt="2026-07-13T01:01:01Z",
             resolutionReason="REMEDIATED",
+            detectionEventId=prior_detected["eventId"],
+            detectionGateInvocationId=prior_detected["gateInvocationId"],
+            detectionEventSha256=self.helper.native_detection_digest(prior_detected),
         )
         later_detected = self.valid_attempt(
             attemptId="attempt-3",
@@ -8571,6 +12329,64 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
             self.root, "issue-10", "gate-1", bypass_attempts_ref=self.write_attempts([prior_detected]),
         )
         self.assertEqual((result["result"], status), ("BLOCKED", 2))
+
+    def test_current_gate_detection_precedes_cross_group_invalid_resolution_in_all_orders(self):
+        prior_detection = self.valid_attempt(
+            gateInvocationId="gate-prior",
+            observedAt="2026-07-13T00:58:00Z",
+            deduplicationKey="dedupe-invalid-resolution",
+        )
+        invalid_resolution = self.valid_attempt(
+            attemptId="attempt-invalid-resolution",
+            eventId="event-invalid-resolution",
+            gateInvocationId="gate-cross-group",
+            observedAt="2026-07-13T01:00:00Z",
+            deduplicationKey="dedupe-invalid-resolution",
+            lifecycle="RESOLVED",
+            resolvedAt="2026-07-13T01:01:00Z",
+            resolutionReason="REMEDIATED",
+            detectionEventId="event-unrelated",
+            detectionGateInvocationId=prior_detection["gateInvocationId"],
+            detectionEventSha256=self.helper.native_detection_digest(prior_detection),
+        )
+        current_detection = self.valid_attempt(
+            attemptId="attempt-current-detection",
+            eventId="event-current-detection",
+            gateInvocationId="gate-cross-group",
+            observedAt="2026-07-13T01:02:00Z",
+            deduplicationKey="dedupe-current-detection",
+        )
+
+        orders = {
+            "invalid-first": [prior_detection, invalid_resolution, current_detection],
+            "current-first": [current_detection, prior_detection, invalid_resolution],
+        }
+        for name, attempts in orders.items():
+            with self.subTest(name=name):
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    "gate-cross-group",
+                    bypass_attempts_ref=self.write_fixture(
+                        f"cross-group-{name}.json", {"attempts": attempts},
+                    ),
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "NATIVE_BYPASS_UNRESOLVED", 2,
+                ))
+
+        invalid_only, invalid_only_status = self.helper.native_adapter_gate(
+            self.root,
+            "issue-10",
+            "gate-cross-group",
+            bypass_attempts_ref=self.write_fixture(
+                "cross-group-invalid-only.json",
+                {"attempts": [prior_detection, invalid_resolution]},
+            ),
+        )
+        self.assertEqual((
+            invalid_only["result"], invalid_only["reason"], invalid_only_status,
+        ), ("BLOCKED", "NATIVE_BYPASS_RESOLUTION_INVALID", 2))
 
     def test_current_detection_remains_unresolved_when_current_resolution_follows_it(self):
         prior_detected = self.valid_attempt(
@@ -8639,7 +12455,7 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual((evaluated["surface"], evaluated["commandIntent"]), ("COMMAND", "FILE_READ"))
 
     def test_supported_host_fixture_states_are_completion_blocking_and_never_pass(self):
-        policy_ref = self.write_supported_policy()
+        host_trust = self.external_host_trust("a" * 64)
         states = {
             "missing": None,
             "stale": {"fresh": False, "surfaces": self.supported_surfaces()},
@@ -8661,19 +12477,15 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                     "issue-10",
                     "gate-1",
                     self.write_temp_snapshot(snapshot) if snapshot is not None else None,
-                    policy_ref=policy_ref,
+                    host_trust=host_trust,
                 )
                 self.assertIn((result["result"], status), (("NOT_CONFIGURED", 3), ("BLOCKED", 2)))
                 self.assertNotEqual(result["result"], "PASS")
 
     def test_prerelease_host_version_does_not_satisfy_release_minimum(self):
-        policy = self.supported_host_policy()
-        policy["currentHost"]["hostVersion"] = "1.0.0-beta"
-        policy["supportedHosts"][0]["hostId"] = "codex-desktop"
-        policy["supportedHosts"][0]["minimumHostVersion"] = "1.0.0"
-        policy_ref = self.write_fixture("prerelease-native-runtime-adapters.json", policy)
+        host_trust = self.external_host_trust("a" * 64, host_version="1.0.0-beta")
         result, status = self.helper.native_adapter_gate(
-            self.root, "issue-10", "gate-1", policy_ref=policy_ref,
+            self.root, "issue-10", "gate-1", host_trust=host_trust,
         )
         self.assertEqual((result["result"], status), ("UNSUPPORTED", 6))
 
@@ -8687,26 +12499,21 @@ class Phase3ANativeRuntimeAdapterTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.helper.native_semver_key(version)
 
-    def test_malformed_policy_versions_block_before_not_configured_evaluation(self):
+    def test_malformed_repository_host_versions_block_before_unsupported_evaluation(self):
         invalid_versions = ("01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-rc..1", "1.0.0-")
-        for path in (("currentHost", "hostVersion"), ("supportedHosts", 0, "minimumHostVersion")):
-            for version in invalid_versions:
-                with self.subTest(path=path, version=version):
-                    policy = self.supported_host_policy()
-                    policy["supportedHosts"][0]["hostId"] = policy["currentHost"]["hostId"]
-                    target = policy
-                    for segment in path[:-1]:
-                        target = target[segment]
-                    target[path[-1]] = version
-                    result, status = self.helper.native_adapter_gate(
-                        self.root,
-                        "issue-10",
-                        "gate-1",
-                        policy_ref=self.write_fixture("malformed-native-runtime-adapters.json", policy),
-                    )
-                    self.assertEqual((result["result"], result["reason"], status), (
-                        "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
-                    ))
+        for version in invalid_versions:
+            with self.subTest(version=version):
+                policy = self.repository_policy()
+                policy["currentHost"]["hostVersion"] = version
+                result, status = self.helper.native_adapter_gate(
+                    self.root,
+                    "issue-10",
+                    "gate-1",
+                    policy_ref=self.write_fixture("malformed-native-runtime-adapters.json", policy),
+                )
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "NATIVE_ADAPTER_EVALUATION_INVALID", 2,
+                ))
 
     def test_native_adapter_gate_shell_wrapper_is_static_and_fixed_argument(self):
         shell = REPOSITORY_ROOT / "scripts" / "ai" / "native-adapter-gate.sh"
@@ -8898,6 +12705,359 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         self.helper = load_helper()
         self.root = REPOSITORY_ROOT
 
+    def github_provenance_fixture(self):
+        artifact_root = self.root / f".phase3b-provenance-{uuid_module.uuid4()}"
+        artifact_root.mkdir()
+        self.addCleanup(shutil.rmtree, artifact_root, True)
+        member = artifact_root / "phase3b-contract-results.json"
+        member.write_text('{"contract":"PASS"}\n', encoding="utf-8")
+        member_ref = member.relative_to(self.root).as_posix()
+        member_digest = hashlib.sha256(member.read_bytes()).hexdigest()
+        artifact_digest = "a" * 64
+        head_sha = "4" * 40
+        workflow_sha = "5" * 40
+        retained_run = {
+            "repository": "116Lv/sparta-ch6-advanced",
+            "workflowRef": (
+                "116Lv/sparta-ch6-advanced/.github/workflows/"
+                "phase-3b-ci-gates.yml@refs/heads/main"
+            ),
+            "workflowSha": workflow_sha,
+            "commitSha": head_sha,
+            "eventName": "push",
+            "workflowRunId": 123456789,
+            "attempt": 2,
+            "jobId": "phase-3b-repository-contract",
+            "artifactId": 987654321,
+            "artifactDigest": artifact_digest,
+            "artifactMembers": [{"path": member_ref, "sha256": member_digest}],
+            "taskKey": "issue-14",
+            "gateInvocationId": "gate-provenance",
+            "nativeAdapterStatusDigest": "c" * 64,
+            "bypassEventSetSha256": "d" * 64,
+            "resolutionEventIds": ["resolution-1"],
+        }
+        provenance = {
+            "$schema": "ai/schemas/github-ci-provenance.schema.json",
+            "schemaVersion": 1,
+            "repository": retained_run["repository"],
+            "workflowRef": retained_run["workflowRef"],
+            "workflowSha": workflow_sha,
+            "headSha": head_sha,
+            "eventName": retained_run["eventName"],
+            "runId": retained_run["workflowRunId"],
+            "runAttempt": retained_run["attempt"],
+            "jobId": retained_run["jobId"],
+            "artifactId": retained_run["artifactId"],
+            "artifactDigest": artifact_digest,
+            "members": [{"path": member_ref, "sha256": member_digest}],
+            "taskKey": retained_run["taskKey"],
+            "gateInvocationId": retained_run["gateInvocationId"],
+            "nativeEvidenceSha256": retained_run["nativeAdapterStatusDigest"],
+            "bypassEventSetSha256": retained_run["bypassEventSetSha256"],
+            "resolutionEventIds": list(retained_run["resolutionEventIds"]),
+            "attestation": {
+                "subjectDigest": artifact_digest,
+                "signerRepository": retained_run["repository"],
+                "verified": True,
+            },
+        }
+        status = self.helper.validate_repository_instance(
+            self.root, "ai/ci-capability-status.json",
+        )
+        status["currentCi"]["nativeEnforcement"] = {
+            "checkName": "phase-3b-native-enforcement",
+            "configurationStatus": "VERIFIED",
+            "requiredCheckConfigured": True,
+            "reasonCode": "NATIVE_ENFORCEMENT_VERIFIED",
+        }
+        status["currentCi"]["durableEvidence"].update({
+            "status": "AVAILABLE",
+            "reasonCode": "DURABLE_EVIDENCE_AVAILABLE",
+            "artifactRefs": [member_ref],
+            "requiredBindings": list(self.helper.CI_DURABLE_REQUIRED_BINDINGS),
+            "retainedRun": retained_run,
+        })
+        status["currentCi"]["remoteRunner"] = {
+            "status": "PASS",
+            "completionBlocking": False,
+            "reasonCode": "REMOTE_RUNNER_ATTESTED",
+        }
+        status_path = artifact_root / "ci-status.json"
+        status_path.write_text(json.dumps(status, sort_keys=True), encoding="utf-8")
+        return status_path.relative_to(self.root).as_posix(), status, provenance, member
+
+    def github_trusted_current_run(self, provenance):
+        return self.helper.GitHubTrustedRunContext(
+            repository=provenance["repository"],
+            workflow_ref=provenance["workflowRef"],
+            workflow_sha=provenance["workflowSha"],
+            head_sha=provenance["headSha"],
+            event_name=provenance["eventName"],
+            run_id=provenance["runId"],
+            run_attempt=provenance["runAttempt"],
+            job_id=provenance["jobId"],
+            artifact_id=provenance["artifactId"],
+            artifact_digest=provenance["artifactDigest"],
+            artifact_members=tuple(
+                (member["path"], member["sha256"])
+                for member in provenance["members"]
+            ),
+            task_key=provenance["taskKey"],
+            gate_invocation_id=provenance["gateInvocationId"],
+            native_evidence_sha256=provenance["nativeEvidenceSha256"],
+            bypass_event_set_sha256=provenance["bypassEventSetSha256"],
+            resolution_event_ids=tuple(provenance["resolutionEventIds"]),
+            signer_repository=provenance["attestation"]["signerRepository"],
+        )
+
+    def unittest_ci_member_reader(self, root, reference):
+        root = Path(root).resolve(strict=True)
+        candidate = (root / reference).resolve(strict=True)
+        candidate.relative_to(root)
+        return candidate.read_bytes()
+
+    def verify_github_fixture(self, status, provenance, trusted_context=None):
+        retained_run = status["currentCi"]["durableEvidence"]["retainedRun"]
+        artifact_refs = status["currentCi"]["durableEvidence"]["artifactRefs"]
+        if trusted_context is None:
+            trusted_context = self.github_trusted_current_run(provenance)
+        return self.helper.verify_github_ci_provenance(
+            self.root,
+            provenance,
+            retained_run,
+            artifact_refs,
+            trusted_context,
+            unittest_member_reader=self.unittest_ci_member_reader,
+        )
+
+    def test_github_ci_provenance_schema_is_closed_and_approved(self):
+        self.assertIn("github-ci-provenance", self.helper.SCHEMA_NAMES)
+        _status_ref, _status, provenance, _member = self.github_provenance_fixture()
+        self.helper.validate(
+            self.root, provenance, "ai/schemas/github-ci-provenance.schema.json",
+        )
+        provenance["callerCertified"] = True
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                self.root, provenance, "ai/schemas/github-ci-provenance.schema.json",
+            )
+
+    def test_repository_local_retained_run_cannot_self_certify_without_provenance(self):
+        status_ref, _status, _provenance, member = self.github_provenance_fixture()
+        member.write_text(
+            "116Lv/sparta-ch6-advanced phase-3b-repository-contract "
+            "issue-14 gate-provenance PASS\n",
+            encoding="utf-8",
+        )
+        result, exit_status = self.helper.ci_evidence_gate(
+            self.root, "issue-14", "gate-provenance", status_ref,
+        )
+        self.assertEqual((result["result"], result["reason"], exit_status), (
+            "NOT_CONFIGURED", "CI_GITHUB_PROVENANCE_NOT_AVAILABLE", 3,
+        ))
+        self.assertIsNone(result["data"]["githubProvenance"])
+
+    def test_production_gate_cannot_pass_with_repo_constructible_provenance(self):
+        status_ref, _status, provenance, _member = self.github_provenance_fixture()
+        result, exit_status = self.helper.ci_evidence_gate(
+            self.root,
+            "issue-14",
+            "gate-provenance",
+            status_ref,
+            github_provenance=provenance,
+        )
+        self.assertEqual((result["result"], result["reason"], exit_status), (
+            "NOT_CONFIGURED", "CI_GITHUB_PROVENANCE_NOT_AVAILABLE", 3,
+        ))
+        self.assertIsNone(result["data"]["githubProvenance"])
+
+    def test_lower_level_verifier_matches_separate_trusted_current_run_context(self):
+        _status_ref, status, provenance, _member = self.github_provenance_fixture()
+        _snapshot, identity = self.verify_github_fixture(status, provenance)
+        self.assertEqual(identity["runId"], 123456789)
+        self.assertEqual(identity["signerRepository"], "116Lv/sparta-ch6-advanced")
+
+        data = self.helper.ci_evidence_gate_data(status, "issue-14", "gate-provenance")
+        data["githubProvenance"] = identity
+        result = self.helper.ci_evidence_gate_result("PASS", None, data)
+        self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+        result["data"]["githubProvenance"] = None
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+
+    def test_unrelated_genuine_run_fails_against_trusted_current_run_context(self):
+        _status_ref, status, provenance, _member = self.github_provenance_fixture()
+        current = self.github_trusted_current_run(provenance)
+        provenance["runId"] += 1
+        status["currentCi"]["durableEvidence"]["retainedRun"]["workflowRunId"] += 1
+        with self.assertRaises(self.helper.InvalidStateError) as rejected:
+            self.verify_github_fixture(status, provenance, trusted_context=current)
+        self.assertEqual(
+            rejected.exception.errors[0]["code"], "CI_GITHUB_PROVENANCE_MISMATCH",
+        )
+
+    def test_retained_run_claim_must_independently_match_trusted_current_run(self):
+        mutations = {
+            "repository": "other/example",
+            "workflowRef": "other/example/.github/workflows/ci.yml@refs/heads/main",
+            "workflowSha": "6" * 40,
+            "commitSha": "7" * 40,
+            "eventName": "pull_request",
+            "workflowRunId": 123456790,
+            "attempt": 3,
+            "jobId": "unrelated-job",
+            "artifactId": 987654322,
+            "artifactDigest": "b" * 64,
+            "artifactMembers": [{"path": "other.json", "sha256": "0" * 64}],
+            "taskKey": "issue-other",
+            "gateInvocationId": "gate-other",
+            "nativeAdapterStatusDigest": "e" * 64,
+            "bypassEventSetSha256": "f" * 64,
+            "resolutionEventIds": ["resolution-2"],
+        }
+        for field, value in mutations.items():
+            with self.subTest(binding=field):
+                _status_ref, status, provenance, _member = self.github_provenance_fixture()
+                trusted_context = self.github_trusted_current_run(provenance)
+                status["currentCi"]["durableEvidence"]["retainedRun"][field] = value
+                with self.assertRaises(self.helper.InvalidStateError) as rejected:
+                    self.verify_github_fixture(
+                        status, provenance, trusted_context=trusted_context,
+                    )
+                self.assertEqual(
+                    rejected.exception.errors[0]["code"],
+                    "CI_GITHUB_PROVENANCE_MISMATCH",
+                )
+
+    def test_github_provenance_requires_every_exact_run_and_evidence_binding(self):
+        mutations = {
+            "repository": ("repository", "other/example"),
+            "workflowRef": ("workflowRef", "other/example/.github/workflows/ci.yml@refs/heads/main"),
+            "workflowSha": ("workflowSha", "6" * 40),
+            "headSha": ("headSha", "7" * 40),
+            "eventName": ("eventName", "pull_request"),
+            "runId": ("runId", 123456790),
+            "runAttempt": ("runAttempt", 3),
+            "jobId": ("jobId", "unrelated-job"),
+            "artifactId": ("artifactId", 987654322),
+            "artifactDigest": ("artifactDigest", "b" * 64),
+            "nativeEvidenceSha256": ("nativeEvidenceSha256", "e" * 64),
+            "bypassEventSetSha256": ("bypassEventSetSha256", "f" * 64),
+            "resolutionEventIds": ("resolutionEventIds", ["resolution-2"]),
+            "taskKey": ("taskKey", "issue-other"),
+            "gateInvocationId": ("gateInvocationId", "gate-other"),
+        }
+        for label, (field, value) in mutations.items():
+            with self.subTest(binding=label):
+                _status_ref, status, provenance, _member = self.github_provenance_fixture()
+                trusted_context = self.github_trusted_current_run(provenance)
+                provenance[field] = value
+                if field == "artifactDigest":
+                    provenance["attestation"]["subjectDigest"] = value
+                with self.assertRaises(self.helper.InvalidStateError) as rejected:
+                    self.verify_github_fixture(
+                        status, provenance, trusted_context=trusted_context,
+                    )
+                self.assertEqual(rejected.exception.errors[0]["code"], (
+                    "CI_GITHUB_PROVENANCE_MISMATCH"
+                ))
+
+    def test_github_provenance_rejects_member_and_attestation_tampering(self):
+        cases = ("member-digest", "member-content", "unverified", "wrong-subject", "wrong-signer")
+        for case in cases:
+            with self.subTest(case=case):
+                _status_ref, status, provenance, member = self.github_provenance_fixture()
+                trusted_context = self.github_trusted_current_run(provenance)
+                expected_reason = "CI_ARTIFACT_MEMBER_TAMPERED"
+                if case == "member-digest":
+                    provenance["members"][0]["sha256"] = "0" * 64
+                    expected_reason = "CI_GITHUB_PROVENANCE_MISMATCH"
+                elif case == "member-content":
+                    member.write_text('{"contract":"tampered"}\n', encoding="utf-8")
+                elif case == "unverified":
+                    provenance["attestation"]["verified"] = False
+                    expected_reason = "CI_ATTESTATION_UNVERIFIED"
+                elif case == "wrong-subject":
+                    provenance["attestation"]["subjectDigest"] = "0" * 64
+                    expected_reason = "CI_ARTIFACT_ATTESTATION_MISMATCH"
+                else:
+                    provenance["attestation"]["signerRepository"] = "other/example"
+                    expected_reason = "CI_ATTESTATION_SIGNER_MISMATCH"
+                with self.assertRaises(self.helper.InvalidStateError) as rejected:
+                    self.verify_github_fixture(
+                        status, provenance, trusted_context=trusted_context,
+                    )
+                self.assertEqual(rejected.exception.errors[0]["code"], expected_reason)
+
+    def test_github_provenance_member_reader_rejects_escape_and_symlink(self):
+        with self.assertRaises(self.helper.InvalidStateError) as traversal:
+            self.helper.read_ci_artifact_member(self.root, "../outside.json")
+        self.assertEqual(
+            traversal.exception.errors[0]["code"], "CI_ARTIFACT_MEMBER_PATH_INVALID",
+        )
+
+        if not self.helper.ci_safe_artifact_backend_supported():
+            self.skipTest("safe POSIX artifact member backend is unavailable")
+        _status_ref, _status, _provenance, member = self.github_provenance_fixture()
+        link = member.with_name("linked-results.json")
+        try:
+            link.symlink_to(member)
+        except OSError:
+            self.skipTest("file symlink creation is unavailable")
+        with self.assertRaises(self.helper.InvalidStateError) as symlink:
+            self.helper.read_ci_artifact_member(
+                self.root, link.relative_to(self.root).as_posix(),
+            )
+        self.assertEqual(
+            symlink.exception.errors[0]["code"], "CI_ARTIFACT_MEMBER_UNSAFE",
+        )
+
+    def test_github_provenance_production_reader_requires_safe_posix_backend(self):
+        _status_ref, _status, _provenance, member = self.github_provenance_fixture()
+        reference = member.relative_to(self.root).as_posix()
+        with mock.patch.object(
+            self.helper, "ci_safe_artifact_backend_supported", return_value=False,
+        ):
+            with self.assertRaises(self.helper.InvalidStateError) as unavailable:
+                self.helper.read_ci_artifact_member(self.root, reference)
+        self.assertEqual(
+            unavailable.exception.errors[0]["code"],
+            "CI_ARTIFACT_MEMBER_BACKEND_UNAVAILABLE",
+        )
+
+    def test_github_provenance_posix_reader_pins_each_path_component(self):
+        open_calls = []
+        read_chunks = [b"authenticated-member", b""]
+
+        def fake_open(path, flags, mode=0o777, *, dir_fd=None):
+            open_calls.append((os.fspath(path), flags, dir_fd))
+            return 40 + len(open_calls)
+
+        def fake_read(_descriptor, _size):
+            return read_chunks.pop(0)
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(self.helper.os, "O_DIRECTORY", 0x10000, create=True))
+            stack.enter_context(mock.patch.object(self.helper.os, "O_NOFOLLOW", 0x20000, create=True))
+            stack.enter_context(mock.patch.object(self.helper.os, "open", side_effect=fake_open))
+            stack.enter_context(mock.patch.object(self.helper.os, "close"))
+            stack.enter_context(mock.patch.object(self.helper.os, "read", side_effect=fake_read))
+            stack.enter_context(mock.patch.object(
+                self.helper.os,
+                "fstat",
+                return_value=SimpleNamespace(st_mode=stat.S_IFREG | 0o600),
+            ))
+            content = self.helper.read_ci_artifact_member_posix(
+                self.root, ("artifact-root", "member.json"),
+            )
+
+        self.assertEqual(content, b"authenticated-member")
+        self.assertEqual(open_calls[0][2], None)
+        self.assertEqual(open_calls[1][0:3:2], ("artifact-root", 41))
+        self.assertEqual(open_calls[2][0:3:2], ("member.json", 42))
+        self.assertTrue(all(flags & 0x20000 for _path, flags, _dir_fd in open_calls))
+
     def test_phase_3b_schemas_policy_and_work_log_are_issue_backed(self):
         self.assertIn("ci-capability-status", self.helper.SCHEMA_NAMES)
         self.assertIn("ci-gate-result", self.helper.SCHEMA_NAMES)
@@ -8906,7 +13066,18 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         self.assertEqual(status["issue"]["number"], 12)
         self.assertEqual(status["pullRequest"]["phase3AMerged"], True)
         self.assertEqual(status["currentCi"]["provider"], "github-actions")
-        self.assertEqual(status["currentCi"]["nativeAdapterInstallation"]["status"], "NOT_CONFIGURED")
+        self.assertEqual(status["currentCi"].get("repositoryContract"), {
+            "checkName": "phase-3b-repository-contract",
+            "workflowRef": ".github/workflows/phase-3b-ci-gates.yml",
+            "configurationStatus": "CONFIGURED_UNVERIFIED",
+        })
+        self.assertEqual(status["currentCi"].get("nativeEnforcement"), {
+            "checkName": "phase-3b-native-enforcement",
+            "configurationStatus": "NOT_CONFIGURED",
+            "requiredCheckConfigured": False,
+            "reasonCode": "GITHUB_REQUIRED_CHECK_AND_NATIVE_ADAPTER_NOT_CONFIGURED",
+        })
+        self.assertNotIn("requiredCheck", status["currentCi"])
         self.assertEqual(status["currentCi"]["durableEvidence"]["status"], "NOT_CONFIGURED")
         self.assertEqual(status["currentCi"]["remoteRunner"]["completionBlocking"], True)
         self.assertEqual(status["phase2cLink"]["nativeAdapterCheckId"], "native-runtime-adapter")
@@ -8916,17 +13087,162 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
     def test_ci_gate_is_fail_closed_without_durable_github_actions_evidence(self):
         result, status = self.helper.ci_evidence_gate(self.root, "issue-12", "gate-ci")
         self.assertEqual((result["result"], result["phase2cLeafResult"], status), ("NOT_CONFIGURED", "BLOCKED", 3))
-        self.assertEqual(result["reason"], "CI_EVIDENCE_NOT_AVAILABLE")
-        self.assertEqual(result["data"]["requiredCheck"], "phase-3b-ci-gates")
+        self.assertEqual(result["reason"], "CI_GITHUB_PROVENANCE_NOT_AVAILABLE")
+        self.assertEqual(result["data"].get("repositoryContract"), {
+            "checkName": "phase-3b-repository-contract",
+            "workflowRef": ".github/workflows/phase-3b-ci-gates.yml",
+            "configurationStatus": "CONFIGURED_UNVERIFIED",
+        })
+        self.assertEqual(result["data"].get("nativeEnforcement"), {
+            "checkName": "phase-3b-native-enforcement",
+            "configurationStatus": "NOT_CONFIGURED",
+            "requiredCheckConfigured": False,
+            "reasonCode": "GITHUB_REQUIRED_CHECK_AND_NATIVE_ADAPTER_NOT_CONFIGURED",
+        })
+        for legacy_field in ("requiredCheck", "workflowRefs", "nativeAdapterInstallation"):
+            self.assertNotIn(legacy_field, result["data"])
         self.assertEqual(result["data"]["durableEvidence"]["retentionDays"], 90)
         self.assertEqual(result["data"]["nativeAdapterLeaf"]["currentHostResult"], "UNSUPPORTED")
+        self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
         self.assertFalse((self.root / ".ai-runs").exists())
+
+    def test_ci_gate_shell_fallbacks_preserve_split_identity(self):
+        shell_text = (self.root / "scripts/ai/ci-evidence-gate.sh").read_text(encoding="utf-8")
+        fallbacks = [
+            json.loads(match.group(1))
+            for match in re.finditer(r"printf '%s\\n' '(\{.*\})'", shell_text)
+        ]
+        expected_bindings = [
+            "repository", "workflowRef", "workflowSha", "commitSha", "eventName",
+            "workflowRunId", "attempt", "jobId", "artifactId", "artifactDigest",
+            "artifactMembers", "taskKey", "gateInvocationId", "nativeAdapterStatusDigest",
+            "bypassEventSetSha256", "resolutionEventIds",
+        ]
+        self.assertEqual(len(fallbacks), 2)
+        for fallback in fallbacks:
+            with self.subTest(reason=fallback["reason"]):
+                data = fallback["data"]
+                self.assertEqual(data.get("repositoryContract"), {
+                    "checkName": "phase-3b-repository-contract",
+                    "workflowRef": ".github/workflows/phase-3b-ci-gates.yml",
+                    "configurationStatus": "CONFIGURED_UNVERIFIED",
+                })
+                self.assertEqual(data.get("nativeEnforcement", {}).get("checkName"), "phase-3b-native-enforcement")
+                self.assertEqual(data.get("nativeEnforcement", {}).get("configurationStatus"), "NOT_CONFIGURED")
+                self.assertIs(data.get("nativeEnforcement", {}).get("requiredCheckConfigured"), False)
+                self.assertEqual(data["durableEvidence"]["requiredBindings"], expected_bindings)
+                for legacy_field in ("requiredCheck", "workflowRefs", "nativeAdapterInstallation"):
+                    self.assertNotIn(legacy_field, data)
+                self.helper.validate(self.root, fallback, "ai/schemas/ci-gate-result.schema.json")
+
+    def test_ci_gate_result_schema_requires_exact_ordered_durable_bindings(self):
+        shell_text = (self.root / "scripts/ai/ci-evidence-gate.sh").read_text(encoding="utf-8")
+        fallback = json.loads(re.search(r"printf '%s\\n' '(\{.*\})'", shell_text).group(1))
+        bindings = fallback["data"]["durableEvidence"]["requiredBindings"]
+        self.assertEqual(len(bindings), 16)
+
+        invalid_binding_lists = [
+            bindings[:-1],
+            [*bindings, "unexpectedBinding"],
+            [bindings[1], bindings[0], *bindings[2:]],
+        ]
+        for invalid_bindings in invalid_binding_lists:
+            with self.subTest(bindings=invalid_bindings):
+                candidate = json.loads(json.dumps(fallback))
+                candidate["data"]["durableEvidence"]["requiredBindings"] = invalid_bindings
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        self.root, candidate, "ai/schemas/ci-gate-result.schema.json",
+                    )
+
+    def test_ci_gate_invalid_arguments_emit_schema_valid_split_fallback(self):
+        result, status = self.helper.ci_evidence_gate(self.root, "bad argument", "gate-ci")
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "INVALID_CI_GATE_ARGUMENTS", 2,
+        ))
+        self.assertEqual((result["data"]["taskKey"], result["data"]["gateInvocationId"]), (
+            "invalid", "gate-ci",
+        ))
+        self.assertEqual(result["data"]["repositoryContract"]["checkName"], "phase-3b-repository-contract")
+        self.assertEqual(result["data"]["nativeEnforcement"]["checkName"], "phase-3b-native-enforcement")
+        self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+
+    def test_ci_gate_correlation_length_matches_result_schema_boundary(self):
+        valid = "a" * 128
+        for field in ("taskKey", "gateInvocationId"):
+            with self.subTest(field=field, length=128):
+                task_key = valid if field == "taskKey" else "issue-12"
+                gate_invocation_id = valid if field == "gateInvocationId" else "gate-ci"
+                result, status = self.helper.ci_evidence_gate(self.root, task_key, gate_invocation_id)
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "NOT_CONFIGURED", "CI_GITHUB_PROVENANCE_NOT_AVAILABLE", 3,
+                ))
+                self.assertEqual(result["data"][field], valid)
+                self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+
+        oversized = "b" * 129
+        for field in ("taskKey", "gateInvocationId"):
+            with self.subTest(field=field, length=129):
+                task_key = oversized if field == "taskKey" else "issue-12"
+                gate_invocation_id = oversized if field == "gateInvocationId" else "gate-ci"
+                result, status = self.helper.ci_evidence_gate(self.root, task_key, gate_invocation_id)
+                self.assertEqual((result["result"], result["reason"], status), (
+                    "BLOCKED", "INVALID_CI_GATE_ARGUMENTS", 2,
+                ))
+                self.assertEqual(result["data"][field], "invalid")
+                self.assertNotIn(oversized, json.dumps(result, sort_keys=True))
+                self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+
+        shell_text = (self.root / "scripts/ai/ci-evidence-gate.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            '--task-key "$task_key" --gate-invocation-id "$gate_invocation_id"',
+            shell_text,
+        )
+
+    def test_ci_policy_document_reports_exact_split_status(self):
+        policy = (self.root / "ai/ci-gates.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "Repository contract check `phase-3b-repository-contract` is "
+            "`CONFIGURED_UNVERIFIED`",
+            policy,
+        )
+        self.assertIn(
+            "Native enforcement check `phase-3b-native-enforcement` is `NOT_CONFIGURED` "
+            "with `requiredCheckConfigured: false`",
+            policy,
+        )
+        self.assertIn("production gate remains unconditionally `NOT_CONFIGURED`", policy)
+        self.assertIn("`GitHubTrustedRunContext`", policy)
+        self.assertIn("independently match", policy)
+        self.assertIn("safe POSIX handle-relative backend", policy)
+        self.assertIn("non-POSIX production hosts fail closed", policy)
+        self.assertNotIn("immutable `GitHubCiProvenance`", policy)
+        self.assertNotIn("required check: configured as `phase-3b-ci-gates`", policy)
+
+    def test_project_state_reports_contract_workflow_without_native_enforcement(self):
+        state = json.loads((self.root / "ai/project-state.json").read_text(encoding="utf-8"))
+        ci_environment = next(item for item in state["environments"] if item["kind"] == "CI")
+        self.assertEqual(ci_environment["configurationStatus"], "CONFIGURED_UNVERIFIED")
+        notes = " ".join(ci_environment["notes"])
+        self.assertIn("phase-3b-repository-contract", notes)
+        self.assertIn("native enforcement remains NOT_CONFIGURED", notes)
+        local_environment = next(item for item in state["environments"] if item["kind"] == "LOCAL")
+        self.assertEqual(local_environment["configurationStatus"], "VERIFIED")
+
+        markdown = (self.root / "ai/project-state.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "| CI | CONFIGURED_UNVERIFIED | phase-3b-repository-contract workflow exists; "
+            "native enforcement remains NOT_CONFIGURED. |",
+            markdown,
+        )
 
     def test_ci_evidence_available_requires_retained_artifact_identity(self):
         status = self.helper.validate_repository_instance(self.root, "ai/ci-capability-status.json")
-        status["currentCi"]["nativeAdapterInstallation"] = {
-            "status": "INSTALLED",
-            "reasonCode": "REMOTE_NATIVE_ADAPTER_INSTALLED",
+        status["currentCi"]["nativeEnforcement"] = {
+            "checkName": "phase-3b-native-enforcement",
+            "configurationStatus": "VERIFIED",
+            "requiredCheckConfigured": True,
+            "reasonCode": "NATIVE_ENFORCEMENT_VERIFIED",
         }
         status["currentCi"]["durableEvidence"]["status"] = "AVAILABLE"
         status["currentCi"]["durableEvidence"]["reasonCode"] = "DURABLE_EVIDENCE_AVAILABLE"
@@ -8947,49 +13263,25 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         finally:
             status_path.unlink(missing_ok=True)
     def test_ci_evidence_available_requires_retained_artifact_file(self):
-        status = self.helper.validate_repository_instance(self.root, "ai/ci-capability-status.json")
-        status["currentCi"]["nativeAdapterInstallation"] = {
-            "status": "INSTALLED",
-            "reasonCode": "REMOTE_NATIVE_ADAPTER_INSTALLED",
-        }
-        status["currentCi"]["durableEvidence"].update({
-            "status": "AVAILABLE",
-            "reasonCode": "DURABLE_EVIDENCE_AVAILABLE",
-            "artifactRefs": ["ai/evidence/missing-phase3b-ci-artifact.json"],
-            "retainedRun": {
-                "repository": "116Lv/sparta-ch6-advanced",
-                "commitSha": "400c00f35f9d21cbeec44b0f40f49dac564a4bb6",
-                "workflowRunId": 1,
-                "jobId": 1,
-                "attempt": 1,
-                "taskKey": "issue-12",
-                "gateInvocationId": "gate-available",
-                "nativeAdapterStatusDigest": "0000000000000000000000000000000000000000000000000000000000000000",
-                "bypassEventSetSha256": "0000000000000000000000000000000000000000000000000000000000000000",
-                "resolutionEventIds": [],
-            },
-        })
-        status["currentCi"]["remoteRunner"] = {
-            "status": "PASS",
-            "completionBlocking": False,
-            "reasonCode": "REMOTE_RUNNER_ATTESTED",
-        }
-        status_path = self.root / "phase3b-ci-status-missing-artifact.tmp.json"
-        try:
-            status_path.write_text(json.dumps(status, sort_keys=True), encoding="utf-8")
-            result, exit_status = self.helper.ci_evidence_gate(
-                self.root, "issue-12", "gate-available", "phase3b-ci-status-missing-artifact.tmp.json",
-            )
-            self.assertEqual((result["result"], result["reason"], exit_status), (
-                "BLOCKED", "CI_DURABLE_EVIDENCE_ARTIFACT_MISSING", 2,
-            ))
-        finally:
-            status_path.unlink(missing_ok=True)
+        status_ref, _status, provenance, member = self.github_provenance_fixture()
+        member.unlink()
+        result, exit_status = self.helper.ci_evidence_gate(
+            self.root, "issue-14", "gate-provenance", status_ref,
+            github_provenance=provenance,
+        )
+        self.assertEqual((result["result"], result["reason"], exit_status), (
+            "NOT_CONFIGURED", "CI_GITHUB_PROVENANCE_NOT_AVAILABLE", 3,
+        ))
     def test_ci_workflow_and_policy_docs_preserve_product_command_boundary(self):
         workflow = self.root / ".github/workflows/phase-3b-ci-gates.yml"
         self.assertTrue(workflow.is_file())
         workflow_text = workflow.read_text(encoding="utf-8")
-        self.assertIn("scripts/ai/ci-evidence-gate.sh", workflow_text)
+        self.assertTrue(workflow_text.startswith("name: phase-3b-repository-contract\n"))
+        self.assertIn("\n  phase-3b-repository-contract:\n", workflow_text)
+        self.assertIn("    name: phase-3b-repository-contract\n", workflow_text)
+        self.assertNotIn("phase-3b-native-enforcement", workflow_text)
+        self.assertNotIn("scripts/ai/ci-evidence-gate.sh", workflow_text)
+        self.assertNotIn('"$status" -ne 3', workflow_text)
         self.assertNotIn("gradle", workflow_text.lower())
         self.assertNotIn("docker compose", workflow_text.lower())
         doc_text = "\n".join(
@@ -9004,28 +13296,132 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         self.assertIn("bypass event", doc_text)
         self.assertIn("registry `VERIFIED`", doc_text)
 
-    def test_ci_workflow_provisions_contract_runtime_and_retains_failure_evidence(self):
+    def test_contract_entry_point_runs_complete_helper_suite_once(self):
+        entry_text = (
+            self.root / "scripts/ai/tests/run-contract-tests.sh"
+        ).read_text(encoding="utf-8")
+        validate_contract_entry_script(entry_text)
+
         workflow_text = (
             self.root / ".github/workflows/phase-3b-ci-gates.yml"
         ).read_text(encoding="utf-8")
-        packages = "jsonschema==4.25.1 cryptography==45.0.5"
-        setup_install = f"python -m pip install {packages}"
-        contract_install_command = (
-            f"/usr/bin/python3 -m pip install --break-system-packages {packages}"
+        validate_phase3b_contract_workflow(workflow_text)
+
+        design_text = (
+            self.root
+            / "docs/superpowers/specs/2026-07-13-ai-workflow-phase-3b-ci-gates-durable-evidence-design.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "`phase-3b-repository-contract` is `CONFIGURED_UNVERIFIED`",
+            design_text,
         )
-        self.assertIn(setup_install, workflow_text)
-        self.assertIn(contract_install_command, workflow_text)
-        self.assertEqual(
-            workflow_text.count("assert version('jsonschema') == '4.25.1'"), 2,
+        self.assertIn(
+            "`phase-3b-native-enforcement` remains `NOT_CONFIGURED`",
+            design_text,
         )
-        self.assertEqual(
-            workflow_text.count("assert version('cryptography') == '45.0.5'"), 2,
+        self.assertIn("does not imply native enforcement `PASS`", design_text)
+        self.assertIn("external GitHub/Sigstore verifier", design_text)
+        self.assertIn("`scripts/ai/tests/run-contract-tests.sh`", design_text)
+        self.assertIn(
+            "full `scripts.ai.tests.test_workflow_helper` module exactly once",
+            design_text,
         )
-        contract_install = workflow_text.index(contract_install_command)
-        contract_run = workflow_text.index("bash scripts/ai/tests/run-contract-tests.sh")
-        self.assertLess(contract_install, contract_run)
-        self.assertIn("> phase3b-ci-gate-fallback.json", workflow_text)
-        self.assertIn("if: ${{ !cancelled() }}\n        shell: bash", workflow_text)
-        self.assertIn("hashFiles('phase3b-ci-gate-result.json') != ''", workflow_text)
-        self.assertIn("hashFiles('ai/ci-capability-status.json') != ''", workflow_text)
-        self.assertIn("if-no-files-found: error", workflow_text)
+
+    def test_contract_structure_validators_reject_non_executable_and_extra_paths(self):
+        shell_validator = globals().get("validate_contract_entry_script")
+        workflow_validator = globals().get("validate_phase3b_contract_workflow")
+        self.assertIsNotNone(shell_validator)
+        self.assertIsNotNone(workflow_validator)
+
+        entry_text = (
+            self.root / "scripts/ai/tests/run-contract-tests.sh"
+        ).read_text(encoding="utf-8")
+        unittest_command = "python -m unittest scripts.ai.tests.test_workflow_helper -v"
+        shell_mutations = {
+            "commented": entry_text.replace(
+                unittest_command, f"# {unittest_command}",
+            ),
+            "dead-branch": entry_text.replace(
+                unittest_command,
+                f"if false; then\n  {unittest_command}\nfi",
+            ),
+            "duplicate": entry_text.replace(
+                unittest_command, f"{unittest_command}\n{unittest_command}",
+            ),
+            "selective": entry_text.replace(
+                unittest_command,
+                "python -m unittest "
+                "scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v",
+            ),
+        }
+        shell_validator(f"# allowed comment\n\n{entry_text}\n# trailing comment\n")
+        for label, mutation in shell_mutations.items():
+            with self.subTest(surface="entry", mutation=label):
+                with self.assertRaises(AssertionError):
+                    shell_validator(mutation)
+
+        workflow_text = (
+            self.root / ".github/workflows/phase-3b-ci-gates.yml"
+        ).read_text(encoding="utf-8")
+        entry_pipeline = (
+            "bash scripts/ai/tests/run-contract-tests.sh 2>&1 | "
+            "tee phase3b-contract-test-output.txt"
+        )
+        workflow_mutations = {
+            "commented": workflow_text.replace(
+                entry_pipeline, f"# {entry_pipeline}",
+            ),
+            "dead-branch": workflow_text.replace(
+                entry_pipeline,
+                f"if false; then\n            {entry_pipeline}\n          fi",
+            ),
+            "duplicate": workflow_text.replace(
+                entry_pipeline, f"{entry_pipeline}\n          {entry_pipeline}",
+            ),
+            "selective": workflow_text.replace(
+                entry_pipeline,
+                "python -m unittest "
+                "scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v\n"
+                f"          {entry_pipeline}",
+            ),
+        }
+        workflow_validator(f"# allowed comment\n\n{workflow_text}\n# trailing comment\n")
+        for label, mutation in workflow_mutations.items():
+            with self.subTest(surface="workflow", mutation=label):
+                with self.assertRaises(AssertionError):
+                    workflow_validator(mutation)
+
+    def test_contract_workflow_rejects_unapproved_top_level_authority(self):
+        workflow_text = (
+            self.root / ".github/workflows/phase-3b-ci-gates.yml"
+        ).read_text(encoding="utf-8")
+        trigger_block = "on:\n  pull_request:\n  push:\n    branches:\n      - main\n\n"
+        permission_block = "permissions:\n  contents: read\n\n"
+        mutations = {
+            "bash-env": workflow_text.replace(
+                permission_block,
+                "env:\n  BASH_ENV: scripts/ai/tests/untrusted-env.sh\n\n"
+                + permission_block,
+            ),
+            "extra-key": workflow_text.replace(
+                permission_block,
+                "concurrency: phase-3b-untrusted\n\n" + permission_block,
+            ),
+            "trigger-removed": workflow_text.replace(trigger_block, ""),
+            "trigger-changed": workflow_text.replace("      - main\n", "      - develop\n"),
+            "trigger-disabled": workflow_text.replace(trigger_block, "on: {}\n\n"),
+            "permission-escalated": workflow_text.replace(
+                "  contents: read\n", "  contents: write\n",
+            ),
+            "permission-removed": workflow_text.replace(permission_block, ""),
+        }
+        for label, mutation in mutations.items():
+            with self.subTest(mutation=label):
+                with self.assertRaises(AssertionError):
+                    validate_phase3b_contract_workflow(mutation)
+
+    def test_ci_workflow_provisions_contract_runtime_and_uploads_diagnostics(self):
+        workflow_text = (
+            self.root / ".github/workflows/phase-3b-ci-gates.yml"
+        ).read_text(encoding="utf-8")
+        validate_phase3b_contract_workflow(workflow_text)

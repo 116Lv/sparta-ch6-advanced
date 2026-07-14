@@ -18,6 +18,8 @@ Every Phase 2B handoff carries:
 
 The current canonical state is `ai/agent-handoff.json`, and the skill catalog is `ai/skill-catalog.json`.
 
+`skillIds` must equal the catalog's complete distinct ID set, with every ID appearing exactly once. Duplicate IDs, including a duplicate that preserves array length while omitting another required skill, are invalid handoff state. Schema `uniqueItems` provides structural defense in depth, while semantic validation binds the handoff to the canonical catalog set.
+
 ## Reuse Contract
 
 Workers must reuse `ai/context-map.json`, `ai/workflow-cache.json`, the Phase 2A work log, and the Phase 2B issue summary before rediscovering workflow context. Cache or context exceptions must be recorded in the role log.

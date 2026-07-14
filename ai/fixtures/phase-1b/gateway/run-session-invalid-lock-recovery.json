@@ -2,5 +2,5 @@
   "$schema": "ai/schemas/run-session.schema.json", "$id": ".ai-runs/run-1/.state/run-session.json", "schemaVersion": 1,
   "runId": "run-1", "taskKey": "phase-1b-2-task-1", "startedAt": "2026-07-11T03:00:00Z", "workingDirectory": ".", "environment": "LOCAL", "state": "OPEN",
   "commandResultRefs": [], "processAttemptRefs": [], "approvalRefs": [], "policyViolationRefs": [], "gateResultRefs": [], "reservations": [],
-  "lockRecoveries": [{"recoveryId": "recovery-1", "runId": "run-1", "recoveredOwnerId": "owner-1", "replacementOwnerId": "owner-2", "previousPid": 123, "previousAcquiredAt": "2026-07-11T02:00:00Z", "recoveredAt": "2026-07-11T03:00:00Z", "reason": "EXPIRED_ONLY"}], "redactionApplied": false
+  "lockRecoveries": [{"recoveryId": "recovery-1", "runId": "run-1", "recoveredOwnerId": "owner-1", "replacementOwnerId": "owner-2", "previousPid": 123, "previousAcquiredAt": "2026-07-11T02:00:00Z", "recoveredAt": "2026-07-11T03:00:00Z", "reason": "EXPIRED_ONLY"}], "redactionApplied": false, "finalizationJournalIdentity": null, "finalizationReceipt": null
 }

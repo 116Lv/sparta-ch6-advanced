@@ -8,35 +8,62 @@ Phase 1B-3 remains `INTEGRITY_ONLY` with `completenessEvaluated: false`.
 ## Approaches Considered
 
 1. Repository-only CI status contract with no workflow: lowest risk, but it
-   would leave required CI gate wiring unexercised.
+   would leave even the static repository contract unexercised.
 2. Full product CI with Gradle and service dependencies: stronger product
    signal, but outside the approved Phase 3B evidence scope and would blur the
    product-command boundary.
 3. Recommended: a static/helper GitHub Actions workflow plus a closed durable
-   evidence contract. This wires a required CI gate without running Gradle,
+   evidence contract. This exercises the repository contract without claiming
+   that a required native-enforcement check exists, and it does not run Gradle,
    Docker, HTTP/API, database, migration, seed, deploy, or infrastructure
    commands.
 
-## Durable Evidence Contract
+## Authenticated Provenance And Durable Evidence Contract
 
-A CI evidence PASS requires retained GitHub Actions evidence bound to repository,
-commit SHA, workflow run ID, job ID, run attempt, `taskKey`,
-`gateInvocationId`, native adapter status digest, complete bypass event-set
-SHA-256, and `resolutionEventIds`. The minimum retention is 90 days. Cache reuse
-is forbidden unless the workflow run identity and all bindings match; handoff may
-reuse summaries only, never substitute them for durable CI evidence.
+This repository has no external GitHub/Sigstore verifier integration. The production gate remains unconditionally `NOT_CONFIGURED`, even if repository
+Python code constructs a correct-looking provenance object and passes it to the
+helper. The public `scripts/ai/ci-evidence-gate.sh` entry point has no provenance
+argument and cannot produce PASS from repository files or `retainedRun` state.
 
-The current repository has a CI workflow file, but this local run has no
-completed remote workflow run or retained artifact identity. Therefore the local
-CI evidence gate returns `NOT_CONFIGURED` with Phase 2C leaf `BLOCKED` and reason
-`CI_EVIDENCE_NOT_AVAILABLE`.
+The lower-level pure verifier models a future integration without granting
+production authority. It requires an immutable `GitHubTrustedRunContext`
+supplied by that external verifier. The provenance envelope and repository
+`retainedRun` claim must independently match every field in that context; they
+are never used to derive their own expected values. An older genuine run fails
+when its identity differs from the trusted current-run context.
+
+The closed provenance envelope binds the expected repository and workflow ref,
+workflow SHA, head SHA, event name, workflow run ID and attempt, job ID,
+artifact ID and digest, every artifact member path and SHA-256, task and gate
+correlation, native evidence SHA-256, complete bypass event-set SHA-256, and
+resolution event IDs. The verified attestation subject must equal the artifact
+digest and its signer repository must be `116Lv/sparta-ch6-advanced`. Artifact
+Production artifact members require a safe POSIX handle-relative backend using
+pinned directory descriptors and `O_NOFOLLOW`. Path escape, symlink
+substitution, identity races, and content tampering are rejected. When those
+primitives are unavailable, non-POSIX production hosts fail closed with an
+explicit backend-unavailable result. A unit-test-only member consumer exercises
+the pure correlation verifier on Windows; it is not reachable from the
+production gate and cannot establish authority.
+
+Repository `retainedRun` and provenance are only claims. Correct-looking
+repository files, frozen values, schema-valid booleans, or caller-selected
+expected values cannot substitute for external verification. The minimum
+retention is 90 days. Cache reuse is forbidden unless the workflow run identity
+and all bindings match; handoff may reuse summaries only, never substitute them
+for durable CI evidence.
+
+The current repository has the repository-contract workflow file, but the
+contract is `CONFIGURED_UNVERIFIED` and native enforcement is `NOT_CONFIGURED`.
+This local run has no completed remote workflow run or retained artifact
+identity or externally authenticated provenance. Therefore the public/local CI
+evidence gate returns `NOT_CONFIGURED` with Phase 2C leaf `BLOCKED` and reason
+`CI_GITHUB_PROVENANCE_NOT_AVAILABLE`.
 
 ## Hook Enforcement Levels
 
-- GitHub Actions required check: configured as `phase-3b-ci-gates`, but durable
-  run evidence is not yet available locally.
-- CI native adapter installation: `NOT_CONFIGURED`; supported CI hosts must fail
-  closed until installed and attested.
+- Repository contract check `phase-3b-repository-contract` is `CONFIGURED_UNVERIFIED`; the workflow exists but has not been verified by a remote run in this task.
+- Native enforcement check `phase-3b-native-enforcement` is `NOT_CONFIGURED` with `requiredCheckConfigured: false`; no GitHub required check or native adapter has been externally installed and attested.
 - Current `codex-desktop` host: `UNSUPPORTED` / `HOST_UNSUPPORTED`; Phase 2C
   native leaf remains `NOT_APPLICABLE` with repository-only qualification.
 - Remote runner completion: completion-blocking when run identity, artifact

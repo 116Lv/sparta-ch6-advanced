@@ -2,7 +2,7 @@
   "$schema": "./schemas/workflow-cache.schema.json",
   "$id": "ai/workflow-cache.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-13T12:45:00Z",
+  "updatedAt": "2026-07-14T00:00:00Z",
   "entries": [
     {
       "id": "phase-2b-handoff-context",
@@ -49,6 +49,11 @@
       "id": "phase-3a-native-snapshot-trust",
       "summary": "Use ai/native-runtime-adapters.json, ai/native-runtime-adapters.md, and the native runtime snapshot schema for Phase 3A claimed/trusted status, ephemeral Ed25519 verification, signed task/event-set binding, and signed resolutionEventIds binding; runtime snapshots are not reusable cache evidence.",
       "createdAt": "2026-07-13T11:47:29Z"
+    },
+    {
+      "id": "phase-2-verification-cache-identity",
+      "summary": "Verification-decision cache reuse requires the exact ordered required-plus-optional check set with check/producer-indexed leaf-result and schema-bound evidence digests, plus task, gate, commit, change type, entry point, policy, environment, and expiry identity; the current native result lacks a correlated durable envelope, so no canonical reusable PASS decision is materialized.",
+      "createdAt": "2026-07-14T00:00:00Z"
     }
   ],
   "invalidationEvents": []

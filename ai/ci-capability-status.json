@@ -15,14 +15,17 @@
                     },
     "currentCi":  {
                       "provider":  "github-actions",
-                      "requiredCheck":  "phase-3b-ci-gates",
-                      "workflowRefs":  [
-                                           ".github/workflows/phase-3b-ci-gates.yml"
-                                       ],
-                      "nativeAdapterInstallation":  {
-                                                        "status":  "NOT_CONFIGURED",
-                                                        "reasonCode":  "REMOTE_NATIVE_ADAPTER_NOT_INSTALLED"
-                                                    },
+                      "repositoryContract":  {
+                                                   "checkName":  "phase-3b-repository-contract",
+                                                   "workflowRef":  ".github/workflows/phase-3b-ci-gates.yml",
+                                                   "configurationStatus":  "CONFIGURED_UNVERIFIED"
+                                               },
+                      "nativeEnforcement":  {
+                                                "checkName":  "phase-3b-native-enforcement",
+                                                "configurationStatus":  "NOT_CONFIGURED",
+                                                "requiredCheckConfigured":  false,
+                                                "reasonCode":  "GITHUB_REQUIRED_CHECK_AND_NATIVE_ADAPTER_NOT_CONFIGURED"
+                                            },
                       "durableEvidence":  {
                                               "status":  "NOT_CONFIGURED",
                                               "reasonCode":  "NO_COMPLETED_WORKFLOW_RUN_EVIDENCE",
@@ -32,10 +35,16 @@
                                                                ],
                                               "requiredBindings":  [
                                                                        "repository",
+                                                                       "workflowRef",
+                                                                       "workflowSha",
                                                                        "commitSha",
+                                                                       "eventName",
                                                                        "workflowRunId",
-                                                                       "jobId",
                                                                        "attempt",
+                                                                       "jobId",
+                                                                       "artifactId",
+                                                                       "artifactDigest",
+                                                                       "artifactMembers",
                                                                        "taskKey",
                                                                        "gateInvocationId",
                                                                        "nativeAdapterStatusDigest",
