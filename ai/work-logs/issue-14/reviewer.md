@@ -608,3 +608,17 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 - Tests were not re-run during this final read-only approval review. Reviewed evidence commit `1e9c223`, which records 49 passing Phase 2A/2B/2C tests in `49.500s`, plus successful static checks.
 - `STALE` retains precedence, and the external binding behavior remains unchanged and aligned with the documented schema.
 - Task quality: Approved. Final scoped review found Critical 0, Important 0, and Minor 0.
+
+## Task 16 Deferred Native Nonce Consumption Re-review (2026-07-14)
+
+### Issues
+
+- Critical: None.
+- Important: None. `5e4afa1` defers durable nonce consumption until every surface is `ENFORCED` and the bypass count, bypass set, and resolution-event bindings have all passed.
+- Minor: None.
+
+### Verification And Assessment
+
+- Tests were not re-run during this final read-only approval review. Reviewed evidence commit `2540d62`, which records the focused GREEN run passing 4 tests in `1.685s` and the Phase 3A class passing 110 tests in `31.951s` with 2 explicit Windows capability skips.
+- All six semantic BLOCK paths precede ledger mutation; the same-nonce corrected retry and atomic one-PASS/one-replay concurrency behavior are covered. No new TOCTOU, authority, or ordering gap was found.
+- Task quality: Approved. Final scoped review found Critical 0, Important 0, and Minor 0.
