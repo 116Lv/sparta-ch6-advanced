@@ -2,12 +2,12 @@
 issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 tracking_status: issue_backed
-status: in_review
+status: in_progress
 owning_feature: "none"
-current_owner: reviewer
+current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T13:01:47+09:00
+last_updated: 2026-07-14T13:10:04+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -72,12 +72,12 @@ Issue #14 tracks the isolated implementation and review of the four approved tru
 
 ## Agent Logs
 
-- [Implementation Agent](implementation-agent.md): complete
+- [Implementation Agent](implementation-agent.md): in_progress
 - [Reviewer](reviewer.md): in_progress
 
 ## Current State
 
-All planned tasks are individually approved. Integration Fix 1 complete finalized projection binding is implemented and awaiting independent review; three Important and two Minor findings remain queued.
+All planned tasks are individually approved. Integration Fix 1 requires crash recovery/resume and complete pre-receipt session projection binding before approval.
 
 ## Decisions
 
@@ -96,7 +96,7 @@ All planned tasks are individually approved. Integration Fix 1 complete finalize
 
 ## Next Handoff
 
-- Next role: reviewer
+- Next role: implementation-agent
 - Required reading:
   - [Trust-boundary design](../../docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md)
   - [Phase 3B execution plan](../../docs/superpowers/plans/2026-07-14-phase-3b-ci-provenance-hardening.md)
