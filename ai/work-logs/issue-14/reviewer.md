@@ -376,3 +376,38 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: Final re-review confirms exact original-detection binding, canonical digest construction, deterministic lifecycle precedence, fail-closed signed-resolution ordering, and preserved native trust boundaries. No issues remain for Task 9.
+
+## Task 10 Final Re-review (2026-07-14)
+
+### Spec Compliance
+
+- Verdict: Spec compliant.
+- Repository-contract and native-enforcement identities remain separated in helper results, shell-wrapper fallbacks, and operator documentation.
+- `taskKey` and `gateInvocationId` now share exact string, `1..128`, and identifier-regex validation aligned with the result schema.
+- The 128-character boundary is accepted, while 129-character values are independently normalized to `"invalid"`, remain schema-valid, and do not leak the raw oversized input into the result.
+- Wrapper forwarding and fallback output preserve the same correlation and identity contract without a new bypass.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+- None. The initial two findings covering mixed required-check identity and stale configured-check documentation were closed in `beb427a`.
+- None. The follow-up correlation-length/schema-boundary finding was closed in `b646c22`.
+
+#### Minor (Nice to Have)
+
+- None.
+
+### Verification
+
+- Tests were not re-run during the final read-only re-review.
+- Reviewed the committed evidence recording 142 passing Phase 2C/3A/3B tests and 2 pre-existing Windows platform skips.
+
+### Assessment
+
+- Task quality: Approved.
+- Reasoning: Final static re-review confirms exact correlation validation, schema-valid invalid normalization without oversized raw-value leakage, wrapper consistency, and closure of the prior identity and documentation findings. No Critical, Important, or Minor issues remain for Task 10.
