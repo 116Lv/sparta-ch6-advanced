@@ -594,3 +594,17 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 - Tests were not re-run during this read-only review. Reviewed evidence commit `99a15b3`, which records 133 passing Phase 2C/3A tests with 2 explicit Windows capability skips, plus successful focused snapshot/race regressions and static checks.
 - The recursively frozen policy value and its one digest are passed unchanged to the native leaf and every external leaf verifier; validation reopens only the approved schema, and malformed or inconsistent state fails closed.
 - Task quality: Approved. Final scoped review found Critical 0, Important 0, and Minor 0.
+
+## Task 15 Cache Full-Consumer Binding Re-review (2026-07-14)
+
+### Issues
+
+- Critical: None.
+- Important: None. `4cc8757` closes the native cache-authority gap by requiring the fixed current result/evidence references, schemas, and digests; copied or otherwise arbitrary paths are `STALE`, while an exact native binding remains explicitly `UNCERTAIN` and cannot become `FRESH` without a durable correlated native leaf envelope.
+- Minor: None.
+
+### Verification And Assessment
+
+- Tests were not re-run during this final read-only approval review. Reviewed evidence commit `1e9c223`, which records 49 passing Phase 2A/2B/2C tests in `49.500s`, plus successful static checks.
+- `STALE` retains precedence, and the external binding behavior remains unchanged and aligned with the documented schema.
+- Task quality: Approved. Final scoped review found Critical 0, Important 0, and Minor 0.
