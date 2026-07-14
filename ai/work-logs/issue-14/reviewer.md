@@ -446,3 +446,39 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: Final static re-review confirms closure of the external-authority, trusted-current-run, replay, and artifact-member TOCTOU findings. No Critical, Important, or Minor issues remain for Task 11.
+
+## Task 12 Final Re-review (2026-07-14)
+
+### Spec Compliance
+
+- Verdict: Spec compliant.
+- The contract entry script resolves the repository root and runs the exact full helper unittest module once before the runtime-preflight and command-runner shell suites under `set -eu`.
+- The workflow provisions pinned dependencies and delegates regressions only to the complete entrypoint. Its exact job and six-step model preserves `pipefail`, failure diagnostics upload, and the repository-contract/native-enforcement distinction.
+- Semantic validators compare the complete executable shell sequence and the closed workflow model rather than relying on substring counts. Comments and blank lines are excluded, while dead branches, duplicates, selective runners, malformed indentation, and duplicate or extra YAML authority are rejected.
+- The workflow top level is closed over its exact name, `pull_request` plus `push` to `main`, `contents: read` permissions, and one `jobs` mapping. Unapproved `BASH_ENV`, concurrency, trigger, permission, or trailing top-level changes cannot satisfy the validator.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+- None. The initial substring-gameable semantic-test finding was closed in `9f064cb` by validating the exact executable entry sequence and indentation-aware workflow job/step model.
+- None. The initial missing successful exact full-module evidence finding was closed by the committed post-fix single-process evidence.
+- None. The follow-up unmodeled workflow top-level and `BASH_ENV` authority finding was closed in `fa9e415` by requiring the complete approved top-level sequence and rejecting every extra or trailing top-level block.
+
+#### Minor (Nice to Have)
+
+- None.
+
+### Verification
+
+- Tests were not re-run during the final read-only re-review.
+- Reviewed the final post-`fa9e415` exact command evidence: exit `0`, 418 tests passed in `192.707s`, and 20 explicit platform-capability skips.
+
+### Assessment
+
+- Task quality: Approved.
+- Reasoning: Final static re-review confirms complete shell and workflow execution modeling, closed workflow authority, correct failure propagation and diagnostics, and successful exact single-process coverage. No Critical, Important, or Minor issues remain for Task 12.
