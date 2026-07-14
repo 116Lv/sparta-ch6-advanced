@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T12:59:25+09:00
+last_updated: 2026-07-14T15:40:17+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -1792,6 +1792,57 @@ independent re-review remains with the parent.
   deploys, infrastructure, GitHub mutation, push, PR, merge, Issue closure, and
   real repository `.ai-runs` were NOT RUN. Independent review remains required;
   this implementation evidence does not self-approve Task 13.
+
+### Task 14 Integration Fix - Single-Read Verification Policy (2026-07-14)
+
+#### Root Cause And RED Evidence
+
+- `verification_gate()` parsed `ai/verification-policy.json` through
+  `validate_repository_instance()`, reopened the path to derive the native
+  policy digest, and `load_verified_leaf_results()` reopened it again for
+  external leaves. A replacement could therefore combine policy-A
+  applicability semantics with policy-B identity inside one gate result.
+- The focused RED command ran two tests and exited `1`: the immutable snapshot
+  test errored because `load_verification_policy_snapshot()` did not exist, and
+  the replacement-race test failed because the policy opened three times rather
+  than exactly once.
+
+#### Immutable Snapshot And Leaf Binding
+
+- Commit `2b67cd7` (`fix(ai): bind one verification policy snapshot`) adds one
+  bounded 65,536-byte strict JSON read per gate evaluation. Schema validation
+  and SHA-256 derivation consume that captured value and those exact bytes.
+- The validated policy is recursively detached and frozen: mappings become
+  `MappingProxyType` values and arrays become tuples. That exact object and one
+  digest flow through `native_adapter_phase2c_leaf()`,
+  `load_verified_leaf_results()`, and `verify_external_leaf()`; none of those
+  paths reopens the verification-policy file.
+- Native and verified external check results retain the existing public schema
+  while exposing the same captured `policySha256`. The replacement regression
+  supplies policy A on the first open and a schema-valid policy B with different
+  required-check semantics on any hypothetical later open, then proves one
+  open, policy-A behavior, and the policy-A digest on native, review, and
+  done-claim results.
+- `ai/verification-gates.md` and the trust-boundary design now record the
+  single-read, strict-parse, schema-validation, immutable-value, and shared
+  identity contract.
+
+#### Fresh Verification And Boundary
+
+- Focused GREEN exited `0`: both the immutable snapshot and replacement-race
+  regressions passed in `1.628s`.
+- Fresh expanded verification exited `0`: the complete Phase 2C verification
+  gate class plus Phase 3A native runtime adapter class ran 133 tests in
+  `52.866s`; all passed with 2 explicit Windows capability skips.
+- Cache-free AST parsing of both touched Python files, `git diff --check`, and
+  absence checks for repository `.ai-runs` and recursive `__pycache__` all
+  exited `0`.
+- Only Python helper tests and static checks against temporary repository copies
+  ran. Gradle, product/build tests, servers, Docker, HTTP/API, databases,
+  migrations, seeds, deploys, infrastructure, GitHub mutation, push, PR, merge,
+  Issue closure, and real repository `.ai-runs` were NOT RUN. Independent
+  review remains required; this implementation evidence does not self-approve
+  Task 14.
 
 ### Task 13 Integration Fix 4 - Pre-Visibility Sealing And Retained Journals (2026-07-14)
 
