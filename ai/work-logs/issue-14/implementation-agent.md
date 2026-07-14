@@ -2107,3 +2107,55 @@ independent re-review remains with the parent.
   Issue closure, and real repository `.ai-runs` were NOT RUN. Independent
   review remains required; this implementation evidence does not self-approve
   Task 16 or claim overall completion.
+
+### Task 17 Integration Cleanup - Exact CI Fallback Bindings (2026-07-14)
+
+#### Finding And RED Evidence
+
+- Both fail-closed literals in `scripts/ai/ci-evidence-gate.sh` exposed only 10
+  durable bindings. They omitted `workflowRef`, `workflowSha`, `eventName`,
+  `artifactId`, `artifactDigest`, and `artifactMembers`, while the result schema
+  accepted any unique string list from 10 through 16 entries.
+- The existing two-fallback regression was strengthened to require the exact
+  canonical ordered 16 values, and a schema regression mutates that list by
+  removing, appending, and reordering entries. The RED run exited `1`: 2 tests
+  produced 3 expected failures in `0.116s` because both fallback literals had
+  10 entries and the schema fixture therefore could not reach 16.
+
+#### Exact Contract And Recovery Record
+
+- Commit `12b6d7e` (`fix(ai): align ci fallback evidence bindings`) makes both
+  shell branches emit the same ordered 16 values as
+  `CI_DURABLE_REQUIRED_BINDINGS` and the canonical CI capability state.
+- `ai/schemas/ci-gate-result.schema.json` now uses 16 positional `const`
+  entries, exact length, uniqueness, and no trailing items. Missing, extra,
+  duplicate, unknown, or reordered binding lists cannot validate.
+- The fallback result classifications remain fail closed. Invalid arguments
+  still return exit 2/`BLOCKED`; helper-runtime unavailability still returns
+  exit 3/`NOT_CONFIGURED`.
+- The Issue #14 README and work-log index now identify Tasks 1-16 as scoped and
+  independently approved, distinguish the 418-test pre-fix baseline from the
+  still-pending final-HEAD suite, point the handoff at Task 17 review/final
+  integration verification, and retain `in_review`. They do not claim external
+  enforcement, registry `VERIFIED`, Issue closure, or unqualified overall
+  `DONE`.
+
+#### Fresh Verification And Boundary
+
+- Focused GREEN exited `0`: both fallback/schema tests passed in `0.241s`.
+- The complete Phase 3B class passed 26 tests in `3.455s` with 1 explicit
+  safe-POSIX-artifact-reader capability skip in a writable temporary copy of
+  the same tree. A direct-worktree run was discarded because the sandbox denied
+  fixture writes with `PermissionError`; it is not presented as test evidence.
+- Both shell branches were also executed directly. The invalid-argument branch
+  returned exit 2/`BLOCKED` and the runtime-unavailable branch returned exit
+  3/`NOT_CONFIGURED`; each emitted 16 bindings.
+- Git Bash syntax checking of `ci-evidence-gate.sh`, cache-free AST parsing of
+  the changed test module, JSON parsing and Draft 2020-12 self-check of the
+  changed schema, and `git diff --check` all exited `0`.
+- Only Python helper tests, shell fallback execution, and static checks ran.
+  Gradle, product/build tests, servers, Docker, HTTP/API, databases, migrations,
+  seeds, deploys, infrastructure, GitHub mutation, push, PR, merge, Issue
+  closure, external enforcement changes, and real repository `.ai-runs` were
+  NOT RUN. Independent Task 17 review and fresh final-HEAD whole-module and
+  integration verification remain required.

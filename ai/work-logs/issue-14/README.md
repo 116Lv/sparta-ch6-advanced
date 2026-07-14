@@ -2,12 +2,12 @@
 issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 tracking_status: issue_backed
-status: in_progress
+status: in_review
 owning_feature: "none"
-current_owner: implementation-agent
+current_owner: reviewer
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T16:34:33+09:00
+last_updated: 2026-07-14T16:42:00+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -25,10 +25,13 @@ commands_run:
   - exact Python helper module baseline (418 tests)
   - task-scoped Python unittest verification through Task 16
   - focused Task 17 fallback and schema tests
+  - Task 17 Phase 3B scoped Python unittest verification
+  - Task 17 shell fallback execution and syntax checks
 tests_run:
   - targeted Python unittest baseline: PASS (120 tests)
   - exact Python helper module baseline: PASS (418 tests, 20 capability skips)
   - Task 17 focused fallback/schema regression: PASS (2 tests)
+  - Task 17 Phase 3B scoped verification: PASS (26 tests, 1 capability skip)
 blockers: []
 skill_ids:
   - verification-runner
@@ -80,17 +83,18 @@ integration review and exact final verification recorded in the handoff below.
 
 ## Agent Logs
 
-- [Implementation Agent](implementation-agent.md): in_progress
+- [Implementation Agent](implementation-agent.md): complete through Task 17 implementation
 - [Reviewer](reviewer.md): approved through Task 16; Task 17 review pending
 
 ## Current State
 
 Tasks 1-12 and Integration Fixes 1-4 (Tasks 13-16) have independent scoped
-approval with no remaining scoped findings. Task 17 is synchronizing the two
-fail-closed CI shell fallbacks to the canonical ordered 16-binding contract and
-refreshing this recovery record. Its focused RED/GREEN run is recorded locally;
-independent Task 17 review, a new whole-branch integration review, and fresh
-exact final verification remain pending.
+approval with no remaining scoped findings. Task 17 implementation commit
+`12b6d7e` synchronizes the two fail-closed CI shell fallbacks to the canonical
+ordered 16-binding contract, makes the result schema enforce that exact order,
+and refreshes this recovery record. Independent Task 17 review, a new
+whole-branch integration review, and fresh exact final verification remain
+pending.
 
 Repository contract results must remain distinct from authoritative native and
 GitHub enforcement. External GitHub/Sigstore provenance, branch protection,
@@ -121,6 +125,13 @@ Issue closure, registry `VERIFIED`, or unqualified overall `DONE`.
   passed in 1.685 seconds.
 - Task 17 focused fallback/schema regression currently passes 2 tests in 0.241
   seconds after a RED run of 2 tests with 3 expected failures in 0.116 seconds.
+- Task 17 Phase 3B scoped verification passed 26 tests in 3.455 seconds with 1
+  explicit safe-POSIX-artifact-reader capability skip in a writable temporary
+  copy. The direct worktree attempt was not counted because sandbox-denied test
+  fixture writes produced `PermissionError` before test behavior ran.
+- Direct execution of both fallback branches preserved fail-closed behavior:
+  invalid arguments returned exit 2/`BLOCKED`, and unavailable helper runtime
+  returned exit 3/`NOT_CONFIGURED`; both emitted the exact 16 bindings.
 - The 418-test result is a pre-integration-fix baseline, not final-HEAD proof.
   A fresh exact helper-module command and final static checks are still required.
 
@@ -130,7 +141,7 @@ Issue closure, registry `VERIFIED`, or unqualified overall `DONE`.
 
 ## Next Handoff
 
-- Next role: reviewer, after the Task 17 implementation/evidence commits
+- Next role: reviewer
 - Required reading:
   - [Trust-boundary design](../../docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md)
   - [Phase 3B execution plan](../../docs/superpowers/plans/2026-07-14-phase-3b-ci-provenance-hardening.md)
