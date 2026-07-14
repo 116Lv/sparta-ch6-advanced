@@ -2012,3 +2012,48 @@ independent re-review remains with the parent.
   Issue closure, and real repository `.ai-runs` were NOT RUN. Independent
   review remains required; this implementation evidence does not self-approve
   Task 15.
+
+### Task 15 Review Fix - Native Cache Remains Uncertain (2026-07-14)
+
+#### Review Finding And RED Evidence
+
+- Independent review found that the schema-valid native adapter result used by
+  the initial cache fix has no durable task, gate, commit, policy, or freshness
+  envelope. An arbitrary copied path could be internally self-consistent and
+  reach `FRESH`, while the initial exact fixture incorrectly treated a mutable
+  native result as reusable authority.
+- Three focused regressions were observed RED in `3.099s`, exit `1`: the exact
+  canonical native result plus actual native policy evidence returned `STALE`
+  rather than `UNCERTAIN`, a copied native result/evidence path returned
+  `FRESH` rather than `STALE`, and the cache schema rejected the actual native
+  evidence schema.
+
+#### Fixed Native Identity And Classification
+
+- Commit `4cc8757` (`fix(ai): keep native cache decisions uncertain`) requires
+  the logical result reference to be exactly `ai/native-adapter-result.json`
+  and the evidence path to be exactly `ai/native-runtime-adapters.json` under
+  `ai/schemas/native-runtime-adapters.schema.json`.
+- The result and evidence bytes, digests, IDs, and schemas are still validated.
+  A copied or arbitrary result/evidence path is a proven `STALE` mismatch even
+  for identical bytes. Stale findings continue to override uncertainty.
+- An otherwise exact current native binding always adds an explicit
+  `UNCERTAIN` reason because no durable correlated verification-leaf envelope
+  exists. Therefore the full exact consumed check set cannot become `FRESH`
+  through the current native result.
+
+#### Fresh Verification And Boundary
+
+- The five focused native and classification regressions passed in `14.402s`,
+  exit `0`.
+- Fresh final Phase 2 verification exited `0`: Phase2AContextCacheTests,
+  Phase2ARepoIntakeTests, Phase2BSkillsHandoffTests, and
+  Phase2CVerificationGateTests ran 49 tests in `49.500s`; all passed.
+- Cache-free AST parsing of the helper and tests, JSON parsing of the cache
+  schema/state, `git diff --check`, and absence checks for repository
+  `.ai-runs` and recursive `__pycache__` all exited `0`.
+- Only Python helper tests and static checks against temporary repository copies
+  ran. Gradle, product/build tests, servers, Docker, HTTP/API, databases,
+  migrations, seeds, deploys, infrastructure, GitHub mutation, push, PR, merge,
+  Issue closure, and real repository `.ai-runs` were NOT RUN. Independent
+  re-review remains required.
