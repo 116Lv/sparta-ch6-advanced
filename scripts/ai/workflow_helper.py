@@ -7407,7 +7407,10 @@ def native_adapter_phase2c_leaf(root, task_key, gate_invocation_id, runtime_snap
 
 
 
-CI_GATE_CHECK_ID = "phase-3b-native-enforcement"
+CI_DURABLE_REQUIRED_BINDINGS = [
+    "repository", "commitSha", "workflowRunId", "jobId", "attempt", "taskKey",
+    "gateInvocationId", "nativeAdapterStatusDigest", "bypassEventSetSha256", "resolutionEventIds",
+]
 
 
 def ci_evidence_gate_result(result, reason, data):
@@ -7444,24 +7447,12 @@ def ci_evidence_gate_exit(result):
 
 def ci_evidence_gate_data(status, task_key, gate_invocation_id):
     current_ci = status["currentCi"]
-    enforcement = current_ci["nativeEnforcement"]
-    enforcement_status = enforcement["configurationStatus"]
-    installation_status = {
-        "VERIFIED": "INSTALLED",
-        "CONFIGURED_UNVERIFIED": "NOT_CONFIGURED",
-        "NOT_CONFIGURED": "NOT_CONFIGURED",
-        "BLOCKED": "BLOCKED",
-    }[enforcement_status]
     return {
         "taskKey": task_key,
         "gateInvocationId": gate_invocation_id,
-        "requiredCheck": enforcement["checkName"],
         "provider": current_ci["provider"],
-        "workflowRefs": [current_ci["repositoryContract"]["workflowRef"]],
-        "nativeAdapterInstallation": {
-            "status": installation_status,
-            "reasonCode": enforcement["reasonCode"],
-        },
+        "repositoryContract": dict(current_ci["repositoryContract"]),
+        "nativeEnforcement": dict(current_ci["nativeEnforcement"]),
         "durableEvidence": current_ci["durableEvidence"],
         "remoteRunner": current_ci["remoteRunner"],
         "nativeAdapterLeaf": status["phase2cLink"],
@@ -7472,21 +7463,41 @@ def ci_evidence_gate_data(status, task_key, gate_invocation_id):
 
 def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-capability-status.json"):
     root = Path(root).resolve()
+    task_key_valid = isinstance(task_key, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(task_key)
+    gate_invocation_id_valid = (
+        isinstance(gate_invocation_id, str)
+        and NATIVE_ADAPTER_IDENTIFIER.fullmatch(gate_invocation_id)
+    )
     fallback_data = {
-        "taskKey": task_key,
-        "gateInvocationId": gate_invocation_id,
-        "requiredCheck": CI_GATE_CHECK_ID,
+        "taskKey": task_key if task_key_valid else "invalid",
+        "gateInvocationId": gate_invocation_id if gate_invocation_id_valid else "invalid",
         "provider": "github-actions",
-        "workflowRefs": [],
-        "nativeAdapterInstallation": {"status": "NOT_CONFIGURED", "reasonCode": "CI_STATUS_UNAVAILABLE"},
-        "durableEvidence": {"status": "NOT_CONFIGURED", "retentionDays": 90, "artifactRefs": [], "retainedRun": None},
+        "repositoryContract": {
+            "checkName": "phase-3b-repository-contract",
+            "workflowRef": ".github/workflows/phase-3b-ci-gates.yml",
+            "configurationStatus": "CONFIGURED_UNVERIFIED",
+        },
+        "nativeEnforcement": {
+            "checkName": "phase-3b-native-enforcement",
+            "configurationStatus": "NOT_CONFIGURED",
+            "requiredCheckConfigured": False,
+            "reasonCode": "CI_STATUS_UNAVAILABLE",
+        },
+        "durableEvidence": {
+            "status": "NOT_CONFIGURED",
+            "reasonCode": "CI_STATUS_UNAVAILABLE",
+            "retentionDays": 90,
+            "artifactRefs": [],
+            "requiredBindings": list(CI_DURABLE_REQUIRED_BINDINGS),
+            "retainedRun": None,
+        },
         "remoteRunner": {"status": "NOT_CONFIGURED", "completionBlocking": True, "reasonCode": "CI_STATUS_UNAVAILABLE"},
         "nativeAdapterLeaf": {"nativeAdapterCheckId": "native-runtime-adapter", "currentHostResult": "UNSUPPORTED"},
         "cachePolicy": {"reuse": "FORBIDDEN_WITHOUT_MATCHING_RUN_ID", "handoff": "SUMMARY_ONLY"},
         "phase2CLeafResult": "BLOCKED",
     }
     try:
-        if not all(isinstance(value, str) and NATIVE_ADAPTER_IDENTIFIER.fullmatch(value) for value in (task_key, gate_invocation_id)):
+        if not task_key_valid or not gate_invocation_id_valid:
             return ci_evidence_gate_result("BLOCKED", "INVALID_CI_GATE_ARGUMENTS", fallback_data), 2
         status = validate_repository_instance(root, ci_status_ref)
         data = ci_evidence_gate_data(status, task_key, gate_invocation_id)
@@ -7501,10 +7512,7 @@ def ci_evidence_gate(root, task_key, gate_invocation_id, ci_status_ref="ai/ci-ca
             return ci_evidence_gate_result("NOT_CONFIGURED", "CI_EVIDENCE_NOT_AVAILABLE", data), 3
         retained_run = evidence.get("retainedRun")
         artifact_refs = evidence.get("artifactRefs", [])
-        expected_bindings = {
-            "repository", "commitSha", "workflowRunId", "jobId", "attempt", "taskKey",
-            "gateInvocationId", "nativeAdapterStatusDigest", "bypassEventSetSha256", "resolutionEventIds",
-        }
+        expected_bindings = set(CI_DURABLE_REQUIRED_BINDINGS)
         if (
             not isinstance(retained_run, dict)
             or set(evidence.get("requiredBindings", [])) != expected_bindings

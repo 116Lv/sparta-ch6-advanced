@@ -8,12 +8,13 @@ Phase 1B-3 remains `INTEGRITY_ONLY` with `completenessEvaluated: false`.
 ## Approaches Considered
 
 1. Repository-only CI status contract with no workflow: lowest risk, but it
-   would leave required CI gate wiring unexercised.
+   would leave even the static repository contract unexercised.
 2. Full product CI with Gradle and service dependencies: stronger product
    signal, but outside the approved Phase 3B evidence scope and would blur the
    product-command boundary.
 3. Recommended: a static/helper GitHub Actions workflow plus a closed durable
-   evidence contract. This wires a required CI gate without running Gradle,
+   evidence contract. This exercises the repository contract without claiming
+   that a required native-enforcement check exists, and it does not run Gradle,
    Docker, HTTP/API, database, migration, seed, deploy, or infrastructure
    commands.
 
@@ -26,17 +27,16 @@ SHA-256, and `resolutionEventIds`. The minimum retention is 90 days. Cache reuse
 is forbidden unless the workflow run identity and all bindings match; handoff may
 reuse summaries only, never substitute them for durable CI evidence.
 
-The current repository has a CI workflow file, but this local run has no
-completed remote workflow run or retained artifact identity. Therefore the local
-CI evidence gate returns `NOT_CONFIGURED` with Phase 2C leaf `BLOCKED` and reason
-`CI_EVIDENCE_NOT_AVAILABLE`.
+The current repository has the repository-contract workflow file, but the
+contract is `CONFIGURED_UNVERIFIED` and native enforcement is `NOT_CONFIGURED`.
+This local run has no completed remote workflow run or retained artifact
+identity. Therefore the local CI evidence gate returns `NOT_CONFIGURED` with
+Phase 2C leaf `BLOCKED` and reason `CI_EVIDENCE_NOT_AVAILABLE`.
 
 ## Hook Enforcement Levels
 
-- GitHub Actions required check: configured as `phase-3b-ci-gates`, but durable
-  run evidence is not yet available locally.
-- CI native adapter installation: `NOT_CONFIGURED`; supported CI hosts must fail
-  closed until installed and attested.
+- Repository contract check `phase-3b-repository-contract` is `CONFIGURED_UNVERIFIED`; the workflow exists but has not been verified by a remote run in this task.
+- Native enforcement check `phase-3b-native-enforcement` is `NOT_CONFIGURED` with `requiredCheckConfigured: false`; no GitHub required check or native adapter has been externally installed and attested.
 - Current `codex-desktop` host: `UNSUPPORTED` / `HOST_UNSUPPORTED`; Phase 2C
   native leaf remains `NOT_APPLICABLE` with repository-only qualification.
 - Remote runner completion: completion-blocking when run identity, artifact

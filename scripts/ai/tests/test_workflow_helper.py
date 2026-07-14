@@ -11021,10 +11021,71 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         result, status = self.helper.ci_evidence_gate(self.root, "issue-12", "gate-ci")
         self.assertEqual((result["result"], result["phase2cLeafResult"], status), ("NOT_CONFIGURED", "BLOCKED", 3))
         self.assertEqual(result["reason"], "CI_EVIDENCE_NOT_AVAILABLE")
-        self.assertEqual(result["data"]["requiredCheck"], "phase-3b-native-enforcement")
+        self.assertEqual(result["data"].get("repositoryContract"), {
+            "checkName": "phase-3b-repository-contract",
+            "workflowRef": ".github/workflows/phase-3b-ci-gates.yml",
+            "configurationStatus": "CONFIGURED_UNVERIFIED",
+        })
+        self.assertEqual(result["data"].get("nativeEnforcement"), {
+            "checkName": "phase-3b-native-enforcement",
+            "configurationStatus": "NOT_CONFIGURED",
+            "requiredCheckConfigured": False,
+            "reasonCode": "GITHUB_REQUIRED_CHECK_AND_NATIVE_ADAPTER_NOT_CONFIGURED",
+        })
+        for legacy_field in ("requiredCheck", "workflowRefs", "nativeAdapterInstallation"):
+            self.assertNotIn(legacy_field, result["data"])
         self.assertEqual(result["data"]["durableEvidence"]["retentionDays"], 90)
         self.assertEqual(result["data"]["nativeAdapterLeaf"]["currentHostResult"], "UNSUPPORTED")
+        self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
         self.assertFalse((self.root / ".ai-runs").exists())
+
+    def test_ci_gate_shell_fallbacks_preserve_split_identity(self):
+        shell_text = (self.root / "scripts/ai/ci-evidence-gate.sh").read_text(encoding="utf-8")
+        fallbacks = [
+            json.loads(match.group(1))
+            for match in re.finditer(r"printf '%s\\n' '(\{.*\})'", shell_text)
+        ]
+        self.assertEqual(len(fallbacks), 2)
+        for fallback in fallbacks:
+            with self.subTest(reason=fallback["reason"]):
+                data = fallback["data"]
+                self.assertEqual(data.get("repositoryContract"), {
+                    "checkName": "phase-3b-repository-contract",
+                    "workflowRef": ".github/workflows/phase-3b-ci-gates.yml",
+                    "configurationStatus": "CONFIGURED_UNVERIFIED",
+                })
+                self.assertEqual(data.get("nativeEnforcement", {}).get("checkName"), "phase-3b-native-enforcement")
+                self.assertEqual(data.get("nativeEnforcement", {}).get("configurationStatus"), "NOT_CONFIGURED")
+                self.assertIs(data.get("nativeEnforcement", {}).get("requiredCheckConfigured"), False)
+                for legacy_field in ("requiredCheck", "workflowRefs", "nativeAdapterInstallation"):
+                    self.assertNotIn(legacy_field, data)
+                self.helper.validate(self.root, fallback, "ai/schemas/ci-gate-result.schema.json")
+
+    def test_ci_gate_invalid_arguments_emit_schema_valid_split_fallback(self):
+        result, status = self.helper.ci_evidence_gate(self.root, "bad argument", "gate-ci")
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "INVALID_CI_GATE_ARGUMENTS", 2,
+        ))
+        self.assertEqual((result["data"]["taskKey"], result["data"]["gateInvocationId"]), (
+            "invalid", "gate-ci",
+        ))
+        self.assertEqual(result["data"]["repositoryContract"]["checkName"], "phase-3b-repository-contract")
+        self.assertEqual(result["data"]["nativeEnforcement"]["checkName"], "phase-3b-native-enforcement")
+        self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+
+    def test_ci_policy_document_reports_exact_split_status(self):
+        policy = (self.root / "ai/ci-gates.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "Repository contract check `phase-3b-repository-contract` is "
+            "`CONFIGURED_UNVERIFIED`",
+            policy,
+        )
+        self.assertIn(
+            "Native enforcement check `phase-3b-native-enforcement` is `NOT_CONFIGURED` "
+            "with `requiredCheckConfigured: false`",
+            policy,
+        )
+        self.assertNotIn("required check: configured as `phase-3b-ci-gates`", policy)
 
     def test_project_state_reports_contract_workflow_without_native_enforcement(self):
         state = json.loads((self.root / "ai/project-state.json").read_text(encoding="utf-8"))
