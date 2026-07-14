@@ -1678,3 +1678,55 @@ independent re-review remains with the parent.
   seed, deploy, infrastructure, GitHub Actions/state mutation, push, PR, merge,
   Issue closure, and real repository `.ai-runs` were NOT RUN. This remains
   Phase 1B integrity-only evidence; independent review is the next role.
+
+### Task 13 Integration Fix 1 - Recovery And Session Anchor (2026-07-14)
+
+#### Review Findings And RED
+
+- Integration review found two Important gaps in `9692fba`: no public operation
+  could reconcile a process-crash-left FINALIZING or receipt-bearing FINALIZED
+  session, and the receipt did not bind the complete pre-receipt session.
+- Focused RED exited `1`. The run-session schema had no complete
+  `preReceiptSession` or anchor digest, the helper had no
+  `recover_finalization` operation, and schema-valid additions/removals in
+  `processAttemptRefs`, `gateResultRefs`, `reservations`, and `lockRecoveries`
+  could verify as PASS because authority was re-derived from the retained
+  mutable session.
+
+#### Implementation
+
+- Commit `4035894` (`fix(ai): recover interrupted finalization safely`) adds the
+  closed `FINALIZATION_RECOVERY` gateway operation and the documented shell
+  command `done-claim-check.sh recover-finalization <run-id>`.
+- Recovery acquires the exact run lock, reclaims only dead-and-expired stale
+  ownership without changing a sealed session, and reconciles deterministically:
+  FINALIZING is cleaned and compare-and-swapped to OPEN; a complete valid
+  receipt-bearing FINALIZED state resumes missing claim/gate/manifest/run
+  publications; inconsistent partial finals are cleaned and restored to OPEN.
+  Existing `run.json` is verified, never rolled back, and the retained session
+  read-only bit is repaired. Repeated recovery reports `ALREADY_OPEN` or
+  `ALREADY_FINALIZED`.
+- The receipt now stores the complete closed canonical FINALIZING session,
+  including `$id`, command/process/approval/policy/gate refs, reservations,
+  lock-recovery history, state and null receipt, plus its canonical SHA-256.
+  Verification derives the run projection only from this anchored snapshot,
+  requires the retained FINALIZED transform to match exactly, and cross-checks
+  process, command, approval, policy, gate, reservation and artifact identities
+  against manifest closure.
+
+#### GREEN And Boundary
+
+- The complete recovery matrix covers crashes after each durable session CAS,
+  valid partial publication resume, inconsistent partial cleanup, dead/expired
+  stale-lock recovery, retry idempotence, published-run non-rollback/read-only
+  repair, Python CLI dispatch, and the shell alias.
+- Fresh bounded verification exited `0`: GatewayResultSchema,
+  Phase1B2Task1Schema, StrictJsonAndSchemaValidation, complete
+  Phase1B3DoneClaimGate, and Phase1B2Task7RepositoryBoundary ran 75 tests in
+  `66.332s`, all passed. Git Bash syntax checks for the touched shell entry
+  points and `git diff --check` also exited `0`.
+- Only helper unit/schema/static checks against temporary repositories ran.
+  Gradle, product/build tests, server, Docker, HTTP/API, databases, migrations,
+  seeds, deploys, infrastructure, GitHub mutation, push, PR, merge, Issue
+  closure, and real repository `.ai-runs` were NOT RUN. Independent review is
+  still required; this implementation record does not self-approve Task 13.
