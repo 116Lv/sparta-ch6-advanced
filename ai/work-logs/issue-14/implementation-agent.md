@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T08:42:35+09:00
+last_updated: 2026-07-14T09:05:42+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -1193,3 +1193,60 @@ precedence/binding focus exited `0`; 4 tests passed in `1.649s`.
   merge, branch-protection, and Issue mutation were NOT RUN. No registry
   `VERIFIED`, native/CI enforcement, Issue closure, or unqualified completion
   claim is made. Independent review remains with the parent.
+
+### Task 10 Review Fix - Explicit Result Identity Split (2026-07-14)
+
+- Independent review found two Important issues. First, the CI result called
+  `phase-3b-native-enforcement` the `requiredCheck` while putting the green
+  repository-contract workflow path in `workflowRefs`, and both shell fallback
+  envelopes retained the old `phase-3b-ci-gates` identity. Second,
+  `ai/ci-gates.md` still claimed that old required check was configured.
+- `ai/schemas/ci-gate-result.schema.json` and `scripts/ai/workflow_helper.py`
+  now expose closed `repositoryContract` and `nativeEnforcement` objects
+  directly. The legacy `requiredCheck`, `workflowRefs`, and
+  `nativeAdapterInstallation` result fields were removed, so no consumer can
+  associate the green contract workflow path with native enforcement.
+- `scripts/ai/ci-evidence-gate.sh` now emits the same schema-valid split in both
+  invalid-argument and helper-runtime-unavailable fallbacks. Required durable
+  evidence bindings and cache retention are complete in both envelopes.
+- `ai/ci-gates.md` now states exactly that `phase-3b-repository-contract` is
+  `CONFIGURED_UNVERIFIED` and `phase-3b-native-enforcement` is
+  `NOT_CONFIGURED` with `requiredCheckConfigured: false`; it no longer claims
+  any configured GitHub required enforcement check.
+- `scripts/ai/tests/test_workflow_helper.py` adds exact result, shell fallback,
+  document, schema, and invalid-correlation regressions.
+
+Exact review RED command:
+`$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests.test_ci_gate_is_fail_closed_without_durable_github_actions_evidence scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests.test_ci_gate_shell_fallbacks_preserve_split_identity scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests.test_ci_policy_document_reports_exact_split_status -v`
+exited `1`; 3 tests produced 4 intended assertion failures: one helper result,
+two shell fallback subtests, and one policy-document assertion. The same command
+then exited `0`; 3 tests passed in `0.251s`.
+
+- A subsequent explicit schema-validation probe correctly exposed that the
+  helper's invalid-argument fallback still copied a space-containing raw
+  `taskKey`, causing the result schema identifier pattern to fail. This was not
+  hidden as a verification artifact.
+- Additional RED command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests.test_ci_gate_invalid_arguments_emit_schema_valid_split_fallback -v`
+  exited `1`; 1 test failed because `taskKey` was `bad argument` instead of the
+  schema-safe `invalid` placeholder.
+- The helper now validates task/gate correlation independently before building
+  fallback data and substitutes `invalid` only for the malformed member. Final
+  focused review command ran the four review regressions and exited `0`; 4 tests
+  passed in `0.281s`.
+- Intermediate expanded Phase 2C + Phase 3A + Phase 3B verification exited `0`;
+  140 tests passed in `56.669s` with 2 existing Windows capability skips.
+- Final expanded verification after the correlation fix exited `0`; 141 tests
+  passed in `56.723s` with the same 2 skips.
+- `C:\Program Files\Git\bin\bash.exe -n scripts/ai/ci-evidence-gate.sh`
+  exited `0`. Canonical and invalid helper results both validated against the
+  result schema, exact legacy mixed-key search reported absent, `git diff
+  --check` and staged diff check exited `0`, and repository `.ai-runs` plus
+  recursive `__pycache__` remained absent.
+- Review-fix implementation commit: `beb427a`
+  (`fix(ai): separate ci gate result identities`). This evidence append is
+  committed separately and the ignored Task 10 report is synchronized.
+- Task 11 GitHub provenance and Task 12 complete contract-test entrypoint were
+  not changed. Phase 3A remains `UNPROBED`/`UNSUPPORTED`, Phase 2 mapping and
+  handoff/skill references remain unchanged, and no product/infrastructure or
+  GitHub-state operation was run. Independent rereview remains with the parent.
