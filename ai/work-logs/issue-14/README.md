@@ -2,12 +2,12 @@
 issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 tracking_status: issue_backed
-status: in_review
+status: in_progress
 owning_feature: "none"
-current_owner: reviewer
+current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T10:23:11+09:00
+last_updated: 2026-07-14T10:30:00+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -72,12 +72,12 @@ Issue #14 tracks the isolated implementation and review of the four approved tru
 
 ## Agent Logs
 
-- [Implementation Agent](implementation-agent.md): complete
+- [Implementation Agent](implementation-agent.md): in_progress
 - [Reviewer](reviewer.md): in_progress
 
 ## Current State
 
-All Phase 1B-3, Phase 2, Phase 3A, and Phase 3B contract/enforcement split work are approved. The GitHub provenance authority, trusted-context, and member-read findings are fixed and awaiting re-review.
+All Phase 1B-3, Phase 2, Phase 3A, the Phase 3B contract/enforcement split, and authenticated provenance binding are approved. The complete contract-test entry point is next.
 
 ## Decisions
 
@@ -96,12 +96,12 @@ All Phase 1B-3, Phase 2, Phase 3A, and Phase 3B contract/enforcement split work 
 
 ## Next Handoff
 
-- Next role: reviewer
+- Next role: implementation-agent
 - Required reading:
   - [Trust-boundary design](../../docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md)
   - [Phase 3B execution plan](../../docs/superpowers/plans/2026-07-14-phase-3b-ci-provenance-hardening.md)
 - Context links:
   - [Implementation role log](implementation-agent.md)
   - [Reviewer role log](reviewer.md)
-- Remaining work: Re-review the Task 11 authority/context/backend fixes.
-- Evidence required: Confirm production PASS is unreachable, lower verification uses independent current-run context, and unsafe member backends fail closed.
+- Remaining work: Implement global Task 12 / Phase 3B local Task 3 complete helper regression entry point.
+- Evidence required: TDD proof that the shell entry point runs the full Python helper module once and the workflow delegates to that single entry point.
