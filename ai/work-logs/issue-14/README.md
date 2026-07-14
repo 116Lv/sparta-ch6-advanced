@@ -2,12 +2,12 @@
 issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 tracking_status: issue_backed
-status: in_review
+status: in_progress
 owning_feature: "none"
-current_owner: reviewer
+current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T09:22:22+09:00
+last_updated: 2026-07-14T09:26:45+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -72,12 +72,12 @@ Issue #14 tracks the isolated implementation and review of the four approved tru
 
 ## Agent Logs
 
-- [Implementation Agent](implementation-agent.md): complete
+- [Implementation Agent](implementation-agent.md): in_progress
 - [Reviewer](reviewer.md): in_progress
 
 ## Current State
 
-All Phase 1B-3, Phase 2, and Phase 3A tasks are approved. The Phase 3B correlation-length/schema-boundary finding is fixed and awaiting final re-review.
+All Phase 1B-3, Phase 2, Phase 3A, and Phase 3B contract/enforcement split work are approved. Authenticated GitHub provenance binding is next.
 
 ## Decisions
 
@@ -96,12 +96,12 @@ All Phase 1B-3, Phase 2, and Phase 3A tasks are approved. The Phase 3B correlati
 
 ## Next Handoff
 
-- Next role: reviewer
+- Next role: implementation-agent
 - Required reading:
   - [Trust-boundary design](../../docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md)
   - [Phase 3B execution plan](../../docs/superpowers/plans/2026-07-14-phase-3b-ci-provenance-hardening.md)
 - Context links:
   - [Implementation role log](implementation-agent.md)
   - [Reviewer role log](reviewer.md)
-- Remaining work: Final re-review of the Task 10 correlation boundary fix.
-- Evidence required: Confirm exact 1..128 validation, schema-valid normalization, and no oversize leakage.
+- Remaining work: Implement global Task 11 / Phase 3B local Task 2 authenticated GitHub provenance binding.
+- Evidence required: Complete provenance negative matrix, repository-only self-certification rejection, exact external identity/digest binding, and independent review.
