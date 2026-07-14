@@ -3,5 +3,5 @@
   "runId": "run-1", "taskKey": "phase-1b-2-task-1", "startedAt": "2026-07-11T03:00:00Z", "workingDirectory": ".", "environment": "LOCAL", "state": "OPEN",
   "commandResultRefs": [".ai-runs/run-1/commands/verify.unit/attempt-1.json"], "processAttemptRefs": [".ai-runs/run-1/process-attempts/verify.unit/attempt-1.json"], "approvalRefs": [], "policyViolationRefs": [], "gateResultRefs": [],
   "reservations": [{"attemptId": "attempt-1", "commandId": "verify.unit", "argvHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "inputFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "environmentFingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "reservedAt": "2026-07-11T03:00:01Z", "state": "PASS", "commandResultRef": ".ai-runs/run-1/commands/verify.unit/attempt-1.json", "processAttemptRef": ".ai-runs/run-1/process-attempts/verify.unit/attempt-1.json", "terminalAt": "2026-07-11T03:00:03Z", "rerunReasonHash": null, "rerunOfAttemptId": null}],
-  "lockRecoveries": [], "redactionApplied": true
+  "lockRecoveries": [], "redactionApplied": true, "finalizationReceipt": null
 }

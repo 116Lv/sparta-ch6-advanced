@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:run-session:v1",
   "schemaVersion": 1,
-  "title": "AI Workflow Active Run Session",
+  "title": "AI Workflow Run Session And Finalization Receipt",
   "type": "object",
   "additionalProperties": false,
-  "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "workingDirectory", "environment", "state", "commandResultRefs", "processAttemptRefs", "approvalRefs", "policyViolationRefs", "gateResultRefs", "reservations", "lockRecoveries", "redactionApplied"],
+  "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "workingDirectory", "environment", "state", "commandResultRefs", "processAttemptRefs", "approvalRefs", "policyViolationRefs", "gateResultRefs", "reservations", "lockRecoveries", "redactionApplied", "finalizationReceipt"],
   "properties": {
     "$schema": { "const": "ai/schemas/run-session.schema.json" },
     "$id": { "$ref": "#/$defs/repositoryPath" },
@@ -15,7 +15,7 @@
     "startedAt": { "$ref": "#/$defs/timestamp" },
     "workingDirectory": { "$ref": "#/$defs/repositoryPath" },
     "environment": { "enum": ["LOCAL", "CI"] },
-    "state": { "enum": ["OPEN", "FINALIZING"] },
+    "state": { "enum": ["OPEN", "FINALIZING", "FINALIZED"] },
     "commandResultRefs": { "$ref": "#/$defs/referenceList" },
     "processAttemptRefs": { "$ref": "#/$defs/referenceList" },
     "approvalRefs": { "$ref": "#/$defs/referenceList" },
@@ -29,8 +29,19 @@
       "type": "array",
       "items": { "$ref": "#/$defs/lockRecovery" }
     },
-    "redactionApplied": { "type": "boolean" }
+    "redactionApplied": { "type": "boolean" },
+    "finalizationReceipt": { "oneOf": [{ "$ref": "#/$defs/finalizationReceipt" }, { "type": "null" }] }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "enum": ["OPEN", "FINALIZING"] } }, "required": ["state"] },
+      "then": { "properties": { "finalizationReceipt": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "FINALIZED" } }, "required": ["state"] },
+      "then": { "properties": { "finalizationReceipt": { "$ref": "#/$defs/finalizationReceipt" } } }
+    }
+  ],
   "$defs": {
     "timestamp": {
       "type": "string",
@@ -49,6 +60,77 @@
       "type": "array",
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/repositoryPath" }
+    },
+    "workflowResult": {
+      "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "NOT_APPLICABLE", "SKIPPED_WITH_REASON"]
+    },
+    "artifactKind": {
+      "enum": ["COMMAND_RESULT", "PROCESS_ATTEMPT", "STDOUT_LOG", "STDERR_LOG", "APPROVAL", "POLICY_VIOLATION", "GATE_RESULT", "DONE_CLAIM"]
+    },
+    "finalRunProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "$id", "schemaVersion", "runId", "taskKey", "startedAt", "endedAt", "workingDirectory", "environment", "result", "commandResultRefs", "approvalRefs", "policyViolationRefs", "evidenceRefs", "redactionApplied", "reason"],
+      "properties": {
+        "$schema": { "const": "ai/schemas/run.schema.json" },
+        "$id": { "$ref": "#/$defs/repositoryPath" },
+        "schemaVersion": { "const": 1 },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "taskKey": { "type": "string", "minLength": 1 },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "endedAt": { "$ref": "#/$defs/timestamp" },
+        "workingDirectory": { "$ref": "#/$defs/repositoryPath" },
+        "environment": { "enum": ["LOCAL", "CI"] },
+        "result": { "$ref": "#/$defs/workflowResult" },
+        "commandResultRefs": { "$ref": "#/$defs/referenceList" },
+        "approvalRefs": { "$ref": "#/$defs/referenceList" },
+        "policyViolationRefs": { "$ref": "#/$defs/referenceList" },
+        "evidenceRefs": { "$ref": "#/$defs/referenceList" },
+        "redactionApplied": { "type": "boolean" },
+        "reason": { "type": ["string", "null"] }
+      }
+    },
+    "finalizationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifestIdentity", "runProjection", "claimIdentity", "gateIdentity", "artifactIdentities"],
+      "properties": {
+        "manifestIdentity": {
+          "type": "object", "additionalProperties": false, "required": ["$id", "runId"],
+          "properties": { "$id": { "$ref": "#/$defs/repositoryPath" }, "runId": { "$ref": "#/$defs/identifier" } }
+        },
+        "runProjection": { "$ref": "#/$defs/finalRunProjection" },
+        "claimIdentity": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "canonicalSha256", "implementationStatus", "overallResult", "unexpected500Status", "unhandledExceptionStatus"],
+          "properties": {
+            "path": { "$ref": "#/$defs/repositoryPath" },
+            "canonicalSha256": { "$ref": "#/$defs/digest" },
+            "implementationStatus": { "enum": ["PASS", "FAIL", "BLOCKED", "PARTIAL"] },
+            "overallResult": { "$ref": "#/$defs/workflowResult" },
+            "unexpected500Status": { "$ref": "#/$defs/workflowResult" },
+            "unhandledExceptionStatus": { "$ref": "#/$defs/workflowResult" }
+          }
+        },
+        "gateIdentity": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "canonicalSha256", "operation", "result", "reason"],
+          "properties": {
+            "path": { "$ref": "#/$defs/repositoryPath" },
+            "canonicalSha256": { "$ref": "#/$defs/digest" },
+            "operation": { "const": "PRE_DONE_CLAIM" },
+            "result": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_CONFIGURED", "POLICY_VIOLATION", "INVALID_STATE"] },
+            "reason": { "type": ["string", "null"] }
+          }
+        },
+        "artifactIdentities": {
+          "type": "array", "uniqueItems": true,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["path", "kind"],
+            "properties": { "path": { "$ref": "#/$defs/repositoryPath" }, "kind": { "$ref": "#/$defs/artifactKind" } }
+          }
+        }
+      }
     },
     "reservation": {
       "type": "object",

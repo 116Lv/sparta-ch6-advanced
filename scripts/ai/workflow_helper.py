@@ -3026,6 +3026,7 @@ def start_run(root, run_id, task_key):
             "reservations": [],
             "lockRecoveries": [],
             "redactionApplied": False,
+            "finalizationReceipt": None,
         }
         session_path = state_directory / "run-session.json"
         exclusive_publish_json(root, session_path, session, "ai/schemas/run-session.schema.json")
@@ -5030,40 +5031,13 @@ def final_run_result_for(gate_result):
     return gate_result
 
 
-def validate_final_run_projection(run_index, claim, gate, manifest):
-    expected_evidence = [
-        f".ai-runs/{run_index['runId']}/done-claim.json",
-        f".ai-runs/{run_index['runId']}/artifact-manifest.json",
-        f".ai-runs/{run_index['runId']}/gate-results/pre-done-claim.json",
-    ]
-
-    def manifest_references(kind):
-        return sorted(
-            artifact["path"] for artifact in manifest["artifacts"]
-            if artifact["kind"] == kind
-        )
-
-    mismatched = (
-        run_index["runId"] != claim["runId"]
-        or run_index["taskKey"] != claim["taskKey"]
-        or run_index["result"] != final_run_result_for(gate["result"])
-        or run_index["evidenceRefs"] != expected_evidence
-        or sorted(run_index["commandResultRefs"]) != manifest_references("COMMAND_RESULT")
-        or sorted(run_index["approvalRefs"]) != manifest_references("APPROVAL")
-        or sorted(run_index["policyViolationRefs"]) != manifest_references("POLICY_VIOLATION")
-        or gate.get("data") is not None and gate["data"]["manifestRef"] != manifest["$id"]
-    )
-    if mismatched:
-        raise InvalidStateError([validation_error(
-            "FINAL_RUN_PROJECTION_MISMATCH",
-            message="run.json does not match claim, gate, and manifest",
-        )])
+def canonical_instance_sha256(instance):
+    return hashlib.sha256(compact(instance).encode("utf-8")).hexdigest()
 
 
-def publish_finalized_run(root, session, gate_result, reason):
+def final_run_projection(session, gate_result, reason, ended_at):
     run_id = session["runId"]
-    ended_at = utc_now()
-    run_index = {
+    return {
         "$schema": "ai/schemas/run.schema.json",
         "$id": f".ai-runs/{run_id}/run.json",
         "schemaVersion": 1,
@@ -5078,26 +5052,145 @@ def publish_finalized_run(root, session, gate_result, reason):
         "approvalRefs": session["approvalRefs"],
         "policyViolationRefs": session["policyViolationRefs"],
         "evidenceRefs": [
-            ".ai-runs/{}/done-claim.json".format(run_id),
-            ".ai-runs/{}/artifact-manifest.json".format(run_id),
-            ".ai-runs/{}/gate-results/pre-done-claim.json".format(run_id),
+            f".ai-runs/{run_id}/done-claim.json",
+            f".ai-runs/{run_id}/artifact-manifest.json",
+            f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
         ],
         "redactionApplied": session["redactionApplied"],
         "reason": reason or "Phase 1B integrity PASS; verification completeness NOT EVALUATED",
     }
+
+
+def finalization_receipt(run_id, run_projection, claim, gate, artifact_identities):
+    return {
+        "manifestIdentity": {
+            "$id": f".ai-runs/{run_id}/artifact-manifest.json",
+            "runId": run_id,
+        },
+        "runProjection": json.loads(json.dumps(run_projection)),
+        "claimIdentity": {
+            "path": f".ai-runs/{run_id}/done-claim.json",
+            "canonicalSha256": canonical_instance_sha256(claim),
+            "implementationStatus": claim["implementationStatus"],
+            "overallResult": claim["overallResult"],
+            "unexpected500Status": claim["unexpected500Status"],
+            "unhandledExceptionStatus": claim["unhandledExceptionStatus"],
+        },
+        "gateIdentity": {
+            "path": f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
+            "canonicalSha256": canonical_instance_sha256(gate),
+            "operation": gate["operation"],
+            "result": gate["result"],
+            "reason": gate["reason"],
+        },
+        "artifactIdentities": json.loads(json.dumps(artifact_identities)),
+    }
+
+
+def expected_final_artifact_identities(root, session):
+    run_id = session["runId"]
+    root = Path(root).resolve(strict=True)
+    run = root / ".ai-runs" / run_id
+    references = set()
+    for path in run.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(run).as_posix()
+        if relative.startswith(".state/") or relative == "claim-input.json":
+            continue
+        references.add(path.relative_to(root).as_posix())
+    references.update({
+        f".ai-runs/{run_id}/done-claim.json",
+        f".ai-runs/{run_id}/gate-results/pre-done-claim.json",
+    })
+    identities = []
+    for reference in sorted(references, key=lambda value: value.encode("utf-8")):
+        kind = artifact_kind_for(Path(reference))
+        if kind is None:
+            raise InvalidStateError([validation_error(
+                "UNKNOWN_FINAL_ARTIFACT", message="final artifact has no approved kind",
+            )])
+        identities.append({"path": reference, "kind": kind})
+    return identities
+
+
+def sealed_finalization_session(root, session, run_projection, claim, gate):
+    sealed = json.loads(json.dumps(session))
+    sealed["state"] = "FINALIZED"
+    sealed["finalizationReceipt"] = finalization_receipt(
+        session["runId"],
+        run_projection,
+        claim,
+        gate,
+        expected_final_artifact_identities(root, session),
+    )
+    validate(root, sealed, "ai/schemas/run-session.schema.json")
+    return sealed
+
+
+def validate_final_run_projection(run_index, claim, gate, manifest, session, expected_run_id=None):
+    expected_run_id = claim["runId"] if expected_run_id is None else expected_run_id
+    expected_evidence = [
+        f".ai-runs/{expected_run_id}/done-claim.json",
+        f".ai-runs/{expected_run_id}/artifact-manifest.json",
+        f".ai-runs/{expected_run_id}/gate-results/pre-done-claim.json",
+    ]
+
+    def manifest_references(kind):
+        return sorted(
+            artifact["path"] for artifact in manifest["artifacts"]
+            if artifact["kind"] == kind
+        )
+
+    receipt = session.get("finalizationReceipt")
+    expected_artifact_identities = [
+        {"path": artifact["path"], "kind": artifact["kind"]}
+        for artifact in manifest["artifacts"]
+    ]
+    retained_projection = receipt.get("runProjection") if isinstance(receipt, dict) else None
+    ended_at = retained_projection.get("endedAt") if isinstance(retained_projection, dict) else None
+    expected_projection = final_run_projection(session, gate["result"], gate["reason"], ended_at)
+    expected_receipt = finalization_receipt(
+        expected_run_id, expected_projection, claim, gate, expected_artifact_identities,
+    )
+    mismatched = (
+        session.get("state") != "FINALIZED"
+        or not isinstance(receipt, dict)
+        or session["runId"] != expected_run_id
+        or manifest["$id"] != f".ai-runs/{expected_run_id}/artifact-manifest.json"
+        or manifest["runId"] != expected_run_id
+        or run_index != retained_projection
+        or run_index["runId"] != claim["runId"]
+        or run_index["runId"] != expected_run_id
+        or run_index["taskKey"] != claim["taskKey"]
+        or run_index["result"] != final_run_result_for(gate["result"])
+        or run_index["evidenceRefs"] != expected_evidence
+        or sorted(run_index["commandResultRefs"]) != manifest_references("COMMAND_RESULT")
+        or sorted(run_index["approvalRefs"]) != manifest_references("APPROVAL")
+        or sorted(run_index["policyViolationRefs"]) != manifest_references("POLICY_VIOLATION")
+        or gate.get("data") is not None and gate["data"]["manifestRef"] != manifest["$id"]
+        or receipt != expected_receipt
+        or receipt.get("artifactIdentities") != expected_artifact_identities
+    )
+    if mismatched:
+        raise InvalidStateError([validation_error(
+            "FINAL_RUN_PROJECTION_MISMATCH",
+            message="run.json does not match claim, gate, and manifest",
+        )])
+
+
+def publish_finalized_run(root, run_projection):
+    run_id = run_projection["runId"]
     run_destination = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "run.json"
-    publish_final_json(root, run_destination, run_index, "ai/schemas/run.schema.json")
-    return run_index
+    publish_final_json(root, run_destination, run_projection, "ai/schemas/run.schema.json")
+    return run_projection
 
 
-def publish_done_gate_manifest_run(root, session, claim, gate_result_name, gate_reason):
+def publish_done_gate_manifest_run(root, session, claim, gate, run_projection):
     run_id = session["runId"]
     claim_destination = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "done-claim.json"
     if not claim_destination.exists():
         publish_final_json(root, claim_destination, claim, "ai/schemas/done-claim.schema.json")
-    gate = gate_result_artifact(root, run_id, gate_result_name, gate_reason)
-    if gate_result_name == "PASS":
-        gate["data"]["taskKey"] = session["taskKey"]
     gate_destination = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "gate-results" / "pre-done-claim.json"
     gate_destination.parent.mkdir(mode=0o700, exist_ok=True)
     publish_final_json(root, gate_destination, gate, "ai/schemas/gateway-result.schema.json")
@@ -5108,8 +5201,8 @@ def publish_done_gate_manifest_run(root, session, claim, gate_result_name, gate_
     manifest = final_artifact_manifest(root, run_id)
     manifest_destination = Path(root).resolve(strict=True) / ".ai-runs" / run_id / "artifact-manifest.json"
     publish_final_json(root, manifest_destination, manifest, "ai/schemas/artifact-manifest.schema.json")
-    publish_finalized_run(root, session, gate_result_name, gate_reason)
-    shutil.rmtree(Path(root).resolve(strict=True) / ".ai-runs" / run_id / ".state")
+    publish_finalized_run(root, run_projection)
+    make_read_only(Path(root).resolve(strict=True) / session["$id"])
     return gate
 
 
@@ -5136,7 +5229,13 @@ def read_locked_run_session(root, run_id, acquired):
     return session
 
 
-def rollback_finalization(root: Path, original_session: dict, final_refs: Sequence[str], acquired) -> None:
+def rollback_finalization(
+    root: Path,
+    original_session: dict,
+    final_refs: Sequence[str],
+    acquired,
+    expected_current_session=None,
+) -> None:
     root = Path(root).resolve(strict=True)
     validate(root, original_session, "ai/schemas/run-session.schema.json")
     if original_session["state"] != "OPEN":
@@ -5161,7 +5260,11 @@ def rollback_finalization(root: Path, original_session: dict, final_refs: Sequen
             "FINALIZATION_ALREADY_PUBLISHED", message="published run.json cannot be rolled back",
         )])
 
-    expected_finalizing = expected_finalizing_session(original_session)
+    expected_finalizing = (
+        expected_finalizing_session(original_session)
+        if expected_current_session is None
+        else json.loads(json.dumps(expected_current_session))
+    )
     current_session = read_locked_run_session(root, run_id, acquired)
     if current_session != expected_finalizing:
         raise RegistryBlockedError([validation_error(
@@ -5245,7 +5348,7 @@ def verify_finalized_run(root, run_id):
             if not path.is_file():
                 continue
             relative = path.relative_to(run).as_posix()
-            if relative in ("artifact-manifest.json", "run.json", "claim-input.json"):
+            if relative.startswith(".state/") or relative in ("artifact-manifest.json", "run.json", "claim-input.json"):
                 continue
             actual.add(path.relative_to(root).as_posix())
         if set(manifest_paths) != actual:
@@ -5260,7 +5363,16 @@ def verify_finalized_run(root, run_id):
         )
         if gate is None:
             raise InvalidStateError([validation_error("FINAL_GATE_RESULT_MISSING", message="final gate result is missing")])
-        validate_final_run_projection(run_index, claim, gate, manifest)
+        _session_path, session = read_exact_run_json(
+            root, run_id, (".state", "run-session.json"), "ai/schemas/run-session.schema.json",
+        )
+        if session is None:
+            raise InvalidStateError([validation_error(
+                "FINALIZATION_RECEIPT_MISSING", message="retained finalized session is missing",
+            )])
+        validate_final_run_projection(
+            run_index, claim, gate, manifest, session, expected_run_id=run_id,
+        )
         data = {
             "runId": run_id,
             "taskKey": run_index["taskKey"],
@@ -5289,6 +5401,7 @@ def prepare_done_claim(root, run_id, claim_ref):
         ), preflight_status)
     acquired = None
     original_session = None
+    rollback_session = None
     finalization_started = False
 
     def recovery_required_result():
@@ -5305,7 +5418,11 @@ def prepare_done_claim(root, run_id, claim_ref):
             return None
         try:
             rollback_finalization(
-                root, original_session, finalization_artifact_refs(run_id), acquired,
+                root,
+                original_session,
+                finalization_artifact_refs(run_id),
+                acquired,
+                expected_current_session=rollback_session,
             )
         except Exception:
             return recovery_required_result()
@@ -5337,6 +5454,7 @@ def prepare_done_claim(root, run_id, claim_ref):
             raise
         finalization_started = True
         session = replacement
+        rollback_session = replacement
 
         source = done_claim_source_path(root, run_id, claim_ref)
         claim = read_json(source)
@@ -5345,7 +5463,36 @@ def prepare_done_claim(root, run_id, claim_ref):
         validate_evidence_closure(root, session)
         result, reason = done_claim_semantic_result(root, session, claim)
         status = done_claim_exit_for(result)
-        gate = publish_done_gate_manifest_run(root, session, claim, result, reason)
+        gate = gate_result_artifact(root, run_id, result, reason)
+        if result == "PASS":
+            gate["data"]["taskKey"] = session["taskKey"]
+        run_projection = final_run_projection(session, result, reason, utc_now())
+        sealed_session = sealed_finalization_session(
+            root, session, run_projection, claim, gate,
+        )
+        try:
+            replace_run_session(
+                root,
+                root / sealed_session["$id"],
+                sealed_session,
+                acquired,
+                expected_session=session,
+            )
+        except Exception:
+            try:
+                current_session = read_locked_run_session(root, run_id, acquired)
+            except Exception:
+                return recovery_required_result()
+            if current_session == sealed_session:
+                rollback_session = sealed_session
+            elif current_session != session:
+                return recovery_required_result()
+            raise
+        session = sealed_session
+        rollback_session = sealed_session
+        gate = publish_done_gate_manifest_run(
+            root, session, claim, gate, session["finalizationReceipt"]["runProjection"],
+        )
         return publish_result(root, gate, status)
     except RegistryBlockedError as error:
         recovery = rollback_or_recovery_required()

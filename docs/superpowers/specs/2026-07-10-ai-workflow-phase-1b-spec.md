@@ -66,7 +66,7 @@ Add the done-claim gate, leaf-result aggregation, stale-summary checks, and cont
 | `scripts/ai/command-runner.sh` | Supported command entry point: `run <command-id>` and structured options |
 | `scripts/ai/workflow-gate.sh` | PRE_COMMAND and POST_COMMAND leaf gates |
 | `scripts/ai/workflow_helper.py` | Structured execution, hashing, redaction, atomic evidence writes, and run-index updates |
-| `ai/schemas/run-session.schema.json` | Active-run control state used before immutable `run.json` finalization |
+| `ai/schemas/run-session.schema.json` | Exact-CAS run control state and retained finalized projection receipt |
 | `ai/schemas/process-attempt.schema.json` | Secret-free child-attempt facts, including redaction-failure execution outcomes |
 | `ai/schemas/artifact-manifest.schema.json` | Exact immutable artifact closure with SHA-256 digests and sizes |
 
@@ -327,7 +327,7 @@ The same command ID, argv hash, input fingerprint, and environment fingerprint m
   done-claim.md
 ```
 
-`.state/run-session.json` exists only while the run is open or finalizing; `run.json` exists only after finalization. Repeated command attempts use collision-free result and log names containing an attempt identifier while preserving `commandId` inside JSON. Every schema-versioned immutable, session, or evidence artifact `$id` equals its repository-relative forward-slash reference. The transient `.state/lock/owner.json` is closed embedded-schema control JSON, is never an artifact or reference, and has no artifact `$id` equality requirement.
+`.state/run-session.json` persists through OPEN, FINALIZING, and FINALIZED. Its FINALIZED form is retained read-only as the authoritative finalization receipt and is excluded from the artifact manifest; `run.json` exists only after finalization publication. Repeated command attempts use collision-free result and log names containing an attempt identifier while preserving `commandId` inside JSON. Every schema-versioned immutable, session, or evidence artifact `$id` equals its repository-relative forward-slash reference. The transient `.state/lock/owner.json` is closed embedded-schema control JSON, is never an artifact or reference, and has no artifact `$id` equality requirement.
 
 This per-ID/per-attempt layout explicitly supersedes the parent design's illustrative flat command paths and `approvals.json`. The refinement is required because the approved approval schema represents one record and append-only rerun evidence cannot safely overwrite flat files.
 
@@ -336,12 +336,12 @@ This per-ID/per-attempt layout explicitly supersedes the parent design's illustr
 1. `start` creates OPEN `.state/run-session.json`; no `run.json` exists.
 2. Every reservation and terminal artifact reference is appended monotonically under the run lock.
 3. `done-claim-check.sh prepare <run-id> --claim <path>` changes OPEN to FINALIZING atomically. No new command or approval is accepted afterward.
-4. PRE_DONE_CLAIM validates the FINALIZING session, all reservations, every discovered artifact, policy events, and the proposed done claim. It writes its immutable gate-result artifact before final evidence closure.
-5. The finalizer scans the known evidence directories, requires every reservation to have exactly one terminal artifact set, rejects unreferenced or missing artifacts, and writes `artifact-manifest.json` with repository-relative path, SHA-256 digest, and byte size for every immutable artifact except the manifest and final `run.json` themselves.
-6. The finalizer constructs and schema-validates the candidate `run.json`, which references the artifact manifest and exact evidence graph, then atomically publishes it last.
-7. Once `run.json` exists, the run is immutable and `.state/` is removed. A read-only `verify-finalized` operation recomputes directory closure and digests and emits its result outside the run; it never appends evidence to a finalized run.
+4. PRE_DONE_CLAIM validates the FINALIZING session, all reservations, every discovered artifact, policy events, and the proposed done claim, then derives the complete gate result and candidate `run.json` in memory.
+5. Before publishing final artifacts, the finalizer compare-and-swaps the exact FINALIZING session to FINALIZED with a closed `finalizationReceipt`. The receipt retains every schema-defined `run.json` field, canonical done-claim and gate digests plus outcomes, the exact manifest ID/run ID, and the complete expected artifact path/kind identity set.
+6. The finalizer publishes the done claim and gate, requires exact evidence closure, and writes `artifact-manifest.json` with repository-relative path, SHA-256 digest, and byte size for every immutable artifact except the retained `.state`, manifest, and final `run.json` themselves.
+7. The finalizer schema-validates and publishes the receipt's exact `runProjection` as `run.json` last, then makes the retained FINALIZED session read-only. A read-only `verify-finalized` operation recomputes directory closure and digests, loads the retained receipt as authority, and emits its result outside the run; it never appends evidence to a finalized run.
 
-An in-process validation or publication exception before step 6 invokes bounded rollback while the same validated run-lock owner is still held. Rollback first proves that `run.json` is absent and that `.state/run-session.json` still equals the exact FINALIZING projection of the captured OPEN session, removes only the attributed `done-claim.json`, PRE_DONE_CLAIM gate result, and artifact manifest, then restores that exact OPEN session with the existing compare-and-swap session mutation. A changed lock owner, changed FINALIZING session, unsafe cleanup target, cleanup failure, or any appearance of `run.json` prevents rollback and returns `BLOCKED` with `FINALIZATION_RECOVERY_REQUIRED`, leaving FINALIZING for explicit recovery. A crash before step 6 likewise requires explicit stale-lock/session recovery; a crash after `run.json` publication is verified from the immutable manifest, and a published `run.json` is never rolled back. No PRE_DONE_CLAIM operation requires a finalized `run.json`, so finalization has no circular write dependency.
+An in-process validation or publication exception before step 7 invokes bounded rollback while the same validated run-lock owner is still held. Rollback first proves that `run.json` is absent and that `.state/run-session.json` still equals the orchestrator's exact expected FINALIZING or receipt-bearing FINALIZED snapshot, removes only the attributed `done-claim.json`, PRE_DONE_CLAIM gate result, and artifact manifest, then restores the captured OPEN session with the existing compare-and-swap mutation. A changed lock owner, changed sealed session, unsafe cleanup target, cleanup failure, or any appearance of `run.json` prevents rollback and returns `BLOCKED` with `FINALIZATION_RECOVERY_REQUIRED`, retaining the exact recovery state. A crash before step 7 likewise requires explicit stale-lock/session recovery; after `run.json` publication, verification is anchored in the retained FINALIZED receipt plus manifest digests, and a published `run.json` is never rolled back. No PRE_DONE_CLAIM operation reads a finalized `run.json` to construct its authority, so finalization has no circular trust dependency.
 
 ## Phase 1B-3 Completion Contract
 
@@ -349,7 +349,7 @@ Phase 1B-3 is an integrity gate, not a task-applicability or verification-comple
 
 During finalization, `done-claim-check.sh prepare` validates the FINALIZING run session, every reservation and discovered artifact, command result, process attempt, approval, policy violation, gate result, evidence reference, artifact digest, and proposed done claim. Its gateway result includes `completenessEvaluated: false` and `scope: INTEGRITY_ONLY`.
 
-Every check-level `evidenceRefs` entry must resolve to evidence owned by the active session and must also appear in the claim's top-level evidence closure. The claim cannot declare a PASS check, executed command, or completed capability as not run. After publication, `verify-finalized` schema-validates the done claim and PRE_DONE_CLAIM result, reconstructs manifest-kind references, and rejects a `run.json` whose identity, result, or evidence projection is stale or altered.
+Every check-level `evidenceRefs` entry must resolve to evidence owned by the active session and must also appear in the claim's top-level evidence closure. The claim cannot declare a PASS check, executed command, or completed capability as not run. After publication, `verify-finalized` schema-validates the retained FINALIZED session, done claim, manifest, and PRE_DONE_CLAIM result; reconstructs manifest-kind references; recomputes canonical claim/gate identities; and rejects any stale or altered `run.json` field, manifest identity, outcome, or artifact identity.
 
 An overall `PASS` requires:
 

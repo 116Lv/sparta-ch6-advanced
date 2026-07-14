@@ -100,6 +100,12 @@ timestamps, result/reason, command and policy references, evidence references,
 redaction state, manifest closure, done-claim outcome, and gate scope. Any
 tampering or stale projection is `INVALID_STATE`.
 
+Before final artifacts are published, exact compare-and-swap seals those inputs
+as a closed FINALIZED receipt in `.state/run-session.json`. The retained
+read-only receipt contains the complete run projection, canonical claim and
+gate identities, manifest identity, and exact artifact path/kind identities;
+`run.json` and the mutable manifest surface are consumers, not the authority.
+
 Finalization uses a recoverable transaction boundary. Before publishing the
 first immutable final artifact it records the prior OPEN session and intended
 finalization identity in `.state`. If validation or publication fails before

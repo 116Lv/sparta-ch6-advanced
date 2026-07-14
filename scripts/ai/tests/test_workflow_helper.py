@@ -5915,6 +5915,34 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         path.write_text(json.dumps(claim), encoding="utf-8")
         return ".ai-runs/run-1/claim-input.json"
 
+    def finalize(self, *, exit_code=0, claim=None):
+        self.publish_command_result(exit_code=exit_code)
+        with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
+            return self.helper.prepare_done_claim(
+                self.root,
+                "run-1",
+                self.write_claim(self.done_claim() if claim is None else claim),
+            )
+
+    def rewrite_final_json(self, relative, mutate):
+        path = self.root / ".ai-runs" / "run-1" / relative
+        path.chmod(0o600)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        mutate(payload)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def repair_manifest_identity(self, artifact_path):
+        manifest_path = self.root / ".ai-runs" / "run-1" / "artifact-manifest.json"
+        manifest_path.chmod(0o600)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        reference = artifact_path.relative_to(self.root).as_posix()
+        encoded = artifact_path.read_bytes()
+        artifact = next(item for item in manifest["artifacts"] if item["path"] == reference)
+        artifact["sha256"] = hashlib.sha256(encoded).hexdigest()
+        artifact["size"] = len(encoded)
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
     def partial_finalization_paths(self):
         run = self.root / ".ai-runs" / "run-1"
         return (
@@ -5949,10 +5977,25 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         run = self.root / ".ai-runs" / "run-1"
         self.assertTrue((run / "artifact-manifest.json").is_file())
         self.assertTrue((run / "run.json").is_file())
-        self.assertFalse((run / ".state").exists())
+        self.assertTrue((run / ".state" / "run-session.json").is_file())
+        self.assertEqual(self.session()["state"], "FINALIZED")
+        self.assertIsNotNone(self.session()["finalizationReceipt"])
+        self.assertFalse(self.session_path.stat().st_mode & stat.S_IWRITE)
         verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
         self.assertEqual((verified["operation"], verified["result"], verify_status), ("PRE_DONE_CLAIM", "PASS", 0))
-        self.assertFalse((run / ".state").exists())
+        self.assertEqual(self.session()["state"], "FINALIZED")
+
+    def test_finalized_receipt_projection_covers_every_run_schema_field(self):
+        run_schema = json.loads(
+            (self.root / "ai/schemas/run.schema.json").read_text(encoding="utf-8")
+        )
+        session_schema = json.loads(
+            (self.root / "ai/schemas/run-session.schema.json").read_text(encoding="utf-8")
+        )
+        receipt_projection = session_schema["$defs"]["finalRunProjection"]
+
+        self.assertEqual(set(receipt_projection["required"]), set(run_schema["required"]))
+        self.assertEqual(set(receipt_projection["properties"]), set(run_schema["properties"]))
 
     def test_check_evidence_must_be_top_level_and_bound_to_session(self):
         self.publish_command_result(exit_code=0)
@@ -6048,6 +6091,90 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         payload["result"] = "BLOCKED"
         path.write_text(json.dumps(payload), encoding="utf-8")
         verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_verify_finalized_rejects_every_unbound_run_field_mutation(self):
+        result, status = self.finalize()
+        self.assertEqual((result["result"], status), ("PASS", 0))
+        path = self.root / ".ai-runs" / "run-1" / "run.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        mutations = {
+            "$id": ".ai-runs/run-1/forged-run.json",
+            "startedAt": "2026-07-12T02:59:59Z",
+            "endedAt": "2026-07-12T03:59:59Z",
+            "workingDirectory": "alternate",
+            "environment": "CI",
+            "redactionApplied": not original["redactionApplied"],
+            "reason": "schema-valid forged finalization reason",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                path.chmod(0o600)
+                payload = json.loads(json.dumps(original))
+                payload[field] = value
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+                self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+                self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+        path.chmod(0o600)
+        path.write_text(json.dumps(original), encoding="utf-8")
+
+    def test_verify_non_pass_finalized_rejects_manifest_identity_mutation(self):
+        result, status = self.finalize(exit_code=9)
+        self.assertEqual((result["result"], status), ("FAIL", 1))
+        self.rewrite_final_json("artifact-manifest.json", lambda manifest: manifest.update({
+            "$id": ".ai-runs/other-run/artifact-manifest.json",
+            "runId": "other-run",
+        }))
+
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_verify_non_pass_finalized_rejects_manifest_artifact_identity_mutation(self):
+        result, status = self.finalize(exit_code=9)
+        self.assertEqual((result["result"], status), ("FAIL", 1))
+
+        def forge_artifact_kind(manifest):
+            process_attempt = next(
+                artifact for artifact in manifest["artifacts"]
+                if artifact["kind"] == "PROCESS_ATTEMPT"
+            )
+            process_attempt["kind"] = "GATE_RESULT"
+
+        self.rewrite_final_json("artifact-manifest.json", forge_artifact_kind)
+
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_verify_non_pass_finalized_rejects_repaired_claim_outcome_mutation(self):
+        result, status = self.finalize(exit_code=9)
+        self.assertEqual((result["result"], status), ("FAIL", 1))
+        claim_path = self.rewrite_final_json(
+            "done-claim.json", lambda claim: claim.update({"overallResult": "FAIL"}),
+        )
+        self.repair_manifest_identity(claim_path)
+
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+
+        self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
+        self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
+
+    def test_verify_non_pass_finalized_rejects_repaired_gate_outcome_mutation(self):
+        result, status = self.finalize(exit_code=9)
+        self.assertEqual((result["result"], status), ("FAIL", 1))
+        gate_path = self.rewrite_final_json(
+            "gate-results/pre-done-claim.json",
+            lambda gate: gate.update({"reason": "schema-valid forged gate reason"}),
+        )
+        self.repair_manifest_identity(gate_path)
+
+        verified, verify_status = self.helper.verify_finalized_run(self.root, "run-1")
+
         self.assertEqual((verified["result"], verify_status), ("INVALID_STATE", 5))
         self.assertEqual(verified["reason"], "FINAL_RUN_PROJECTION_MISMATCH")
 
@@ -6159,7 +6286,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
             retry, retry_status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
         self.assertEqual((retry["result"], retry_status), ("PASS", 0))
 
-    def test_mutated_finalizing_session_requires_explicit_recovery(self):
+    def test_mutated_sealed_session_requires_explicit_recovery(self):
         self.publish_command_result(exit_code=0)
         claim_ref = self.write_claim(self.done_claim())
         failure = self.helper.InvalidStateError([self.helper.validation_error(
@@ -6179,7 +6306,7 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
         self.assertEqual((result["result"], result["reason"], status), (
             "BLOCKED", "FINALIZATION_RECOVERY_REQUIRED", 2,
         ))
-        self.assertEqual(self.session()["state"], "FINALIZING")
+        self.assertEqual(self.session()["state"], "FINALIZED")
         self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
         for path in self.partial_finalization_paths():
             self.assertTrue(path.exists(), path)
@@ -6207,6 +6334,37 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
             mock.patch.object(self.helper, "fsync_directory", side_effect=fail_after_finalizing_replace),
         ):
             result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", "PRE_DONE_CLAIM_FAILED", 5,
+        ))
+        self.assertEqual(self.session(), original_session)
+        self.assertFalse((self.root / ".ai-runs" / "run-1" / "run.json").exists())
+        self.assert_partial_finalization_absent()
+
+    def test_transition_exception_after_finalized_seal_rolls_back_exact_open_session(self):
+        self.publish_command_result(exit_code=0)
+        claim_ref = self.write_claim(self.done_claim())
+        original_session = self.session()
+        original_fsync = self.helper.fsync_directory
+        injected = False
+
+        def fail_after_finalized_seal(path):
+            nonlocal injected
+            if (
+                not injected
+                and Path(path) == self.session_path.parent
+                and self.session()["state"] == "FINALIZED"
+            ):
+                injected = True
+                raise OSError("injected failure after FINALIZED receipt seal")
+            return original_fsync(path)
+
+        with (
+            mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)),
+            mock.patch.object(self.helper, "fsync_directory", side_effect=fail_after_finalized_seal),
+        ):
+            result, status = self.helper.prepare_done_claim(self.root, "run-1", claim_ref)
+
         self.assertEqual((result["result"], result["reason"], status), (
             "INVALID_STATE", "PRE_DONE_CLAIM_FAILED", 5,
         ))
