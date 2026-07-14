@@ -1955,3 +1955,60 @@ independent re-review remains with the parent.
   deploys, infrastructure, GitHub mutation, push, PR, merge, Issue closure, and
   real repository `.ai-runs` were NOT RUN. Independent review remains required;
   this implementation evidence does not self-approve Task 13.
+
+### Task 15 Integration Fix - Full Verification-Consumer Cache Binding (2026-07-14)
+
+#### Root Cause And RED Evidence
+
+- `verification_cache_producers()` filtered canonical checks by the current
+  entry point, while `verification_gate()` aggregates the ordered de-duplicated
+  `requiredChecks + optionalChecks` sequence for the selected change type. A
+  `documentation-only` review decision could therefore report `FRESH` with
+  only `review-gate`, omitting the other eight checks actually consumed.
+- The flat evidence array had no check, producer, leaf-result, or schema
+  association. A matching digest over an arbitrary `{}` file was accepted as
+  cache evidence.
+- Two focused tests were observed RED in `1.559s`, exit `1`: the legacy
+  review-only arbitrary-file entry returned `FRESH` instead of `STALE`, while
+  the exact nine-check ordered binding fixture returned `STALE` instead of
+  `FRESH`.
+
+#### Exact Binding And Fail-Closed Classification
+
+- Commit `4dca003` (`fix(ai): bind cache to consumed checks`) replaces
+  `producerIds` plus the flat evidence list with ordered `checkBindings`.
+  Every binding contains the exact `checkId`, `producerId`, leaf-result
+  reference and SHA-256, and evidence path, SHA-256, and canonical schema.
+- The expected sequence now exactly matches the gate's de-duplicated required
+  checks followed by optional checks. Entry point remains bound correlation and
+  applicability identity but never narrows the consumed set.
+- A known missing, extra, duplicate, reordered, wrong-check, wrong-producer,
+  leaf/evidence digest mismatch, wrong evidence schema, schema-invalid arbitrary
+  evidence, expired leaf, or expired decision is `STALE`. An unavailable leaf
+  or evidence path, unavailable policy/commit, unmapped classification, or
+  unmapped task/gate/environment input is `UNCERTAIN` unless another proven
+  mismatch makes the result `STALE`.
+- External leaf files are schema-validated and rebound to task, gate, commit,
+  policy, producer, evidence, and freshness. Evidence is read from its bound
+  path, digest-checked, and validated against the policy-selected schema. The
+  internal native result uses the native result schema and reuses its one
+  bounded byte snapshot when it is also the bound evidence.
+- Cache evidence references must match the ordered binding evidence paths.
+  Canonical `ai/workflow-cache.json` still materializes no reusable verification
+  decision because complete durable inputs are unavailable. Skill/handoff exact
+  sets and verification aggregation semantics were not changed.
+
+#### Fresh Verification And Boundary
+
+- Fresh final Phase 2 verification exited `0`: Phase2AContextCacheTests,
+  Phase2ARepoIntakeTests, Phase2BSkillsHandoffTests, and
+  Phase2CVerificationGateTests ran 47 tests in `44.225s`; all passed.
+- Cache-free AST parsing of the helper and test module, JSON parsing of the
+  workflow-cache schema and canonical state, `git diff --check`, and absence
+  checks for repository `.ai-runs` and recursive `__pycache__` all exited `0`.
+- Only Python helper tests and static checks against temporary repository copies
+  ran. Gradle, product/build tests, servers, Docker, HTTP/API, databases,
+  migrations, seeds, deploys, infrastructure, GitHub mutation, push, PR, merge,
+  Issue closure, and real repository `.ai-runs` were NOT RUN. Independent
+  review remains required; this implementation evidence does not self-approve
+  Task 15.
