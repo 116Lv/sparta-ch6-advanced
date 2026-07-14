@@ -59,6 +59,13 @@ def load_helper():
     return module
 
 
+def canonical_posix_fixture_bytes(path):
+    content = path.read_bytes()
+    if b"\r" in content.replace(b"\r\n", b""):
+        raise AssertionError(f"POSIX fixture contains a non-CRLF carriage return: {path}")
+    return content.replace(b"\r\n", b"\n")
+
+
 def preflight_pass():
     return {
         "$schema": "ai/schemas/gateway-result.schema.json",
@@ -344,13 +351,20 @@ class Phase1B2Task1SchemaTests(unittest.TestCase):
         phase_2c = {"verification-policy", "verification-gate-result", "verification-leaf-result"}
         self.assertTrue(phase_2c.issubset(self.helper.SCHEMA_NAMES))
         phase_3a = {
+            "host-native-trust",
             "native-adapter-result",
             "native-bypass-attempt",
             "native-runtime-adapters",
             "native-runtime-snapshot",
         }
         self.assertTrue(phase_3a.issubset(self.helper.SCHEMA_NAMES))
-        self.assertEqual(len(self.helper.SCHEMA_NAMES), 26)
+        phase_3b = {
+            "ci-capability-status",
+            "ci-gate-result",
+            "github-ci-provenance",
+        }
+        self.assertTrue(phase_3b.issubset(self.helper.SCHEMA_NAMES))
+        self.assertEqual(len(self.helper.SCHEMA_NAMES), 28)
         self.assertEqual(
             {name for name in self.helper.SCHEMA_NAMES if name in additions},
             additions,
@@ -4733,7 +4747,7 @@ class PosixLaunchTests(unittest.TestCase):
             self.assertNotIn("Popen", names)
 
     def test_fake_gradlew_is_exact_posix_builtin_fixture(self):
-        content = (EXECUTION_FIXTURES_PATH / "fake-gradlew").read_bytes()
+        content = canonical_posix_fixture_bytes(EXECUTION_FIXTURES_PATH / "fake-gradlew")
         self.assertTrue(content.startswith(b"#!/bin/sh\n"))
         self.assertEqual(content, (
             b"#!/bin/sh\n"
@@ -4750,7 +4764,9 @@ class PosixLaunchTests(unittest.TestCase):
         self.assertTrue(shell.is_file())
         self.assertTrue(os.access(shell, os.X_OK))
         wrapper = self.root / "gradlew"
-        shutil.copyfile(EXECUTION_FIXTURES_PATH / "fake-gradlew", wrapper)
+        wrapper.write_bytes(
+            canonical_posix_fixture_bytes(EXECUTION_FIXTURES_PATH / "fake-gradlew")
+        )
         wrapper.chmod(0o755)
         token = "value with spaces;$(printf unsafe)*?"
         process = self.helper.launch_reserved(
@@ -5814,8 +5830,14 @@ class Phase1B3DoneClaimGateTests(unittest.TestCase):
     def test_stale_generated_summary_blocks_finalization(self):
         self.publish_command_result(exit_code=0)
         summary = self.root / "ai" / "project-state.md"
+        project_state = json.loads(
+            (self.root / "ai" / "project-state.json").read_text(encoding="utf-8")
+        )
+        current_marker = f"Updated at: `{project_state['updatedAt']}`"
+        summary_text = summary.read_text(encoding="utf-8")
+        self.assertIn(current_marker, summary_text)
         summary.write_text(
-            summary.read_text(encoding="utf-8").replace("Updated at: `2026-07-10T14:17:27Z`", "Updated at: `1999-01-01T00:00:00Z`"),
+            summary_text.replace(current_marker, "Updated at: `1999-01-01T00:00:00Z`"),
             encoding="utf-8",
         )
         with mock.patch.object(self.helper, "run_current_preflight", return_value=(preflight_pass(), 0)):
@@ -11555,6 +11577,61 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         self.assertIn("bypass event", doc_text)
         self.assertIn("registry `VERIFIED`", doc_text)
 
+    def test_contract_entry_point_runs_complete_helper_suite_once(self):
+        entry_text = (
+            self.root / "scripts/ai/tests/run-contract-tests.sh"
+        ).read_text(encoding="utf-8")
+        expected_commands = [
+            "python -m unittest scripts.ai.tests.test_workflow_helper -v",
+            '/usr/bin/bash "$SCRIPT_DIR/test-runtime-preflight.sh"',
+            '/usr/bin/bash "$SCRIPT_DIR/test-command-runner.sh"',
+        ]
+        self.assertTrue(entry_text.startswith("#!/usr/bin/env bash\nset -eu\n"))
+        self.assertIn("PATH=/usr/bin:/bin:$PATH\n", entry_text)
+        self.assertIn(
+            'SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n',
+            entry_text,
+        )
+        self.assertIn(
+            'REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)\n',
+            entry_text,
+        )
+        self.assertIn('cd "$REPOSITORY_ROOT"\n', entry_text)
+        self.assertEqual(entry_text.count(expected_commands[0]), 1)
+        positions = [entry_text.index(command) for command in expected_commands]
+        self.assertEqual(positions, sorted(positions))
+
+        workflow_text = (
+            self.root / ".github/workflows/phase-3b-ci-gates.yml"
+        ).read_text(encoding="utf-8")
+        entry_command = "bash scripts/ai/tests/run-contract-tests.sh"
+        self.assertEqual(workflow_text.count(entry_command), 1)
+        self.assertNotIn("python -m unittest", workflow_text)
+        self.assertNotIn("test_workflow_helper.", workflow_text)
+        self.assertNotIn("phase3b-helper-test-output.txt", workflow_text)
+        self.assertEqual(workflow_text.count("phase3b-contract-test-output.txt"), 2)
+        self.assertIn("set -o pipefail\n", workflow_text)
+
+        design_text = (
+            self.root
+            / "docs/superpowers/specs/2026-07-13-ai-workflow-phase-3b-ci-gates-durable-evidence-design.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "`phase-3b-repository-contract` is `CONFIGURED_UNVERIFIED`",
+            design_text,
+        )
+        self.assertIn(
+            "`phase-3b-native-enforcement` remains `NOT_CONFIGURED`",
+            design_text,
+        )
+        self.assertIn("does not imply native enforcement `PASS`", design_text)
+        self.assertIn("external GitHub/Sigstore verifier", design_text)
+        self.assertIn("`scripts/ai/tests/run-contract-tests.sh`", design_text)
+        self.assertIn(
+            "full `scripts.ai.tests.test_workflow_helper` module exactly once",
+            design_text,
+        )
+
     def test_ci_workflow_provisions_contract_runtime_and_uploads_diagnostics(self):
         workflow_text = (
             self.root / ".github/workflows/phase-3b-ci-gates.yml"
@@ -11575,8 +11652,8 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         contract_install = workflow_text.index(contract_install_command)
         contract_run = workflow_text.index("bash scripts/ai/tests/run-contract-tests.sh")
         self.assertLess(contract_install, contract_run)
-        self.assertIn("phase3b-helper-test-output.txt", workflow_text)
-        self.assertIn("phase3b-contract-test-output.txt", workflow_text)
+        self.assertNotIn("phase3b-helper-test-output.txt", workflow_text)
+        self.assertEqual(workflow_text.count("phase3b-contract-test-output.txt"), 2)
         self.assertIn("name: phase3b-repository-contract-diagnostics", workflow_text)
         self.assertNotIn("phase3b-ci-gate-result.json", workflow_text)
         self.assertNotIn("ai/ci-capability-status.json", workflow_text)

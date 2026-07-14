@@ -39,12 +39,7 @@ jobs:
           assert version('jsonschema') == '4.25.1'
           assert version('cryptography') == '45.0.5'
           PY
-      - name: Run Phase 2C and Phase 3 static helper tests
-        shell: bash
-        run: |
-          set -o pipefail
-          python -m unittest scripts.ai.tests.test_workflow_helper.Phase2CVerificationGateTests scripts.ai.tests.test_workflow_helper.Phase3ANativeRuntimeAdapterTests scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests -v 2>&1 | tee phase3b-helper-test-output.txt
-      - name: Run contract tests
+      - name: Run complete repository contract tests
         shell: bash
         run: |
           set -o pipefail
@@ -54,7 +49,6 @@ jobs:
         with:
           name: phase3b-repository-contract-diagnostics
           path: |
-            phase3b-helper-test-output.txt
             phase3b-contract-test-output.txt
           if-no-files-found: error
           retention-days: 90
