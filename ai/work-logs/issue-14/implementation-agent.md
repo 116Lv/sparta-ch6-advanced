@@ -1730,3 +1730,65 @@ independent re-review remains with the parent.
   seeds, deploys, infrastructure, GitHub mutation, push, PR, merge, Issue
   closure, and real repository `.ai-runs` were NOT RUN. Independent review is
   still required; this implementation record does not self-approve Task 13.
+
+### Task 13 Integration Fix 2 - Independent Finalization Journal (2026-07-14)
+
+#### Findings And RED Evidence
+
+- Follow-up review found five Important gaps: recovery still derived OPEN from
+  a potentially invalid receipt/current session, the original custom claim
+  input reference was not sealed, a crash after manifest publication was
+  treated as unexpected closure, sealed stale-lock recovery erased its history,
+  and `EvidenceWriteUncertainty`/`RuntimeError` could escape recovery.
+- The initial focused RED command exited `1`: seven assertions failed for the
+  missing journal identity/order, unsafe normalization, manifest rollback,
+  omitted recovery suffix, and escaping runtime uncertainty. The custom claim
+  setup additionally raised `UNKNOWN_FINAL_ARTIFACT`, directly reproducing the
+  hard-coded claim-input exclusion defect. The setup was converted to the
+  desired public recovery assertion before implementation.
+
+#### Journal Authority And Recovery Semantics
+
+- Commit `9a225e8` (`fix(ai): anchor finalization recovery journal`) adds the
+  closed `.state/finalization-journal.json` schema and writes that fixed,
+  read-only journal through an exclusive durable publication before the
+  OPEN-to-FINALIZING compare-and-swap.
+- The journal binds a UUID identity, exact pre-transition OPEN session, exact
+  derived FINALIZING session, requested `claimInputRef`, and expected
+  lock-recovery history. The sealed receipt binds the independent journal path,
+  ID, and canonical SHA-256. Verification and recovery load the journal
+  independently and require exact receipt/journal/session relationships.
+- Missing, malformed, or mismatched journal/receipt authority now returns the
+  schema-valid `BLOCKED / FINALIZATION_RECOVERY_REQUIRED / 2` result without
+  normalizing to OPEN. A valid inconsistent pre-run publication rolls back only
+  through the journal OPEN source, exact final refs, exact current session CAS,
+  and exact journal cleanup. Successful finalization retains the journal
+  read-only; existing `run.json` remains non-rollbackable.
+- Recovery reads the sealed custom claim reference, recognizes and validates an
+  existing manifest before closure reconciliation, and resumes a crash after
+  manifest publication. Dead-and-expired stale-lock recovery always appends its
+  immutable history record; the sealed snapshot remains an exact prefix, new
+  suffix entries are shape/identity validated, and rollback preserves the
+  suffix without erase or reorder.
+- `EvidenceWriteUncertainty` and `RuntimeError` are caught at the recovery
+  boundary and return the same fail-closed schema-valid BLOCKED result. The
+  public operation documentation now names the retained journal authority and
+  distinguishes invalid authority from valid pre-publication cleanup.
+
+#### Fresh Verification And Boundary
+
+- Fresh combined verification exited `0`: GatewayResultSchema,
+  Phase1B2Task1Schema, StrictJsonAndSchemaValidation, the complete expanded
+  Phase1B3DoneClaimGate class, and Phase1B2Task7RepositoryBoundary ran 86 tests
+  in `97.501s`, all passed.
+- The matrix includes journal-before-CAS ordering, journal/session/history
+  mutations, missing/mutated/schema-invalid authority, custom claim recovery,
+  crash after manifest, retained read-only journal, stale suffix resume and
+  rollback preservation, runtime uncertainty, prior idempotence, and every
+  prior final projection/session mutation regression. Git Bash syntax checks
+  for the touched shell entry points and `git diff --check` exited `0`.
+- Only helper/schema/static checks against temporary repositories ran. Gradle,
+  product/build tests, servers, Docker, HTTP/API, databases, migrations, seeds,
+  deploys, infrastructure, GitHub mutation, push, PR, merge, Issue closure, and
+  real repository `.ai-runs` were NOT RUN. Independent review remains required;
+  this implementation evidence does not self-approve Task 13.
