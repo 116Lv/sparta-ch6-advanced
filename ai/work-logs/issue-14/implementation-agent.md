@@ -1405,3 +1405,84 @@ authority gap`). The ignored Task 11 report is synchronized. Task 12's contract
 entry point remains untouched. No product, infrastructure, GitHub-state, push,
 PR, merge, Issue closure, or real run-state operation was performed;
 independent re-review remains with the parent.
+
+## Task 12 - Complete Contract-Test Entry Point (2026-07-14)
+
+### Routing And Scope
+
+- `tracking_status: issue_backed`; GitHub Issue #14 remains open and workflow
+  `status` remains `in_progress` pending independent review.
+- `owning_feature: none`; this is repo-wide Phase 3B contract-test and workflow
+  infrastructure routed through `AGENTS.md`, `ai/document-routing.md`, the
+  approved Phase 3B hardening plan/design, and
+  `.superpowers/sdd/task-12-phase3b-brief.md`.
+- Implementation `skill_ids`: `verification-runner`, `failure-triage`, and
+  `docs-sync`; `handoff_state_ref`: `ai/agent-handoff.json`; reusable context:
+  `ai/workflow-cache.json`, `ai/verification-policy.json`, and
+  `ai/native-runtime-adapters.json`.
+
+### Implementation And Trust Boundary
+
+- `scripts/ai/tests/run-contract-tests.sh` now resolves and enters the
+  repository root, runs the full
+  `python -m unittest scripts.ai.tests.test_workflow_helper -v` command exactly
+  once, and then runs the runtime-preflight and command-runner shell contracts.
+  `set -eu`, deterministic PATH, and command ordering preserve nonzero failure
+  propagation.
+- `.github/workflows/phase-3b-ci-gates.yml` provisions both pinned helper
+  runtimes and calls only the complete contract entry point for regressions.
+  The selective Phase 2C/3A/3B unittest command and duplicate helper diagnostic
+  artifact were removed; `set -o pipefail` preserves failures through `tee`.
+- The Phase 3B design now states that repository contract green does not imply
+  native enforcement PASS, the external GitHub/Sigstore verifier and required
+  native check remain `NOT_CONFIGURED`, and repository diagnostics cannot
+  establish enforcement authority.
+- Full-suite intake exposed three stale/cross-platform test assumptions. The
+  exact schema allowlist now includes all 28 canonical schemas, stale-summary
+  mutation derives the current canonical `updatedAt`, and the POSIX shell
+  fixture strictly normalizes only checkout CRLF to LF while rejecting any
+  other carriage return. These changes preserve closed-set and byte-exact
+  assertions rather than weakening them.
+
+### TDD And Failure Evidence
+
+- Focused RED exited `1`: the new entry-point regression failed because
+  `REPOSITORY_ROOT` and the full helper-module invocation were absent.
+- Focused GREEN exited `0`; 1 test passed in `0.056s`.
+- The first full-module attempt exited `1`: 416 tests ran in `191.293s`, with 4
+  failures, 44 errors, and 20 skips. A second diagnostic reproduction ran the
+  same 416 tests in `190.436s` with the same result. The four failures were the
+  exact schema count, stale hard-coded project-state timestamp, case-sensitive
+  design phrase, and Windows CRLF POSIX fixture. All 44 errors shared one root
+  cause: default sandbox denial when Phase 3B fixtures created temporary
+  provenance/artifact state in this externally located worktree.
+- The four canonical/platform regressions then exited `0`; 4 tests passed in
+  `1.542s`. An approved representative Phase 3B provenance fixture exited `0`,
+  confirming the sandbox diagnosis.
+- Long foreground approved full-module attempts exceeded the tool host's
+  approximately 100-second lifetime, so no exit code was claimed from those
+  interrupted attempts. Final exhaustive evidence was partitioned without
+  omitting tests: the approved Phase 3B class exited `0` with 23 tests passed in
+  `2.983s` and 1 platform skip; every other test class exited `0` with 393 tests
+  passed in `187.353s` and 19 platform skips. Combined coverage is all 416
+  helper tests with 20 explicit platform-capability skips.
+
+### Static Verification, Commit, And Recovery
+
+- `bash -n` passed for `run-contract-tests.sh`,
+  `test-runtime-preflight.sh`, and `test-command-runner.sh`.
+- Draft 2020-12 schema self-checks for CI capability, result, and GitHub
+  provenance passed; canonical CI state remains repository contract
+  `CONFIGURED_UNVERIFIED` and native enforcement `NOT_CONFIGURED` with
+  `requiredCheckConfigured: false`.
+- `git diff --check`, staged diff check, unsupported success-claim search, and
+  absence checks for `.ai-runs`, recursive `__pycache__`, Phase 3B temporary
+  provenance paths, and the underbound status fixture passed.
+- Implementation commit: `5a57125` (`test(ai): run complete workflow
+  contracts`). The ignored detailed report is
+  `.superpowers/sdd/task-12-phase3b-report.md`.
+- Gradle, product/build tests, server, Docker, HTTP/API, database, migration,
+  seed, deploy, infrastructure, GitHub Actions/state mutation, push, PR, merge,
+  Issue closure, and real `.ai-runs` were NOT RUN. External verifier and native
+  required-check installation remain `NOT_CONFIGURED`; independent review is
+  the next role.
