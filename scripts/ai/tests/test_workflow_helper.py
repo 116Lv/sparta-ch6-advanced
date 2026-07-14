@@ -11073,6 +11073,50 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         status_path.write_text(json.dumps(status, sort_keys=True), encoding="utf-8")
         return status_path.relative_to(self.root).as_posix(), status, provenance, member
 
+    def github_trusted_current_run(self, provenance):
+        return self.helper.GitHubTrustedRunContext(
+            repository=provenance["repository"],
+            workflow_ref=provenance["workflowRef"],
+            workflow_sha=provenance["workflowSha"],
+            head_sha=provenance["headSha"],
+            event_name=provenance["eventName"],
+            run_id=provenance["runId"],
+            run_attempt=provenance["runAttempt"],
+            job_id=provenance["jobId"],
+            artifact_id=provenance["artifactId"],
+            artifact_digest=provenance["artifactDigest"],
+            artifact_members=tuple(
+                (member["path"], member["sha256"])
+                for member in provenance["members"]
+            ),
+            task_key=provenance["taskKey"],
+            gate_invocation_id=provenance["gateInvocationId"],
+            native_evidence_sha256=provenance["nativeEvidenceSha256"],
+            bypass_event_set_sha256=provenance["bypassEventSetSha256"],
+            resolution_event_ids=tuple(provenance["resolutionEventIds"]),
+            signer_repository=provenance["attestation"]["signerRepository"],
+        )
+
+    def unittest_ci_member_reader(self, root, reference):
+        root = Path(root).resolve(strict=True)
+        candidate = (root / reference).resolve(strict=True)
+        candidate.relative_to(root)
+        return candidate.read_bytes()
+
+    def verify_github_fixture(self, status, provenance, trusted_context=None):
+        retained_run = status["currentCi"]["durableEvidence"]["retainedRun"]
+        artifact_refs = status["currentCi"]["durableEvidence"]["artifactRefs"]
+        if trusted_context is None:
+            trusted_context = self.github_trusted_current_run(provenance)
+        return self.helper.verify_github_ci_provenance(
+            self.root,
+            provenance,
+            retained_run,
+            artifact_refs,
+            trusted_context,
+            unittest_member_reader=self.unittest_ci_member_reader,
+        )
+
     def test_github_ci_provenance_schema_is_closed_and_approved(self):
         self.assertIn("github-ci-provenance", self.helper.SCHEMA_NAMES)
         _status_ref, _status, provenance, _member = self.github_provenance_fixture()
@@ -11100,29 +11144,7 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         ))
         self.assertIsNone(result["data"]["githubProvenance"])
 
-    def test_fully_matching_external_github_provenance_can_pass_internal_path(self):
-        status_ref, _status, provenance, _member = self.github_provenance_fixture()
-        result, exit_status = self.helper.ci_evidence_gate(
-            self.root,
-            "issue-14",
-            "gate-provenance",
-            status_ref,
-            github_provenance=self.helper.GitHubCiProvenance.from_verified_envelope(provenance),
-        )
-        self.assertEqual((result["result"], result["reason"], exit_status), (
-            "PASS", None, 0,
-        ))
-        self.assertEqual(result["data"]["githubProvenance"]["runId"], 123456789)
-        self.assertEqual(
-            result["data"]["githubProvenance"]["signerRepository"],
-            "116Lv/sparta-ch6-advanced",
-        )
-        self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
-        result["data"]["githubProvenance"] = None
-        with self.assertRaises(self.helper.InvalidStateError):
-            self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
-
-    def test_raw_repository_authored_provenance_object_cannot_enter_internal_pass_path(self):
+    def test_production_gate_cannot_pass_with_repo_constructible_provenance(self):
         status_ref, _status, provenance, _member = self.github_provenance_fixture()
         result, exit_status = self.helper.ci_evidence_gate(
             self.root,
@@ -11132,8 +11154,67 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
             github_provenance=provenance,
         )
         self.assertEqual((result["result"], result["reason"], exit_status), (
-            "BLOCKED", "CI_GITHUB_PROVENANCE_INVALID", 2,
+            "NOT_CONFIGURED", "CI_GITHUB_PROVENANCE_NOT_AVAILABLE", 3,
         ))
+        self.assertIsNone(result["data"]["githubProvenance"])
+
+    def test_lower_level_verifier_matches_separate_trusted_current_run_context(self):
+        _status_ref, status, provenance, _member = self.github_provenance_fixture()
+        _snapshot, identity = self.verify_github_fixture(status, provenance)
+        self.assertEqual(identity["runId"], 123456789)
+        self.assertEqual(identity["signerRepository"], "116Lv/sparta-ch6-advanced")
+
+        data = self.helper.ci_evidence_gate_data(status, "issue-14", "gate-provenance")
+        data["githubProvenance"] = identity
+        result = self.helper.ci_evidence_gate_result("PASS", None, data)
+        self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+        result["data"]["githubProvenance"] = None
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(self.root, result, "ai/schemas/ci-gate-result.schema.json")
+
+    def test_unrelated_genuine_run_fails_against_trusted_current_run_context(self):
+        _status_ref, status, provenance, _member = self.github_provenance_fixture()
+        current = self.github_trusted_current_run(provenance)
+        provenance["runId"] += 1
+        status["currentCi"]["durableEvidence"]["retainedRun"]["workflowRunId"] += 1
+        with self.assertRaises(self.helper.InvalidStateError) as rejected:
+            self.verify_github_fixture(status, provenance, trusted_context=current)
+        self.assertEqual(
+            rejected.exception.errors[0]["code"], "CI_GITHUB_PROVENANCE_MISMATCH",
+        )
+
+    def test_retained_run_claim_must_independently_match_trusted_current_run(self):
+        mutations = {
+            "repository": "other/example",
+            "workflowRef": "other/example/.github/workflows/ci.yml@refs/heads/main",
+            "workflowSha": "6" * 40,
+            "commitSha": "7" * 40,
+            "eventName": "pull_request",
+            "workflowRunId": 123456790,
+            "attempt": 3,
+            "jobId": "unrelated-job",
+            "artifactId": 987654322,
+            "artifactDigest": "b" * 64,
+            "artifactMembers": [{"path": "other.json", "sha256": "0" * 64}],
+            "taskKey": "issue-other",
+            "gateInvocationId": "gate-other",
+            "nativeAdapterStatusDigest": "e" * 64,
+            "bypassEventSetSha256": "f" * 64,
+            "resolutionEventIds": ["resolution-2"],
+        }
+        for field, value in mutations.items():
+            with self.subTest(binding=field):
+                _status_ref, status, provenance, _member = self.github_provenance_fixture()
+                trusted_context = self.github_trusted_current_run(provenance)
+                status["currentCi"]["durableEvidence"]["retainedRun"][field] = value
+                with self.assertRaises(self.helper.InvalidStateError) as rejected:
+                    self.verify_github_fixture(
+                        status, provenance, trusted_context=trusted_context,
+                    )
+                self.assertEqual(
+                    rejected.exception.errors[0]["code"],
+                    "CI_GITHUB_PROVENANCE_MISMATCH",
+                )
 
     def test_github_provenance_requires_every_exact_run_and_evidence_binding(self):
         mutations = {
@@ -11155,26 +11236,29 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         }
         for label, (field, value) in mutations.items():
             with self.subTest(binding=label):
-                status_ref, _status, provenance, _member = self.github_provenance_fixture()
+                _status_ref, status, provenance, _member = self.github_provenance_fixture()
+                trusted_context = self.github_trusted_current_run(provenance)
                 provenance[field] = value
                 if field == "artifactDigest":
                     provenance["attestation"]["subjectDigest"] = value
-                result, exit_status = self.helper.ci_evidence_gate(
-                    self.root, "issue-14", "gate-provenance", status_ref,
-                    github_provenance=self.helper.GitHubCiProvenance.from_verified_envelope(provenance),
-                )
-                self.assertEqual((result["result"], result["reason"], exit_status), (
-                    "BLOCKED", "CI_GITHUB_PROVENANCE_MISMATCH", 2,
+                with self.assertRaises(self.helper.InvalidStateError) as rejected:
+                    self.verify_github_fixture(
+                        status, provenance, trusted_context=trusted_context,
+                    )
+                self.assertEqual(rejected.exception.errors[0]["code"], (
+                    "CI_GITHUB_PROVENANCE_MISMATCH"
                 ))
 
     def test_github_provenance_rejects_member_and_attestation_tampering(self):
         cases = ("member-digest", "member-content", "unverified", "wrong-subject", "wrong-signer")
         for case in cases:
             with self.subTest(case=case):
-                status_ref, _status, provenance, member = self.github_provenance_fixture()
+                _status_ref, status, provenance, member = self.github_provenance_fixture()
+                trusted_context = self.github_trusted_current_run(provenance)
                 expected_reason = "CI_ARTIFACT_MEMBER_TAMPERED"
                 if case == "member-digest":
                     provenance["members"][0]["sha256"] = "0" * 64
+                    expected_reason = "CI_GITHUB_PROVENANCE_MISMATCH"
                 elif case == "member-content":
                     member.write_text('{"contract":"tampered"}\n', encoding="utf-8")
                 elif case == "unverified":
@@ -11186,13 +11270,11 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
                 else:
                     provenance["attestation"]["signerRepository"] = "other/example"
                     expected_reason = "CI_ATTESTATION_SIGNER_MISMATCH"
-                result, exit_status = self.helper.ci_evidence_gate(
-                    self.root, "issue-14", "gate-provenance", status_ref,
-                    github_provenance=self.helper.GitHubCiProvenance.from_verified_envelope(provenance),
-                )
-                self.assertEqual((result["result"], result["reason"], exit_status), (
-                    "BLOCKED", expected_reason, 2,
-                ))
+                with self.assertRaises(self.helper.InvalidStateError) as rejected:
+                    self.verify_github_fixture(
+                        status, provenance, trusted_context=trusted_context,
+                    )
+                self.assertEqual(rejected.exception.errors[0]["code"], expected_reason)
 
     def test_github_provenance_member_reader_rejects_escape_and_symlink(self):
         with self.assertRaises(self.helper.InvalidStateError) as traversal:
@@ -11201,6 +11283,8 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
             traversal.exception.errors[0]["code"], "CI_ARTIFACT_MEMBER_PATH_INVALID",
         )
 
+        if not self.helper.ci_safe_artifact_backend_supported():
+            self.skipTest("safe POSIX artifact member backend is unavailable")
         _status_ref, _status, _provenance, member = self.github_provenance_fixture()
         link = member.with_name("linked-results.json")
         try:
@@ -11215,24 +11299,50 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
             symlink.exception.errors[0]["code"], "CI_ARTIFACT_MEMBER_UNSAFE",
         )
 
-    def test_github_provenance_fallback_reader_detects_open_identity_race(self):
+    def test_github_provenance_production_reader_requires_safe_posix_backend(self):
         _status_ref, _status, _provenance, member = self.github_provenance_fixture()
         reference = member.relative_to(self.root).as_posix()
-        real_fstat = self.helper.os.fstat
+        with mock.patch.object(
+            self.helper, "ci_safe_artifact_backend_supported", return_value=False,
+        ):
+            with self.assertRaises(self.helper.InvalidStateError) as unavailable:
+                self.helper.read_ci_artifact_member(self.root, reference)
+        self.assertEqual(
+            unavailable.exception.errors[0]["code"],
+            "CI_ARTIFACT_MEMBER_BACKEND_UNAVAILABLE",
+        )
 
-        def changed_identity(descriptor):
-            metadata = real_fstat(descriptor)
-            return SimpleNamespace(
-                st_mode=metadata.st_mode,
-                st_dev=metadata.st_dev,
-                st_ino=metadata.st_ino + 1,
+    def test_github_provenance_posix_reader_pins_each_path_component(self):
+        open_calls = []
+        read_chunks = [b"authenticated-member", b""]
+
+        def fake_open(path, flags, mode=0o777, *, dir_fd=None):
+            open_calls.append((os.fspath(path), flags, dir_fd))
+            return 40 + len(open_calls)
+
+        def fake_read(_descriptor, _size):
+            return read_chunks.pop(0)
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(self.helper.os, "O_DIRECTORY", 0x10000, create=True))
+            stack.enter_context(mock.patch.object(self.helper.os, "O_NOFOLLOW", 0x20000, create=True))
+            stack.enter_context(mock.patch.object(self.helper.os, "open", side_effect=fake_open))
+            stack.enter_context(mock.patch.object(self.helper.os, "close"))
+            stack.enter_context(mock.patch.object(self.helper.os, "read", side_effect=fake_read))
+            stack.enter_context(mock.patch.object(
+                self.helper.os,
+                "fstat",
+                return_value=SimpleNamespace(st_mode=stat.S_IFREG | 0o600),
+            ))
+            content = self.helper.read_ci_artifact_member_posix(
+                self.root, ("artifact-root", "member.json"),
             )
 
-        with mock.patch.object(self.helper.os, "fstat", side_effect=changed_identity):
-            with self.assertRaises(OSError):
-                self.helper.read_ci_artifact_member_fallback(
-                    self.root, self.helper.ci_artifact_member_parts(reference),
-                )
+        self.assertEqual(content, b"authenticated-member")
+        self.assertEqual(open_calls[0][2], None)
+        self.assertEqual(open_calls[1][0:3:2], ("artifact-root", 41))
+        self.assertEqual(open_calls[2][0:3:2], ("member.json", 42))
+        self.assertTrue(all(flags & 0x20000 for _path, flags, _dir_fd in open_calls))
 
     def test_phase_3b_schemas_policy_and_work_log_are_issue_backed(self):
         self.assertIn("ci-capability-status", self.helper.SCHEMA_NAMES)
@@ -11360,6 +11470,12 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
             "with `requiredCheckConfigured: false`",
             policy,
         )
+        self.assertIn("production gate remains unconditionally `NOT_CONFIGURED`", policy)
+        self.assertIn("`GitHubTrustedRunContext`", policy)
+        self.assertIn("independently match", policy)
+        self.assertIn("safe POSIX handle-relative backend", policy)
+        self.assertIn("non-POSIX production hosts fail closed", policy)
+        self.assertNotIn("immutable `GitHubCiProvenance`", policy)
         self.assertNotIn("required check: configured as `phase-3b-ci-gates`", policy)
 
     def test_project_state_reports_contract_workflow_without_native_enforcement(self):
@@ -11410,10 +11526,10 @@ class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):
         member.unlink()
         result, exit_status = self.helper.ci_evidence_gate(
             self.root, "issue-14", "gate-provenance", status_ref,
-            github_provenance=self.helper.GitHubCiProvenance.from_verified_envelope(provenance),
+            github_provenance=provenance,
         )
         self.assertEqual((result["result"], result["reason"], exit_status), (
-            "BLOCKED", "CI_DURABLE_EVIDENCE_ARTIFACT_MISSING", 2,
+            "NOT_CONFIGURED", "CI_GITHUB_PROVENANCE_NOT_AVAILABLE", 3,
         ))
     def test_ci_workflow_and_policy_docs_preserve_product_command_boundary(self):
         workflow = self.root / ".github/workflows/phase-3b-ci-gates.yml"

@@ -20,11 +20,17 @@ Phase 1B-3 remains `INTEGRITY_ONLY` with `completenessEvaluated: false`.
 
 ## Authenticated Provenance And Durable Evidence Contract
 
-A CI evidence PASS requires an immutable `GitHubCiProvenance` envelope supplied
-in memory only after an external GitHub/Sigstore verifier authenticates its
-attestation. The public `scripts/ai/ci-evidence-gate.sh` entry point has no
-provenance argument, always calls the helper with `github_provenance=None`, and
-therefore cannot produce PASS from repository files or `retainedRun` state.
+This repository has no external GitHub/Sigstore verifier integration. The production gate remains unconditionally `NOT_CONFIGURED`, even if repository
+Python code constructs a correct-looking provenance object and passes it to the
+helper. The public `scripts/ai/ci-evidence-gate.sh` entry point has no provenance
+argument and cannot produce PASS from repository files or `retainedRun` state.
+
+The lower-level pure verifier models a future integration without granting
+production authority. It requires an immutable `GitHubTrustedRunContext`
+supplied by that external verifier. The provenance envelope and repository
+`retainedRun` claim must independently match every field in that context; they
+are never used to derive their own expected values. An older genuine run fails
+when its identity differs from the trusted current-run context.
 
 The closed provenance envelope binds the expected repository and workflow ref,
 workflow SHA, head SHA, event name, workflow run ID and attempt, job ID,
@@ -32,13 +38,17 @@ artifact ID and digest, every artifact member path and SHA-256, task and gate
 correlation, native evidence SHA-256, complete bypass event-set SHA-256, and
 resolution event IDs. The verified attestation subject must equal the artifact
 digest and its signer repository must be `116Lv/sparta-ch6-advanced`. Artifact
-members are read through pinned, no-follow file identities and rehashed before
-PASS; path escape, symlink substitution, identity races, and content tampering
-are rejected.
+Production artifact members require a safe POSIX handle-relative backend using
+pinned directory descriptors and `O_NOFOLLOW`. Path escape, symlink
+substitution, identity races, and content tampering are rejected. When those
+primitives are unavailable, non-POSIX production hosts fail closed with an
+explicit backend-unavailable result. A unit-test-only member consumer exercises
+the pure correlation verifier on Windows; it is not reachable from the
+production gate and cannot establish authority.
 
-Repository `retainedRun` is only a claim compared field-for-field with the
-authenticated provenance. Correct-looking repository files cannot create the
-provenance value and cannot substitute for external verification. The minimum
+Repository `retainedRun` and provenance are only claims. Correct-looking
+repository files, frozen values, schema-valid booleans, or caller-selected
+expected values cannot substitute for external verification. The minimum
 retention is 90 days. Cache reuse is forbidden unless the workflow run identity
 and all bindings match; handoff may reuse summaries only, never substitute them
 for durable CI evidence.
