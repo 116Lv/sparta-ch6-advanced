@@ -1546,3 +1546,33 @@ independent re-review remains with the parent.
   GitHub Actions/state mutation, push, PR, merge, Issue closure, or real
   `.ai-runs`. Native enforcement and the external verifier remain
   `NOT_CONFIGURED`; independent re-review remains next.
+
+### Task 12 Second Review Fix - Closed Workflow Top Level (2026-07-14)
+
+- Independent re-review found that the semantic validator closed the job and
+  step model but ignored workflow top-level authority outside `jobs`. An added
+  `env` / `BASH_ENV`, arbitrary top-level key, disabled or changed trigger, or
+  broadened permissions could therefore retain the approved job model while
+  changing execution authority.
+- The normalized workflow must now have the exact approved top-level sequence:
+  repository-contract `name`, `pull_request` plus `push` to `main`,
+  `permissions` with only `contents: read`, and then the single `jobs` mapping.
+  A second guard rejects any trailing top-level key after the jobs block.
+- Seven negative mutations cover `env.BASH_ENV`, an extra `concurrency` key,
+  complete trigger removal, trigger branch change, disabled triggers,
+  `contents: write`, and complete permissions removal. Existing comment/blank,
+  shell execution, job, step, runner, and diagnostic-upload mutations remain
+  unchanged.
+- Focused RED exited `1`; 1 test produced 7 expected subtest failures because
+  every top-level mutation was accepted by the prior validator (`0.058s`).
+  Focused GREEN exited `0`; all 4 semantic contract tests passed in `0.189s`.
+- `bash -n` for all three contract scripts, `git diff --check`, staged diff
+  check, and `.ai-runs` / recursive `__pycache__` absence checks passed.
+- Review-fix implementation commit: `fa9e415` (`test(ai): close workflow
+  top-level model`). The ignored Task 12 report is synchronized. The prior
+  exact 417-test run is retained as pre-fix history; an exact post-`fa9e415`
+  full-module rerun is pending with the parent and is not claimed here.
+- No workflow source, production helper, schema, canonical state, product,
+  infrastructure, GitHub state, push, PR, merge, Issue closure, or real
+  `.ai-runs` operation changed or ran. Native enforcement and the external
+  verifier remain `NOT_CONFIGURED`; independent re-review remains next.
