@@ -1486,3 +1486,37 @@ independent re-review remains with the parent.
   Issue closure, and real `.ai-runs` were NOT RUN. External verifier and native
   required-check installation remain `NOT_CONFIGURED`; independent review is
   the next role.
+
+### Task 12 Review Fix - Semantic Execution Structure (2026-07-14)
+
+- Independent review found that substring counts and index ordering could be
+  satisfied by commented commands, dead branches, duplicates, or selective
+  helper invocations. The test-only contract validators now remove blank and
+  full-comment lines before evaluating executable structure.
+- The shell validator requires one exact normalized top-level sequence:
+  shebang, `set -eu`, deterministic PATH, script/root resolution, repository
+  `cd`, the complete helper module once, and the two exact shell suites in
+  order. Any additional statement or compound/dead branch is rejected.
+- The workflow validator parses indentation into one exact repository-contract
+  job, closed job metadata, and a six-step action model. Every install,
+  dependency-probe, contract run, `pipefail`, diagnostic pipeline, upload
+  condition, artifact path, missing-file policy, and retention field is bound;
+  any other unittest or selective helper runner is rejected.
+- Mutation coverage rejects commented, `if false` dead-branch, duplicate, and
+  selective-runner forms independently for both the entry script and workflow
+  (eight negative variants). Comments and blank lines remain allowed and are
+  excluded from the executable model.
+- Focused RED exited `1`; the mutation test failed because the semantic
+  validator did not exist. Focused GREEN after implementation/refactor exited
+  `0`; 3 tests passed in `0.146s`.
+- `bash -n` for all three contract scripts, `git diff --check`, staged diff
+  check, and `.ai-runs` / recursive `__pycache__` absence checks passed.
+- Review-fix implementation commit: `9f064cb` (`test(ai): validate contract
+  execution structure`). The ignored Task 12 report is synchronized. The prior
+  exhaustive partition remains 416 helper tests covered with 20 explicit
+  platform skips. An exact post-fix full-module execution is pending with the
+  parent and is not claimed here.
+- No workflow, production helper, schema, canonical state, product,
+  infrastructure, GitHub state, push, PR, merge, Issue closure, or real
+  `.ai-runs` operation changed or ran. Native enforcement and the external
+  verifier remain `NOT_CONFIGURED`; independent re-review remains next.
