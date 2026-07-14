@@ -2,12 +2,12 @@
 issue: 14
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/14
 tracking_status: issue_backed
-status: in_review
+status: in_progress
 owning_feature: "none"
-current_owner: reviewer
+current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T11:09:40+09:00
+last_updated: 2026-07-14T11:13:42+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -72,12 +72,12 @@ Issue #14 tracks the isolated implementation and review of the four approved tru
 
 ## Agent Logs
 
-- [Implementation Agent](implementation-agent.md): complete
+- [Implementation Agent](implementation-agent.md): in_progress
 - [Reviewer](reviewer.md): in_progress
 
 ## Current State
 
-All Phase 1B-3, Phase 2, Phase 3A, the Phase 3B contract/enforcement split, and authenticated provenance binding are approved. The complete contract-test entry point is implemented and awaiting independent review.
+All Phase 1B-3, Phase 2, Phase 3A, the Phase 3B contract/enforcement split, and authenticated provenance binding are approved. Task 12 requires stronger executable-structure regressions and an exact full-module success exit.
 
 ## Decisions
 
@@ -96,12 +96,12 @@ All Phase 1B-3, Phase 2, Phase 3A, the Phase 3B contract/enforcement split, and 
 
 ## Next Handoff
 
-- Next role: reviewer
+- Next role: implementation-agent
 - Required reading:
   - [Trust-boundary design](../../docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md)
   - [Phase 3B execution plan](../../docs/superpowers/plans/2026-07-14-phase-3b-ci-provenance-hardening.md)
 - Context links:
   - [Implementation role log](implementation-agent.md)
   - [Reviewer role log](reviewer.md)
-- Remaining work: Independently review global Task 12 / Phase 3B local Task 3.
-- Evidence required: Confirm exact full helper command appears once, execution ordering/failure propagation, workflow single delegation, documentation accuracy, and full-suite reconciliation.
+- Remaining work: Replace substring-only entrypoint/workflow assertions with semantic executable-structure checks and capture exact full-module success, then re-review.
+- Evidence required: RED/GREEN comment/dead-branch/duplicate regressions plus exact full-module exit 0.
