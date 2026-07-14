@@ -1792,3 +1792,60 @@ independent re-review remains with the parent.
   deploys, infrastructure, GitHub mutation, push, PR, merge, Issue closure, and
   real repository `.ai-runs` were NOT RUN. Independent review remains required;
   this implementation evidence does not self-approve Task 13.
+
+### Task 13 Integration Fix 3 - Session-Bound Journal Recovery (2026-07-14)
+
+#### Findings And RED Evidence
+
+- A fourth narrow review found that an OPEN session could continue normal work
+  while a finalization journal existed, the first FINALIZING compare-and-swap
+  did not persist the journal identity in the session, prepare-time runtime or
+  evidence uncertainty could escape, and failed FINALIZED recovery could leave
+  writable control files.
+- Six focused tests were observed RED: all six failed for those intended
+  reasons, including OPEN-plus-journal access, missing session identity,
+  journal path/ID tampering, two escaping uncertainty classes, and missing
+  read-only mode repair.
+
+#### Session Identity And Recovery Semantics
+
+- Commit `779c947` (`fix(ai): bind sessions to finalization journals`) adds the
+  closed top-level `finalizationJournalIdentity`: it is null in OPEN, required
+  and exact in FINALIZING, and retained equal to the FINALIZED receipt's
+  `journalIdentity`.
+- The journal is published before the first session compare-and-swap and embeds
+  that intended FINALIZING identity. Its canonical SHA-256 normalizes only the
+  embedded identity digest to 64 ASCII zeroes, resolving the self-reference
+  while retaining every other journal field in authority.
+- An OPEN session with any journal now blocks normal operations. Explicit
+  recovery validates the exact source OPEN session plus only an allowed lock-
+  recovery suffix, removes and directory-fsyncs the exact journal, and returns
+  `ALREADY_OPEN` without a normal session mutation. FINALIZING cleanup requires
+  the exact embedded journal path, UUID, and normalized digest.
+- Prepare-time `EvidenceWriteUncertainty` and `RuntimeError` reconcile the
+  possibly published session and journal into bounded rollback or the schema-
+  valid recovery-required result; neither escapes a traceback. Every recovery
+  exit that observes raw FINALIZED state attempts to restore read-only mode on
+  both the session and retained journal before releasing the lock.
+- The Phase 1B specification and trust-boundary design now document the journal
+  layout, normalized digest, state-dependent authority, lifecycle, recovery
+  restrictions, uncertainty reconciliation, and mode-repair requirement.
+
+#### Fresh Verification And Boundary
+
+- Fresh committed-HEAD verification exited `0`: GatewayResultSchema,
+  Phase1B2Task1Schema, StrictJsonAndSchemaValidation, the complete expanded
+  Phase1B3DoneClaimGate class, and Phase1B2Task7RepositoryBoundary ran 92 tests
+  in `113.430s`, all passed.
+- The six focused regressions also ran independently in `10.858s`, all passed.
+  Related transition/fsync uncertainty regressions and the updated FINALIZING
+  schema fixtures passed. Cache-free AST parsing of both touched Python files,
+  JSON parsing of both touched schemas, and `git diff --check` exited `0`.
+- A single whole-file helper attempt was stopped by the 300-second command
+  limit and is not claimed as evidence; the bounded committed-HEAD suite above
+  is the authoritative verification record.
+- Only helper/schema/static checks against temporary repositories ran. Gradle,
+  product/build tests, servers, Docker, HTTP/API, databases, migrations, seeds,
+  deploys, infrastructure, GitHub mutation, push, PR, merge, Issue closure, and
+  real repository `.ai-runs` were NOT RUN. Independent review remains required;
+  this implementation evidence does not self-approve Task 13.
