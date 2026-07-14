@@ -7,7 +7,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T13:10:04+09:00
+last_updated: 2026-07-14T15:29:02+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -77,7 +77,7 @@ Issue #14 tracks the isolated implementation and review of the four approved tru
 
 ## Current State
 
-All planned tasks are individually approved. Integration Fix 1 requires crash recovery/resume and complete pre-receipt session projection binding before approval.
+All planned tasks are individually approved. Integration Fix 1 complete finalized projection and crash recovery is approved. Verification-policy single-read identity is next.
 
 ## Decisions
 
