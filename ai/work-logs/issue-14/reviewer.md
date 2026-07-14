@@ -580,3 +580,17 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 - Task quality: Approved.
 - Ready to merge: Yes for the Task 13 final-projection/finalization integration scope.
 - Reasoning: The five review loops close the complete projection authority, crash recovery, independent and session-bound journal identity, uncertainty reconciliation, pre-visibility immutability, recovery mode repair, and rollback cleanup-window findings. Final scoped review found Critical 0, Important 0, and Minor 0.
+
+## Task 14 Verification Policy Snapshot Re-review (2026-07-14)
+
+### Issues
+
+- Critical: None.
+- Important: None. `2b67cd7` closes the policy replacement-race finding by bounded-reading the canonical policy exactly once and deriving strict parsing, schema validation, applicability semantics, and SHA-256 identity from that one byte snapshot.
+- Minor: None.
+
+### Verification And Assessment
+
+- Tests were not re-run during this read-only review. Reviewed evidence commit `99a15b3`, which records 133 passing Phase 2C/3A tests with 2 explicit Windows capability skips, plus successful focused snapshot/race regressions and static checks.
+- The recursively frozen policy value and its one digest are passed unchanged to the native leaf and every external leaf verifier; validation reopens only the approved schema, and malformed or inconsistent state fails closed.
+- Task quality: Approved. Final scoped review found Critical 0, Important 0, and Minor 0.
