@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T09:51:16+09:00
+last_updated: 2026-07-14T10:21:53+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -1350,3 +1350,58 @@ GitHub Actions/state mutation, push, PR, merge, Issue closure, and real
 `.ai-runs` were NOT RUN. External GitHub/Sigstore verification and required
 native-enforcement check installation remain `NOT_CONFIGURED`; independent
 review is the next role.
+
+### Task 11 Review Fix - External Authority And Safe Member Reads (2026-07-14)
+
+- Independent review found one Critical and two Important trust defects in the
+  initial implementation. The exported `GitHubCiProvenance` constructor could
+  be called by repository Python and therefore did not prove external origin;
+  expected run identity was derived from untrusted `retainedRun`; and the
+  non-POSIX pathname fallback did not provide a pinned production-safe member
+  read.
+- The constructible authority type and production PASS path were removed.
+  `ci_evidence_gate` now returns
+  `NOT_CONFIGURED / CI_GITHUB_PROVENANCE_NOT_AVAILABLE / exit 3` after valid
+  status loading regardless of any injected Python value. No repository object,
+  schema-valid boolean, or frozen wrapper can activate production PASS.
+- The lower-level pure `verify_github_ci_provenance` seam does not publish a
+  production result. It requires a separate immutable
+  `GitHubTrustedRunContext` from a future external verifier. Provenance and
+  `retainedRun` independently match repository, workflow ref/SHA, head/event,
+  run/attempt/job, artifact/member, task/gate, native/bypass/resolution, and
+  signer fields against that context. Changing both claims to the same older
+  genuine run is rejected as `CI_GITHUB_PROVENANCE_MISMATCH`.
+- Production artifact reads now require POSIX `dir_fd` plus `O_NOFOLLOW` and
+  open every component relative to its pinned parent descriptor. The pathname
+  fallback was deleted. Hosts without this backend fail closed with
+  `CI_ARTIFACT_MEMBER_BACKEND_UNAVAILABLE`; Windows lower-level correlation
+  tests use an explicit unit-test-only bytes consumer with no production-gate
+  authority.
+- `ai/ci-gates.md` now states that constructible/frozen repository values do
+  not prove origin, the production gate is unconditionally NOT_CONFIGURED until
+  real GitHub/Sigstore integration exists, both claims require independent
+  current-context matching, and non-POSIX production member reads fail closed.
+
+Review-fix RED and GREEN evidence:
+
+- Focused RED exited `1`: a forged production object entered the old injection
+  path and returned `BLOCKED / CI_GITHUB_PROVENANCE_INVALID` instead of the
+  required unconditional NOT_CONFIGURED state; `GitHubTrustedRunContext`, the
+  lower verifier, and safe-backend predicate were absent.
+- Focused GREEN exited `0`; 6 authority/context/backend tests passed in
+  `1.172s`.
+- Full Phase 3B exited `0`; 22 tests passed in `3.272s` with one explicit safe
+  POSIX member-backend platform skip.
+- Final Phase 2C + Phase 3A + Phase 3B expansion exited `0`; 153 tests passed in
+  `57.102s` with 3 platform skips (the two existing Phase 3A Windows safe-ledger
+  skips plus the Phase 3B safe-POSIX member-backend skip).
+- Draft 2020-12 self-check for the provenance/status/result schemas, shell
+  syntax check for `scripts/ai/ci-evidence-gate.sh`, forbidden old authority/fallback symbol
+  search, `git diff --check`, and staged diff check exited `0`. `.ai-runs`,
+  recursive `__pycache__`, and `.phase3b-provenance-*` artifacts were absent.
+
+Review-fix implementation commit: `d8834f9` (`fix(ai): close ci provenance
+authority gap`). The ignored Task 11 report is synchronized. Task 12's contract
+entry point remains untouched. No product, infrastructure, GitHub-state, push,
+PR, merge, Issue closure, or real run-state operation was performed;
+independent re-review remains with the parent.
