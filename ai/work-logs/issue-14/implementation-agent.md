@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-14T02:48:51+09:00
 ended_at:
-last_updated: 2026-07-14T09:05:42+09:00
+last_updated: 2026-07-14T09:20:12+09:00
 branch: codex/ai-workflow-trust-hardening
 related_files:
   - docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md
@@ -1250,3 +1250,41 @@ then exited `0`; 3 tests passed in `0.251s`.
   not changed. Phase 3A remains `UNPROBED`/`UNSUPPORTED`, Phase 2 mapping and
   handoff/skill references remain unchanged, and no product/infrastructure or
   GitHub-state operation was run. Independent rereview remains with the parent.
+
+### Task 10 Second Review Fix - Correlation Length Boundary (2026-07-14)
+
+- Independent rereview found that `taskKey` and `gateInvocationId` used the
+  identifier regex but did not enforce the CI gate result schema's exact
+  `minLength: 1` / `maxLength: 128` contract. A 129-character identifier could
+  therefore reach result construction even though the emitted document could
+  not validate against `ai/schemas/ci-gate-result.schema.json`.
+- `scripts/ai/workflow_helper.py` now applies one closed correlation predicate
+  to both fields: string type, length 1 through 128 inclusive, and the existing
+  identifier regex. Invalid values independently normalize to `invalid`, return
+  `BLOCKED / INVALID_CI_GATE_ARGUMENTS / exit 2`, and never leak the oversized
+  raw value into the result envelope.
+- `scripts/ai/tests/test_workflow_helper.py` adds 128-valid and 129-invalid
+  boundary coverage for both fields, validates every result against the schema,
+  proves the raw oversized value is absent, and preserves the shell wrapper's
+  exact separate argument forwarding.
+- RED command:
+  `$env:PYTHONDONTWRITEBYTECODE='1'; python -m unittest scripts.ai.tests.test_workflow_helper.Phase3BCIGatesDurableEvidenceTests.test_ci_gate_correlation_length_matches_result_schema_boundary -v`
+  exited `1`; 1 test produced 2 intended failures because 129-character
+  `taskKey` and `gateInvocationId` values both returned the baseline
+  `NOT_CONFIGURED / CI_EVIDENCE_NOT_AVAILABLE / exit 3` result.
+- Focused GREEN command covering the new boundary, invalid fallback, and shell
+  forwarding exited `0`; 3 tests passed in `0.334s`. The full Phase 3B class
+  then exited `0`; 11 tests passed in `0.920s`.
+- Final Phase 2C + Phase 3A + Phase 3B expansion exited `0`; 142 tests passed in
+  `55.398s` with the same 2 pre-existing Windows capability skips (directory
+  symlink creation and the real handle-relative cross-process ledger backend).
+- An independent schema boundary probe validated both 128-character results
+  and both schema-safe 129-character rejection results. Shell syntax
+  (`bash -n`), `git diff --check`, staged diff check, and the absence of
+  repository `.ai-runs` and recursive `__pycache__` all passed.
+- Review-fix implementation commit: `b646c22`
+  (`fix(ai): enforce ci correlation length bounds`). This role-log evidence is
+  committed separately and the ignored Task 10 report is synchronized.
+- Task 11 provenance and Task 12 full contract entry point remain untouched.
+  Phase 3A and Phase 2 mappings are unchanged, and no product, infrastructure,
+  GitHub-state, or real run-state operation was performed.
