@@ -482,3 +482,64 @@ Ready to review global Task 1 / Phase 1B-3 local Task 1.
 
 - Task quality: Approved.
 - Reasoning: Final static re-review confirms complete shell and workflow execution modeling, closed workflow authority, correct failure propagation and diagnostics, and successful exact single-process coverage. No Critical, Important, or Minor issues remain for Task 12.
+
+## Final Integration Review (2026-07-14)
+
+### Review Scope
+
+- Base: `26ba5e768c77139490abcb8fa66d2f696159c18b`
+- Head: `ed7d2eaed25d145db24a9e51a38651f0c350eecb`
+- Reviewed the complete base-to-head integration across Phase 1B-3 evidence/finalization, Phase 2 leaf/cache/aggregation trust, Phase 3A host trust/replay/resolution binding, Phase 3B contract/enforcement separation and GitHub provenance, schemas, public CLI reachability, documentation, tests, and work-log evidence.
+- This was a read-only code and evidence review. Tests were not re-run. The recorded final evidence reviewed was the exact Python helper module command at exit `0`, 418 tests in `192.707s`, with 20 explicit platform-capability skips, plus recorded shell syntax, schema, diff, and artifact checks.
+
+### Strengths
+
+- Public native and CI CLIs fail closed: repository-controlled inputs cannot create supported-host or authenticated CI PASS.
+- Repository-contract green is separated from native enforcement `NOT_CONFIGURED`; no unsupported registry `VERIFIED`, native-enforcement, Issue-closure, or unqualified overall `DONE` claim was found.
+- Leaf/evidence bounded reads, exact correlation and digest checks, POSIX handle-relative artifact reads, and the external replay-ledger primitives provide strong defense-in-depth foundations.
+- The recorded exact-suite evidence is specific and properly qualified. No generated `.ai-runs`, `__pycache__`, or temporary provenance artifact was present in the reviewed worktree, and the base-to-head diff check was clean.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+1. `scripts/ai/workflow_helper.py:5033` - finalized-run verification covers only a subset of the claimed deterministic projection.
+   - Why: `validate_final_run_projection()` checks run/task/result and selected references, but does not bind `startedAt`, `endedAt`, `workingDirectory`, `environment`, `redactionApplied`, `reason`, manifest `$id`/`runId`, or the complete claim/gate outcome. Because `run.json` is excluded from the manifest, schema-valid mutation of these fields can still return verification PASS. This contradicts `docs/superpowers/specs/2026-07-14-ai-workflow-trust-boundary-hardening-design.md:96-101`.
+   - Fix: persist an immutable finalization projection/receipt or retained session snapshot containing every derived field, compare every `run.json` field and artifact identity against it, and add mutation coverage for each field and non-PASS manifest identity.
+
+2. `scripts/ai/workflow_helper.py:7770` and `scripts/ai/workflow_helper.py:6248` - verification-policy semantics and policy digests come from separate reads.
+   - Why: the gate parses policy, reopens it for the native policy digest, then reopens it again while verifying external leaves. A replacement race can bind policy-A semantics to policy-B digests and expose different policy identities across checks in one result.
+   - Fix: bounded-read `verification-policy.json` once, parse and validate that byte buffer, derive one SHA-256 from it, pass both policy and digest through every native/external leaf path, and add a replacement-race regression asserting one read and one policy identity.
+
+3. `scripts/ai/workflow_helper.py:5782` and `scripts/ai/workflow_helper.py:5848` - verification-decision cache identity is under-bound.
+   - Why: expected producers are filtered to checks whose own `entryPoint` equals the current entrypoint, while `verification_gate()` aggregates all required and optional checks for the change type. A review cache can therefore be FRESH with only `review-gate`, omitting native, done-claim, static, and other inputs actually consumed. Evidence paths are also not associated with a producer, leaf digest, or evidence schema, so an arbitrary matching file can satisfy the evidence list.
+   - Fix: either narrow gate aggregation to the same documented producer set or bind cache identity to every check actually consumed. Store producer-indexed leaf-result digest plus evidence reference, digest, and schema, and classify every missing, extra, or unmapped binding as STALE or UNCERTAIN.
+
+4. `scripts/ai/workflow_helper.py:7166` and `scripts/ai/workflow_helper.py:7317` - the durable replay identity is consumed before full semantic validation.
+   - Why: `consume_native_attestation()` runs after signature/callback checks but before confirming that every surface is ENFORCED, the current bypass count/set matches, and resolution IDs match. A mismatched invocation can permanently consume a valid attestation and cause the subsequent correct invocation to be rejected as replay.
+   - Fix: consume the durable nonce only after enforcement, bypass-set, and resolution bindings all pass. Add tests proving every pre-consumption BLOCKED path leaves no ledger record while concurrent fully valid evaluations still yield one PASS and one replay rejection.
+
+#### Minor (Nice to Have)
+
+1. `scripts/ai/ci-evidence-gate.sh:38` and `scripts/ai/ci-evidence-gate.sh:63` - shell fallbacks report only 10 of the canonical 16 durable bindings.
+   - Why: they omit workflow ref/SHA, event name, artifact ID/digest, and artifact members. The result schema accepts this under-bound list, so fallback output misstates the current contract even though it remains fail-closed.
+   - Fix: emit the exact canonical binding list in both fallbacks and constrain the schemas to that exact set.
+
+2. `ai/work-logs/issue-14/README.md:5` - the recovery summary is stale relative to committed final evidence and review logs.
+   - Why: it still lists only the 120-test baseline, marks the reviewer log `in_progress`, and says final re-review is pending, while the role logs contain the final 418-test evidence and Task 12 final re-review.
+   - Fix: synchronize metadata, current state, evidence summary, and next handoff while preserving `in_review` until these integration findings are resolved.
+
+### Recommendations
+
+- Add focused regressions for all four Important findings, then rerun the exact helper module and the recorded shell/schema/diff checks.
+- Pin GitHub Actions to immutable commit SHAs and install Python dependencies from hash-locked artifacts; version assertions alone are not dependency provenance.
+- Remaining risk, not a finding: external GitHub/Sigstore verification, branch protection, `phase-3b-native-enforcement`, remote-runner proof, and production host trust remain uninstalled. Canonical state correctly reports these as `NOT_CONFIGURED`.
+
+### Assessment
+
+- Ready to merge: With fixes.
+- No Critical issue was found, but the four Important integration findings should be closed before merge.
