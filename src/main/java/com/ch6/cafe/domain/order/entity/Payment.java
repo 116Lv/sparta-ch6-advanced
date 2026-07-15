@@ -45,4 +45,20 @@ public class Payment {
         this.status = PaymentStatus.SUCCESS;
         this.paidAt = LocalDateTime.now();
     }
+
+    public Long getOrderId() {
+        return orderId;
+    }
+
+    public Long getUserId() {
+        return userId;
+    }
+
+    public long getAmount() {
+        return amount;
+    }
+
+    public PaymentStatus getStatus() {
+        return status;
+    }
 }

@@ -56,4 +56,20 @@ public class PointHistory {
     public static PointHistory use(Long userId, long amount, long balanceAfter) {
         return new PointHistory(userId, PointHistoryType.USE, amount, balanceAfter, "ORDER_PAYMENT");
     }
+
+    public Long getUserId() {
+        return userId;
+    }
+
+    public PointHistoryType getType() {
+        return type;
+    }
+
+    public long getAmount() {
+        return amount;
+    }
+
+    public long getBalanceAfter() {
+        return balanceAfter;
+    }
 }
