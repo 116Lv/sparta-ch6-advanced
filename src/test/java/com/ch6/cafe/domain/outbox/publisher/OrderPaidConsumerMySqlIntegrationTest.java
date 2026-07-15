@@ -96,7 +96,7 @@ class OrderPaidConsumerMySqlIntegrationTest {
                 "{\"eventId\":11,\"eventType\":\"ORDER_PAID\",\"aggregateId\":101,\"payload\":{\"userId\":7,\"menuId\":17}}",
                 "{\"eventId\":11,\"eventType\":\"ORDER_PAID\",\"aggregateId\":101,\"payload\":{\"userId\":null,\"menuId\":17,\"paymentAmount\":4500}}",
                 "{\"eventId\":11,\"eventType\":\"ORDER_PAID\",\"aggregateId\":101,\"payload\":{\"userId\":7,\"menuId\":\"17\",\"paymentAmount\":4500}}",
-                "{\"eventId\":9223372036854775808,\"eventType\":\"ORDER_PAID\",\"aggregateId\":101,\"payload\":{\"userId\":7,\"menuId\":17,\"paymentAmount\":4500}}"
+                "{\"eventId\":18446744073709551617,\"eventType\":\"ORDER_PAID\",\"aggregateId\":101,\"payload\":{\"userId\":7,\"menuId\":17,\"paymentAmount\":4500}}"
         };
 
         for (String invalidMessage : invalidMessages) {
