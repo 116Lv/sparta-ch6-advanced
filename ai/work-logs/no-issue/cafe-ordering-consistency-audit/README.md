@@ -7,7 +7,7 @@ owning_feature: "none"
 current_owner: final-reviewer
 started_at: 2026-07-15T20:47:50.5155079+09:00
 ended_at:
-last_updated: 2026-07-15T23:50:00+09:00
+last_updated: 2026-07-15T23:55:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - specs/001-menu-query/spec.md

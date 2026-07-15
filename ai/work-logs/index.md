@@ -11,4 +11,4 @@ The Orchestrator maintains this index. Each row links the active recovery record
 | #8 | issue_backed | done | none | orchestrator | 2026-07-13T09:32:29+09:00 | [subagent workflow](issue-8/README.md) | complete |
 | #10 | issue_backed | done | none | reviewer | 2026-07-13T22:21:36+09:00 | [Phase 3A native runtime adapters](issue-10/README.md) | issue-backed |
 | #14 | issue_backed | done | none | orchestrator | 2026-07-14T18:15:29+09:00 | [AI workflow trust-boundary hardening](issue-14/README.md) | issue-backed, Issue remains open; PR #15 CI follow-up green |
-| pending | pending_issue | in_progress | none | orchestrator | 2026-07-15T20:47:50.5155079+09:00 | [Cafe ordering consistency audit](no-issue/cafe-ordering-consistency-audit/README.md) | GitHub issue creation rejected; reconciliation required |
+| pending | pending_issue | in_review | none | final-reviewer | 2026-07-15T23:55:00+09:00 | [Cafe ordering consistency audit](no-issue/cafe-ordering-consistency-audit/README.md) | GitHub issue creation rejected; pending external authorization and reconciliation |

@@ -3,12 +3,12 @@ issue: pending
 issue_url:
 agent: review-agent
 tracking_status: pending_issue
-status: in_progress
+status: in_review
 owning_feature: "none"
 current_owner: final-reviewer
 started_at: 2026-07-15T20:47:50.5155079+09:00
 ended_at:
-last_updated: 2026-07-15T23:50:00+09:00
+last_updated: 2026-07-15T23:55:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - specs/001-menu-query/spec.md
@@ -16,7 +16,11 @@ related_files:
   - specs/003-order-payment/spec.md
   - specs/004-popular-menu/spec.md
 changed_files: []
-commands_run: []
+commands_run:
+  - git merge-base --is-ancestor 16bea34 0ee04b6
+  - git diff --check 16bea34..HEAD
+  - git diff --check
+  - rg stale Redis increment and Java temporary-ZSET writes
 tests_run: []
 blockers: []
 skill_ids:
@@ -30,6 +34,8 @@ not_run_project_commands:
   - verify.integration
   - verify.e2e
   - verify.api-smoke
+  - db.migration
+  - db.seed
 github_reconciliation_status: pending_external_authorization
 reconciliation_required: true
 issue_creation_attempted_at: 2026-07-15T20:47:50.5155079+09:00
@@ -54,7 +60,7 @@ Sequential independent review of five cross-cutting implementation areas.
 
 # Current State
 
-Tasks 1-2 are statically complete. Task 3 reviewer dispatch is next.
+Tasks 1-5 completed their correction and fresh static-review cycles. Task 5 code quality and spec compliance have no open Critical, Important, or Minor findings. Final whole-branch review and root verification are the exact resume point; runtime product evidence remains blocked.
 
 # Decisions
 
@@ -71,13 +77,13 @@ Tasks 1-2 are statically complete. Task 3 reviewer dispatch is next.
 
 # Next Handoff
 
-- Next role: review-agent-task-3
+- Next role: final-reviewer
 - Required reading:
   - [Issue summary](README.md)
 - Context links:
   - [Issue summary](README.md)
-- Remaining work: Task 3 Transactional Outbox, Kafka, and idempotency review.
-- Evidence required: Both review verdicts and fully evidenced findings.
+- Remaining work: whole-branch review, root static verification, final pending-Issue evidence update, and qualified completion report.
+- Evidence required: separate full-range spec/code verdicts, clean static checks, explicit product-command NOT RUN table, and no unqualified DONE claim.
 
 ## Tasks 3-5 Review Progress
 
