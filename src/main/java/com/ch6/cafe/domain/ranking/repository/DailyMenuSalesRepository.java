@@ -33,4 +33,15 @@ public interface DailyMenuSalesRepository extends JpaRepository<DailyMenuSale, L
     List<DailyMenuSale> findAllBySalesDateBetween(LocalDate from, LocalDate to);
 
     Optional<DailyMenuSale> findBySalesDateAndMenuId(LocalDate salesDate, Long menuId);
+
+    @Query("""
+            select sale.salesDate as salesDate,
+                   sum(sale.orderCount) as totalOrderCount,
+                   count(sale) as menuCount
+            from DailyMenuSale sale
+            where sale.salesDate between :from and :to
+            group by sale.salesDate
+            """)
+    List<DailySalesMetadataProjection> summarizeBetween(
+            @Param("from") LocalDate from, @Param("to") LocalDate to);
 }

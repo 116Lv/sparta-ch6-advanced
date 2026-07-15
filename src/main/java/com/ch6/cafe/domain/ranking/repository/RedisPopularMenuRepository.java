@@ -32,7 +32,13 @@ public class RedisPopularMenuRepository {
             else
                 redis.call('DEL', KEYS[2])
             end
-            redis.call('SET', KEYS[3], '1', 'EX', ARGV[1])
+            redis.call('SET', KEYS[3], ARGV[2], 'EX', ARGV[1])
+            return 1
+            """, Long.class);
+    private static final DefaultRedisScript<Long> ABSOLUTE_UPDATE_SCRIPT = new DefaultRedisScript<>("""
+            redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
+            redis.call('EXPIRE', KEYS[1], ARGV[3])
+            redis.call('SET', KEYS[2], ARGV[4], 'EX', ARGV[3])
             return 1
             """, Long.class);
 
@@ -42,15 +48,19 @@ public class RedisPopularMenuRepository {
         this.redisTemplate = redisTemplate;
     }
 
-    public Optional<List<PopularMenu>> findComplete(LocalDate to, int days) {
+    public Optional<List<PopularMenu>> findComplete(
+            LocalDate to, int days, Map<LocalDate, DailySalesMetadata> expected) {
         List<String> dailyKeys = new ArrayList<>();
         List<String> markerKeys = new ArrayList<>();
+        List<LocalDate> dates = new ArrayList<>();
         for (int offset = 0; offset < days; offset++) {
             LocalDate date = to.minusDays(offset);
+            dates.add(date);
             dailyKeys.add(dailyKey(date));
             markerKeys.add(completeKey(date));
         }
-        if (!allMarkersExist(markerKeys)) {
+        List<String> firstMarkers = redisTemplate.opsForValue().multiGet(markerKeys);
+        if (!validSnapshot(dates, dailyKeys, firstMarkers, expected)) {
             return Optional.empty();
         }
 
@@ -61,7 +71,9 @@ public class RedisPopularMenuRepository {
             redisTemplate.expire(unionKey, TEMP_TTL);
             Set<ZSetOperations.TypedTuple<String>> tuples =
                     redisTemplate.opsForZSet().reverseRangeWithScores(unionKey, 0, -1);
-            if (!allMarkersExist(markerKeys)) {
+            List<String> secondMarkers = redisTemplate.opsForValue().multiGet(markerKeys);
+            if (!firstMarkers.equals(secondMarkers)
+                    || !validSnapshot(dates, dailyKeys, secondMarkers, expected)) {
                 return Optional.empty();
             }
             if (tuples == null) {
@@ -78,13 +90,22 @@ public class RedisPopularMenuRepository {
         }
     }
 
-    public void setAbsolute(LocalDate date, long menuId, long durableCount) {
-        if (durableCount <= 0) {
-            throw new IllegalArgumentException("Durable ranking count must be positive.");
+    public void setAbsolute(
+            LocalDate date,
+            long menuId,
+            long durableCount,
+            long durableTotalCount,
+            long durableMemberCount) {
+        if (durableCount <= 0 || durableTotalCount <= 0 || durableMemberCount <= 0) {
+            throw new IllegalArgumentException("Durable ranking metadata must be positive.");
         }
-        String key = dailyKey(date);
-        redisTemplate.opsForZSet().add(key, Long.toString(menuId), durableCount);
-        redisTemplate.expire(key, DAILY_TTL);
+        redisTemplate.execute(
+                ABSOLUTE_UPDATE_SCRIPT,
+                List.of(dailyKey(date), completeKey(date)),
+                Long.toString(durableCount),
+                Long.toString(menuId),
+                Long.toString(DAILY_TTL.toSeconds()),
+                markerValue(durableTotalCount, durableMemberCount));
     }
 
     public void replaceDate(LocalDate date, Map<Long, Long> counts) {
@@ -101,14 +122,78 @@ public class RedisPopularMenuRepository {
             redisTemplate.execute(
                     REPLACE_SCRIPT,
                     List.of(tempKey, dailyKey(date), completeKey(date)),
-                    Long.toString(DAILY_TTL.toSeconds()));
+                    Long.toString(DAILY_TTL.toSeconds()),
+                    markerValue(
+                            counts.values().stream().mapToLong(Long::longValue).sum(),
+                            counts.size()));
         } finally {
             redisTemplate.delete(tempKey);
         }
     }
 
-    private boolean allMarkersExist(List<String> markerKeys) {
-        return markerKeys.stream().allMatch(key -> Boolean.TRUE.equals(redisTemplate.hasKey(key)));
+    private boolean validSnapshot(
+            List<LocalDate> dates,
+            List<String> dailyKeys,
+            List<String> encodedMarkers,
+            Map<LocalDate, DailySalesMetadata> expected) {
+        if (encodedMarkers == null || encodedMarkers.size() != dates.size()) {
+            return false;
+        }
+        for (int index = 0; index < dates.size(); index++) {
+            Marker marker = parseMarker(encodedMarkers.get(index));
+            DailySalesMetadata durable = expected.get(dates.get(index));
+            if (marker == null || durable == null
+                    || marker.totalOrderCount() != durable.totalOrderCount()
+                    || marker.menuCount() != durable.menuCount()
+                    || !validDailyData(dailyKeys.get(index), durable)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean validDailyData(String key, DailySalesMetadata expected) {
+        Boolean exists = redisTemplate.hasKey(key);
+        if (expected.menuCount() == 0) {
+            return !Boolean.TRUE.equals(exists) && expected.totalOrderCount() == 0;
+        }
+        if (!Boolean.TRUE.equals(exists)) {
+            return false;
+        }
+        Long size = redisTemplate.opsForZSet().zCard(key);
+        Set<ZSetOperations.TypedTuple<String>> tuples =
+                redisTemplate.opsForZSet().rangeWithScores(key, 0, -1);
+        if (size == null || size != expected.menuCount() || tuples == null || tuples.size() != size) {
+            return false;
+        }
+        long total = 0L;
+        for (ZSetOperations.TypedTuple<String> tuple : tuples) {
+            if (tuple.getValue() == null || tuple.getScore() == null
+                    || tuple.getScore() <= 0 || tuple.getScore() != Math.rint(tuple.getScore())) {
+                return false;
+            }
+            total = Math.addExact(total, tuple.getScore().longValue());
+        }
+        return total == expected.totalOrderCount();
+    }
+
+    private Marker parseMarker(String encoded) {
+        if (encoded == null) {
+            return null;
+        }
+        String[] parts = encoded.split("\\|", -1);
+        if (parts.length != 3 || parts[0].isBlank()) {
+            return null;
+        }
+        try {
+            return new Marker(parts[0], Long.parseLong(parts[1]), Long.parseLong(parts[2]));
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+    }
+
+    private String markerValue(long totalOrderCount, long menuCount) {
+        return UUID.randomUUID() + "|" + totalOrderCount + "|" + menuCount;
     }
 
     private String dailyKey(LocalDate date) {
@@ -117,5 +202,8 @@ public class RedisPopularMenuRepository {
 
     private String completeKey(LocalDate date) {
         return COMPLETE_PREFIX + date;
+    }
+
+    private record Marker(String generation, long totalOrderCount, long menuCount) {
     }
 }

@@ -14,6 +14,7 @@ import com.ch6.cafe.domain.menu.repository.MenuRepository;
 import com.ch6.cafe.domain.ranking.dto.response.PopularMenuResponse;
 import com.ch6.cafe.domain.ranking.entity.PopularMenu;
 import com.ch6.cafe.domain.ranking.repository.DailyMenuSalesRepository;
+import com.ch6.cafe.domain.ranking.repository.DailySalesMetadata;
 import com.ch6.cafe.domain.ranking.repository.MenuSalesAggregate;
 import com.ch6.cafe.domain.ranking.repository.RedisPopularMenuRepository;
 import java.lang.reflect.Field;
@@ -38,6 +39,7 @@ class PopularMenuQueryServiceTest {
 
     @BeforeEach
     void setUp() {
+        when(dailyRepository.summarizeBetween(any(), any())).thenReturn(List.of());
         service = new PopularMenuQueryService(
                 redisRepository, dailyRepository, menuRepository, rebuildService, clock);
     }
@@ -45,7 +47,7 @@ class PopularMenuQueryServiceTest {
     @Test
     void completeCacheHitUsesInjectedClockAndReturnsTopThreeWithTieOrder() {
         LocalDate today = LocalDate.of(2026, 7, 16);
-        when(redisRepository.findComplete(today, 7)).thenReturn(Optional.of(List.of(
+        when(redisRepository.findComplete(today, 7, emptyMetadata(today))).thenReturn(Optional.of(List.of(
                 new PopularMenu(2L, 12L), new PopularMenu(1L, 10L),
                 new PopularMenu(3L, 10L), new PopularMenu(4L, 1L))));
         when(menuRepository.findAllById(List.of(2L, 1L, 3L))).thenReturn(List.of(
@@ -62,7 +64,7 @@ class PopularMenuQueryServiceTest {
     @Test
     void incompleteCacheUsesInclusiveSevenDayDurableWindowAndRebuildsFullRange() {
         LocalDate today = LocalDate.of(2026, 7, 16);
-        when(redisRepository.findComplete(today, 7)).thenReturn(Optional.empty());
+        when(redisRepository.findComplete(today, 7, emptyMetadata(today))).thenReturn(Optional.empty());
         when(dailyRepository.aggregateBetween(LocalDate.of(2026, 7, 10), today))
                 .thenReturn(List.of(aggregate(7L, 4L)));
         when(menuRepository.findAllById(List.of(7L))).thenReturn(List.of(menu(7L, "Flat White")));
@@ -77,7 +79,7 @@ class PopularMenuQueryServiceTest {
     @Test
     void missingCachedMenuFallsBackToDurableRankingAndRebuildsInsteadOfShortening() {
         LocalDate today = LocalDate.of(2026, 7, 16);
-        when(redisRepository.findComplete(today, 7)).thenReturn(Optional.of(List.of(
+        when(redisRepository.findComplete(today, 7, emptyMetadata(today))).thenReturn(Optional.of(List.of(
                 new PopularMenu(99L, 20L), new PopularMenu(1L, 10L))));
         when(menuRepository.findAllById(List.of(99L, 1L))).thenReturn(List.of(menu(1L, "Americano")));
         when(dailyRepository.aggregateBetween(LocalDate.of(2026, 7, 10), today))
@@ -95,7 +97,8 @@ class PopularMenuQueryServiceTest {
     @Test
     void redisFailureStillReturnsDurableTopThreeInCanonicalOrder() {
         LocalDate today = LocalDate.of(2026, 7, 16);
-        when(redisRepository.findComplete(today, 7)).thenThrow(new RuntimeException("redis unavailable"));
+        when(redisRepository.findComplete(today, 7, emptyMetadata(today)))
+                .thenThrow(new RuntimeException("redis unavailable"));
         when(dailyRepository.aggregateBetween(LocalDate.of(2026, 7, 10), today)).thenReturn(List.of(
                 aggregate(4L, 9L), aggregate(2L, 11L), aggregate(1L, 9L), aggregate(3L, 8L)));
         when(menuRepository.findAllById(List.of(2L, 1L, 4L))).thenReturn(List.of(
@@ -118,7 +121,7 @@ class PopularMenuQueryServiceTest {
     @Test
     void completeEmptyCacheIsAHitAndDoesNotQueryDurableStorage() {
         LocalDate today = LocalDate.of(2026, 7, 16);
-        when(redisRepository.findComplete(today, 7)).thenReturn(Optional.of(List.of()));
+        when(redisRepository.findComplete(today, 7, emptyMetadata(today))).thenReturn(Optional.of(List.of()));
 
         PopularMenuResponse response = service.getPopularMenus(7, 3);
 
@@ -143,5 +146,13 @@ class PopularMenuQueryServiceTest {
             @Override public Long getMenuId() { return menuId; }
             @Override public Long getOrderCount() { return count; }
         };
+    }
+
+    private java.util.Map<LocalDate, DailySalesMetadata> emptyMetadata(LocalDate to) {
+        java.util.Map<LocalDate, DailySalesMetadata> result = new java.util.LinkedHashMap<>();
+        for (int offset = 6; offset >= 0; offset--) {
+            result.put(to.minusDays(offset), new DailySalesMetadata(0L, 0L));
+        }
+        return result;
     }
 }

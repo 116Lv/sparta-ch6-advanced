@@ -5,10 +5,12 @@ import com.ch6.cafe.domain.menu.repository.MenuRepository;
 import com.ch6.cafe.domain.ranking.dto.response.PopularMenuResponse;
 import com.ch6.cafe.domain.ranking.entity.PopularMenu;
 import com.ch6.cafe.domain.ranking.repository.DailyMenuSalesRepository;
+import com.ch6.cafe.domain.ranking.repository.DailySalesMetadata;
 import com.ch6.cafe.domain.ranking.repository.RedisPopularMenuRepository;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
@@ -48,7 +50,8 @@ public class PopularMenuQueryService {
     public PopularMenuResponse getPopularMenus(int days, int limit) {
         validate(days, limit);
         LocalDate today = LocalDate.now(clock);
-        Optional<List<PopularMenu>> cached = loadCached(today, days);
+        Map<LocalDate, DailySalesMetadata> metadata = loadMetadata(today, days);
+        Optional<List<PopularMenu>> cached = loadCached(today, days, metadata);
         if (cached.isPresent()) {
             List<PopularMenu> selected = cached.orElseThrow().stream().limit(limit).toList();
             Optional<List<PopularMenuResponse.MenuItem>> cachedItems = hydrateComplete(selected);
@@ -63,7 +66,7 @@ public class PopularMenuQueryService {
         try {
             rebuildService.rebuild(today, days);
         } catch (RuntimeException exception) {
-            log.warn("Redis ranking rebuild failed; MySQL aggregate remains available.");
+            log.warn("Redis ranking rebuild failed; MySQL aggregate remains available.", exception);
         }
         return new PopularMenuResponse(days, items);
     }
@@ -89,13 +92,26 @@ public class PopularMenuQueryService {
                 .toList();
     }
 
-    private Optional<List<PopularMenu>> loadCached(LocalDate today, int days) {
+    private Optional<List<PopularMenu>> loadCached(
+            LocalDate today, int days, Map<LocalDate, DailySalesMetadata> metadata) {
         try {
-            return redisRepository.findComplete(today, days);
+            return redisRepository.findComplete(today, days, metadata);
         } catch (RuntimeException exception) {
-            log.warn("Redis ranking read failed; serving MySQL aggregate.");
+            log.warn("Redis ranking read failed; serving MySQL aggregate.", exception);
             return Optional.empty();
         }
+    }
+
+    private Map<LocalDate, DailySalesMetadata> loadMetadata(LocalDate today, int days) {
+        LocalDate from = today.minusDays(days - 1L);
+        Map<LocalDate, DailySalesMetadata> metadata = new LinkedHashMap<>();
+        for (LocalDate date = from; !date.isAfter(today); date = date.plusDays(1)) {
+            metadata.put(date, new DailySalesMetadata(0L, 0L));
+        }
+        dailyRepository.summarizeBetween(from, today).forEach(row -> metadata.put(
+                row.getSalesDate(),
+                new DailySalesMetadata(row.getTotalOrderCount(), row.getMenuCount())));
+        return Map.copyOf(metadata);
     }
 
     private List<PopularMenu> loadDurable(LocalDate today, int days) {

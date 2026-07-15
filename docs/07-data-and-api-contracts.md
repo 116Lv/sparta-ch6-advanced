@@ -186,8 +186,10 @@ If authentication is added later, request `userId` must be replaced or verified 
 `GET /api/v1/menus/popular` accepts only `days=7&limit=3`. The inclusive range is the application
 clock's current date and the preceding six dates. Results order by `orderCount DESC, menuId ASC`.
 
-MySQL `daily_menu_sales` is authoritative. A Redis range is usable only when every date has a
-`popular-menu:complete:{yyyy-MM-dd}` marker. Daily data and marker keys expire after 14 days;
+MySQL `daily_menu_sales` is authoritative. A Redis range is usable only when every date marker's
+generation, durable total, and durable member count agree with lightweight MySQL metadata and the
+daily ZSET's cardinality/score sum. Marker generations must not change during the union read.
+Daily data and marker keys expire after 14 days;
 one-minute temporary union/rebuild keys are always cleaned up. Incomplete, unavailable, or
 unresolvable cache data falls back to MySQL and triggers a full-range rebuild including empty
 dates.

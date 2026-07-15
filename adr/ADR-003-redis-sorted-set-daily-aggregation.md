@@ -31,10 +31,14 @@ On successful order:
 
 For the recent 7-day query:
 
-1. Require a `popular-menu:complete:{yyyy-MM-dd}` marker for every requested date.
+1. Read per-date MySQL total/member metadata and require each
+   `popular-menu:complete:{yyyy-MM-dd}` marker to match it.
 2. Union the last 7 daily Sorted Sets only when the range is complete.
 3. Read top 3 by score and fetch menu details from MySQL.
-4. If a marker or menu is missing, return the MySQL aggregate and rebuild all seven dates.
+4. Validate daily ZSET cardinality and score sum, and require marker generations to remain
+   identical across the union read.
+5. If metadata, data, generation, or menu resolution is invalid, return the MySQL aggregate and
+   rebuild all seven dates.
 
 If Redis data is unavailable or lost, rebuild ranking from MySQL `daily_menu_sales`.
 

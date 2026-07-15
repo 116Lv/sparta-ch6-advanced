@@ -63,10 +63,13 @@ class RedisPopularMenuRepositoryIntegrationTest {
         repository.replaceDate(to, Map.of(1L, 5L));
         template.opsForZSet().add("popular-menu:2026-07-14", "2", 9D);
 
-        assertThat(repository.findComplete(to, 2)).isEmpty();
+        Map<LocalDate, DailySalesMetadata> expected = Map.of(
+                to, new DailySalesMetadata(5L, 1L),
+                to.minusDays(1), new DailySalesMetadata(9L, 1L));
+        assertThat(repository.findComplete(to, 2, expected)).isEmpty();
 
         repository.replaceDate(to.minusDays(1), Map.of(2L, 9L));
-        assertThat(repository.findComplete(to, 2)).hasValueSatisfying(ranking ->
+        assertThat(repository.findComplete(to, 2, expected)).hasValueSatisfying(ranking ->
                 assertThat(ranking).extracting(PopularMenu::menuId).containsExactly(2L, 1L));
     }
 
@@ -79,7 +82,8 @@ class RedisPopularMenuRepositoryIntegrationTest {
 
         assertThat(template.hasKey("popular-menu:2026-07-15")).isFalse();
         assertThat(template.hasKey("popular-menu:complete:2026-07-15")).isTrue();
-        assertThat(repository.findComplete(date, 1)).hasValue(List.of());
+        assertThat(repository.findComplete(date, 1, Map.of(date, new DailySalesMetadata(0L, 0L))))
+                .hasValue(List.of());
     }
 
     @Test
@@ -96,16 +100,40 @@ class RedisPopularMenuRepositoryIntegrationTest {
     }
 
     @Test
-    void absoluteAssignmentConvergesAfterRebuildAndDoesNotCreateCompleteness() {
+    void absoluteAssignmentPublishesNewCompleteGenerationFromDurableMetadata() {
         LocalDate date = LocalDate.of(2026, 7, 15);
         repository.replaceDate(date, Map.of(1L, 5L));
-        repository.setAbsolute(date, 1L, 6L);
+        repository.setAbsolute(date, 1L, 6L, 6L, 1L);
         assertThat(template.opsForZSet().score("popular-menu:2026-07-15", "1")).isEqualTo(6D);
 
         template.delete("popular-menu:complete:2026-07-15");
-        repository.setAbsolute(date, 1L, 7L);
+        repository.setAbsolute(date, 1L, 7L, 7L, 1L);
 
         assertThat(template.opsForZSet().score("popular-menu:2026-07-15", "1")).isEqualTo(7D);
-        assertThat(template.hasKey("popular-menu:complete:2026-07-15")).isFalse();
+        assertThat(template.hasKey("popular-menu:complete:2026-07-15")).isTrue();
+        assertThat(repository.findComplete(
+                date, 1, Map.of(date, new DailySalesMetadata(7L, 1L))))
+                .hasValueSatisfying(ranking -> assertThat(ranking)
+                        .extracting(PopularMenu::orderCount)
+                        .containsExactly(7L));
+    }
+
+    @Test
+    void markerSurvivingDataLossIsRejectedAgainstDurableMetadata() {
+        LocalDate date = LocalDate.of(2026, 7, 15);
+        repository.replaceDate(date, Map.of(1L, 5L));
+        template.delete("popular-menu:2026-07-15");
+
+        assertThat(repository.findComplete(
+                date, 1, Map.of(date, new DailySalesMetadata(5L, 1L)))).isEmpty();
+    }
+
+    @Test
+    void oldGenerationMetadataIsRejectedAfterDurableCountAdvances() {
+        LocalDate date = LocalDate.of(2026, 7, 15);
+        repository.replaceDate(date, Map.of(1L, 5L));
+
+        assertThat(repository.findComplete(
+                date, 1, Map.of(date, new DailySalesMetadata(6L, 1L)))).isEmpty();
     }
 }

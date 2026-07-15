@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import com.ch6.cafe.domain.ranking.entity.DailyMenuSale;
 import com.ch6.cafe.domain.ranking.repository.DailyMenuSalesRepository;
+import com.ch6.cafe.domain.ranking.repository.DailySalesMetadataProjection;
 import com.ch6.cafe.domain.ranking.repository.RedisPopularMenuRepository;
 import java.time.LocalDate;
 import java.util.Optional;
@@ -33,10 +34,14 @@ class MenuSalesRecorderTest {
         DailyMenuSale sale = Mockito.mock(DailyMenuSale.class);
         when(sale.getOrderCount()).thenReturn(12L);
         when(dailyRepository.findBySalesDateAndMenuId(date, 3L)).thenReturn(Optional.of(sale));
+        DailySalesMetadataProjection metadata = Mockito.mock(DailySalesMetadataProjection.class);
+        when(metadata.getTotalOrderCount()).thenReturn(30L);
+        when(metadata.getMenuCount()).thenReturn(4L);
+        when(dailyRepository.summarizeBetween(date, date)).thenReturn(java.util.List.of(metadata));
 
         recorder.recordCache(date, 3L);
 
-        verify(redisRepository).setAbsolute(date, 3L, 12L);
+        verify(redisRepository).setAbsolute(date, 3L, 12L, 30L, 4L);
         verify(dateLock).execute(Mockito.eq(date), Mockito.any());
     }
 
@@ -47,6 +52,7 @@ class MenuSalesRecorderTest {
 
         recorder.recordCache(date, 3L);
 
-        verify(redisRepository, never()).setAbsolute(date, 3L, 0L);
+        verify(redisRepository, never()).setAbsolute(
+                Mockito.any(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
     }
 }
