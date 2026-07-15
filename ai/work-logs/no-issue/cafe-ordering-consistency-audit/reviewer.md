@@ -89,5 +89,5 @@ Tasks 1-5 completed their correction and fresh static-review cycles. Task 5 code
 
 - Task 3 found a marker-only consumer, lease-window risk, absent FAILED recovery, and missing integration evidence. Corrections added transactional analytics consumption, claim-immediately-before-send publishing, audited recovery, and focused MySQL tests; fresh review reported no open Critical/Important findings.
 - Task 4 selected the Redis completeness protocol: MySQL authority, per-day generation/metadata markers, shared date locks, absolute assignments, complete-range validation, and fallback rebuild. Corrections and authored tests were statically reviewed.
-- Task 5 found a stale `increment` test, a Java-side temporary-ZSET failure window, contradictory ADR text, missing API contract coverage, and incomplete workflow records. Corrections were dispatched to the implementation role; runtime execution remains blocked by command policy.
-- Next review must independently inspect the Task 5 patch and whole branch. This log does not self-approve the corrections.
+- Task 5 found a stale `increment` test, a Java-side temporary-ZSET failure window, contradictory ADR text, missing API contract coverage, and incomplete workflow records. Corrections and the fallback-record follow-up received fresh static re-review with no remaining code/spec finding; runtime execution remains blocked by command policy.
+- Next review is the independent whole-branch review followed by root verification. Task 5 is not reopened unless that full-range review finds a concrete regression.
