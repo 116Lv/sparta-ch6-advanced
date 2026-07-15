@@ -3,12 +3,12 @@ issue: pending
 issue_url:
 agent: review-agent
 tracking_status: pending_issue
-status: in_review
+status: handoff_needed
 owning_feature: "none"
-current_owner: final-reviewer
+current_owner: repository-owner
 started_at: 2026-07-15T20:47:50.5155079+09:00
-ended_at:
-last_updated: 2026-07-15T23:55:00+09:00
+ended_at: 2026-07-15T23:59:00+09:00
+last_updated: 2026-07-15T23:59:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - specs/001-menu-query/spec.md
@@ -77,13 +77,13 @@ Tasks 1-5 completed their correction and fresh static-review cycles. Task 5 code
 
 # Next Handoff
 
-- Next role: final-reviewer
+- Next role: repository-owner or supported CI/runtime operator
 - Required reading:
   - [Issue summary](README.md)
 - Context links:
   - [Issue summary](README.md)
-- Remaining work: whole-branch review, root static verification, final pending-Issue evidence update, and qualified completion report.
-- Evidence required: separate full-range spec/code verdicts, clean static checks, explicit product-command NOT RUN table, and no unqualified DONE claim.
+- Remaining work: execute required critical-data runtime checks through a VERIFIED evidence path and reconcile the pending Issue when externally authorized.
+- Evidence required: accepted unit/integration/API-smoke/E2E, migration, real HTTP, and server-log evidence; no unqualified DONE claim before those gates.
 
 ## Tasks 3-5 Review Progress
 

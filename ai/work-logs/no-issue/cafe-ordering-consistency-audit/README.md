@@ -2,12 +2,12 @@
 issue: pending
 issue_url:
 tracking_status: pending_issue
-status: in_review
+status: handoff_needed
 owning_feature: "none"
-current_owner: final-reviewer
+current_owner: repository-owner
 started_at: 2026-07-15T20:47:50.5155079+09:00
 ended_at:
-last_updated: 2026-07-15T23:55:00+09:00
+last_updated: 2026-07-15T23:59:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - specs/001-menu-query/spec.md
@@ -24,9 +24,14 @@ commands_run:
   - git rev-parse HEAD
   - git status --short --branch
   - git merge-base --is-ancestor 16bea34 0ee04b6
+  - git diff --check 16bea34..31ead92
+  - JSON parse ai/verification-policy.json and ai/command-registry.json
+  - scripts/ai/verification-gate.sh attempted through bash.exe; failed before script start because WSL /bin/bash is unavailable
 tests_run: []
 blockers:
   - GitHub Issue creation rejected because external disclosure was not authorized
+  - Required critical-data product verification has no VERIFIED command path
+  - Static Phase 2C helper could not start because this Windows host has no WSL /bin/bash
 skill_ids:
   - superpowers:subagent-driven-development
   - superpowers:requesting-code-review
@@ -53,7 +58,7 @@ migration_history: []
 
 ## Recovery Summary
 
-Five sequential fresh-reviewer gates and a final whole-branch review are in progress. Resume at the first task not marked complete in `.superpowers/sdd/progress.md`.
+Five sequential correction/re-review gates and the final whole-branch static review are complete. Resume with supported runtime verification and pending-Issue reconciliation; no scratch ledger is required.
 
 ## Routing Outcome
 
@@ -75,7 +80,7 @@ Five sequential fresh-reviewer gates and a final whole-branch review are in prog
 
 ## Current State
 
-Tasks 1-4 completed correction and fresh static review cycles. Task 5 corrections now align the post-commit ranking test with `setAbsolute`, make rebuild population/TTL/replacement/marker publication one Lua operation, correct ADR wording, add focused API contract tests, and truthfully separate authored/static evidence from runtime evidence. Final independent review remains.
+Tasks 1-5 completed correction and fresh static-review cycles. The final whole-branch reviewer reported no Critical, Important, or Minor source finding. Root static checks passed, while critical-data runtime verification and the static Phase 2C helper remain blocked by the available command/host environment.
 
 ## Decisions
 
@@ -98,7 +103,7 @@ Tasks 1-4 completed correction and fresh static review cycles. Task 5 correction
 
 ## Next Handoff
 
-- Next role: final-reviewer
+- Next role: repository-owner or supported CI/runtime operator
 - Required reading:
   - [Menu Query spec](../../../../specs/001-menu-query/spec.md)
   - [Point Charge spec](../../../../specs/002-point-charge/spec.md)
@@ -106,5 +111,5 @@ Tasks 1-4 completed correction and fresh static review cycles. Task 5 correction
   - [Popular Menu spec](../../../../specs/004-popular-menu/spec.md)
 - Context links:
   - [Review log](reviewer.md)
-- Remaining work: Independent Task 5 re-review, whole-branch review, and root static verification.
-- Evidence required: Separate spec-compliance and code-quality verdicts, `git diff --check`, stale-reference checks, and explicit NOT RUN runtime evidence.
+- Remaining work: provide VERIFIED unit/integration/API-smoke/E2E execution, apply migrations and review logs through the supported evidence path, then authorize pending GitHub Issue reconciliation if desired.
+- Evidence required: accepted command-runner artifacts for required critical-data checks; real HTTP/server-log evidence; successful Phase 2C gate output on a supported shell/host.
