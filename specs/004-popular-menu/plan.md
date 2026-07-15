@@ -6,22 +6,22 @@
 
 ## Technical Approach
 
-- API: `PopularMenuController`
-- Application: `PopularMenuQueryService`, `MenuSalesRecorder`
-- Domain: ranking policy
-- Persistence: `DailyMenuSalesRepository`, `MenuRepository`
+- Controller: `PopularMenuController`
+- Service: `PopularMenuQueryService`, `MenuSalesRecorder`
+- Entity: ranking policy and `DailyMenuSale`
+- Repository: `DailyMenuSalesRepository`, `MenuRepository`
 - External: Redis Sorted Set
 - Test: integration test, Redis recovery test
 
 ## Files to Add
 
-- `ranking/api/PopularMenuController.java`
-- `ranking/api/PopularMenuResponse.java`
-- `ranking/application/PopularMenuQueryService.java`
-- `ranking/application/MenuSalesRecorder.java`
-- `ranking/infrastructure/RedisPopularMenuRepository.java`
-- `ranking/infrastructure/DailyMenuSalesRepository.java`
-- `ranking/domain/PopularMenu.java`
+- `src/main/java/com/ch6/cafe/domain/ranking/controller/PopularMenuController.java`
+- `src/main/java/com/ch6/cafe/domain/ranking/dto/response/PopularMenuResponse.java`
+- `src/main/java/com/ch6/cafe/domain/ranking/service/PopularMenuQueryService.java`
+- `src/main/java/com/ch6/cafe/domain/ranking/service/MenuSalesRecorder.java`
+- `src/main/java/com/ch6/cafe/domain/ranking/repository/RedisPopularMenuRepository.java`
+- `src/main/java/com/ch6/cafe/domain/ranking/repository/DailyMenuSalesRepository.java`
+- `src/main/java/com/ch6/cafe/domain/ranking/entity/PopularMenu.java`
 
 ## Files to Modify
 

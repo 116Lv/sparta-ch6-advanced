@@ -84,10 +84,25 @@
 | aggregate_id | bigint | not null | Order ID |
 | event_type | varchar(100) | not null | Example: `ORDER_PAID` |
 | payload | json | not null | Kafka payload |
-| status | varchar(20) | not null | `READY`, `PUBLISHED`, `FAILED` |
+| status | varchar(20) | not null | `READY`, `PROCESSING`, `PUBLISHED`, `FAILED` |
 | retry_count | int | not null | Retry count |
+| claim_token | varchar(100) | nullable | Unique token for the current publisher claim |
+| claim_owner | varchar(100) | nullable | Publisher instance identifier for observability |
+| claimed_at | datetime | nullable | Claim start time |
+| claim_until | datetime | nullable | Deadline after which an unfinished claim is recoverable |
+| last_error | varchar(1000) | nullable | Most recent publish failure summary without sensitive payload data |
 | created_at | datetime | not null | Created time |
+| updated_at | datetime | not null | Last state-change time |
 | published_at | datetime | nullable | Published time |
+
+Outbox state rules:
+
+- The order transaction inserts `READY`; it never publishes directly to Kafka.
+- A Publisher claims a bounded batch in a short transaction and changes rows to `PROCESSING` with a new `claim_token` and `claim_until`.
+- Only the current `claim_token` may complete or retry a claim. This prevents a stale worker from updating a row after its expired claim was reassigned.
+- A `PROCESSING` row whose `claim_until` has passed can be reclaimed with a new token.
+- Kafka acknowledgement changes the matching claim to `PUBLISHED`. A retryable failure increments `retry_count` and returns the row to `READY`; exhausted retries become `FAILED` for manual or dead-letter handling.
+- Clearing claim metadata is part of every transition out of `PROCESSING`.
 
 ### daily_menu_sales
 
@@ -161,7 +176,6 @@ If authentication is added later, request `userId` must be replaced or verified 
 - Point histories should not be deleted.
 - Orders and payments should not be hard-deleted by default.
 - Outbox events may be archived after successful publication and retention period.
-- TODO: Define concrete retention periods.
 
 ## Open Questions
 

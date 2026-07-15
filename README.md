@@ -42,6 +42,8 @@
 | Reliability Pattern | Transactional Outbox |
 | Test | JUnit 5, Spring Boot Test, Testcontainers |
 
+런타임은 로드밸런서 뒤 stateless API 다중 인스턴스를 전제로 한다. 패키지는 `com.ch6.cafe.global`과 `com.ch6.cafe.domain.{menu,point,order,ranking,outbox}` 아래에서 도메인별 `controller -> service -> repository` 방향을 사용한다. 상세 토폴로지는 [시스템 아키텍처](docs/06-system-architecture.md), 패키지 결정은 [ADR-004](adr/ADR-004-domain-packages-three-layer.md), 부하·장애·측정 계획은 [품질 및 운영 규칙](docs/09-quality-operations-and-rules.md)을 따른다.
+
 ## 3. 기술 선택 이유
 
 ### Spring Boot
@@ -60,32 +62,17 @@ Spring Boot는 REST API, 트랜잭션, JPA, Kafka, Redis 연동을 안정적으�
 
 ### Redisson Distributed Lock
 
-주문/결제와 포인트 충전은 사용자 포인트 잔액을 변경한다. 다수 서버 환경에서는 `synchronized`나 JVM 내부 Lock이 서버 간 동시성을 제어하지 못한다.
+DB 비관적 락도 공용 MySQL을 통해 다중 인스턴스에서 유효하다. Redisson은 DB 진입 전에 같은 사용자 요청의 경합을 제어하고 짧은 획득 timeout을 적용하기 위해 선택한다. MySQL 트랜잭션과 제약은 최종 정합성 경계로 유지한다.
 
-고려한 선택지는 다음과 같다.
+이 선택은 Redis 의존성, lease 만료, watchdog 중단, Redis와 MySQL의 이중 장애 경계를 추가한다. 따라서 동일한 일반 부하·hot key·충전/주문 경합을 DB 비관적 락과 비교해 DB pool 압력과 tail latency 개선이 비용을 정당화하는지 검증한다. 상세 결정과 검증 조건은 [ADR-001](adr/ADR-001-redisson-distributed-lock.md)에 있다.
 
-| 선택지 | 장점 | 한계 |
-|---|---|---|
-| synchronized | 구현이 단순하다. | 단일 JVM 안에서만 동작한다. 다수 서버 환경에 부적합하다. |
-| DB Pessimistic Lock | DB row 기준으로 강한 일관성을 보장한다. | DB 부하가 커질 수 있고, 잠금 범위 관리가 중요하다. |
-| DB Optimistic Lock | 충돌이 적을 때 성능이 좋다. | 포인트 차감처럼 충돌 가능성이 있는 요청에서는 재시도 설계가 필요하다. |
-| Redisson Distributed Lock | 서버 인스턴스가 여러 개여도 사용자 단위 임계구역을 제어할 수 있다. | Redis 장애, lease time, wait time 설정을 고려해야 한다. |
+### Transactional Outbox
 
-본 프로젝트는 사용자 단위 포인트 변경 작업에 Redisson 분산락을 적용한다. 락 key는 `point:user:{userId}`처럼 사용자 단위로 잡아 서로 다른 사용자의 주문은 병렬 처리되도록 한다. 락 내부에서는 MySQL 트랜잭션으로 포인트 차감, 포인트 이력 저장, 주문 생성을 원자적으로 처리한다.
+주문, 결제, 포인트 이력과 Outbox 이벤트를 같은 MySQL 트랜잭션에 저장한다. 여러 Publisher 인스턴스는 `READY` row를 짧은 트랜잭션으로 claim하고, 장애로 만료된 claim은 다시 회수한다. Kafka 발행 성공 후 상태 기록 전에 장애가 나면 중복 발행될 수 있으므로 event ID 기반 consumer 멱등성이 필수다.
 
-### Kafka + Transactional Outbox
+### Kafka
 
-주문 내역은 데이터 수집 플랫폼으로 실시간 전송되어야 한다. 그러나 주문 트랜잭션 안에서 외부 API 또는 Kafka 전송을 직접 수행하면 다음 문제가 생긴다.
-
-- 주문은 성공했지만 외부 전송이 실패할 수 있다.
-- 외부 전송 성공 후 DB 트랜잭션이 롤백될 수 있다.
-- 네트워크 지연이 주문 API 응답 시간을 불안정하게 만든다.
-
-이를 피하기 위해 Transactional Outbox 패턴을 사용한다. 주문 생성 트랜잭션 안에서 `orders`, `payments`, `outbox_events`를 함께 저장한다. 이후 별도 Publisher가 Outbox 이벤트를 읽어 Kafka로 발행하고, 성공 시 발행 상태를 변경한다.
-
-이 방식은 주문 데이터와 전송해야 할 이벤트가 같은 DB 트랜잭션으로 저장되므로, 주문 성공 후 이벤트가 유실되는 문제를 줄인다. Kafka 발행 실패 시 Outbox 상태를 기준으로 재시도할 수 있다.
-
-과제 검증에서는 실제 데이터 수집 플랫폼을 만들지 않는다. 대신 Kafka 발행 대상 이벤트가 Outbox에 저장되는지, Publisher가 Kafka Producer를 호출하는지, 실패 시 재시도 상태로 남는지를 테스트한다. 필요하면 Kafka Producer를 Mock으로 대체한 테스트를 작성해 `userId`, `menuId`, `paymentAmount`가 전송 payload에 포함되는지 검증한다.
+Kafka는 Outbox와 별개의 선택이다. 이벤트 보존과 replay, 여러 consumer group의 독립 소비, partition 병렬화, 같은 partition key의 순서 보존이 필요해 선택한다. consumer 인스턴스 장애 시 group rebalance가 partition을 동적으로 재할당한다. replay가 필요 없고 짧은 작업 전달, 우선순위, 복잡한 routing이 중심이면 RabbitMQ 같은 메시지 큐가 더 적합할 수 있다. 두 선택의 상세 근거와 trade-off는 [ADR-002](adr/ADR-002-transactional-outbox-kafka.md)에 있다.
 
 ### Redis Sorted Set + 일별 집계 테이블
 
@@ -101,6 +88,8 @@ Spring Boot는 REST API, 트랜잭션, JPA, Kafka, Redis 연동을 안정적으�
 | Redis Sorted Set + 일별 집계 테이블 | 빠른 조회와 복구 가능성을 함께 가진다. | 쓰기 경로와 보정 작업이 추가된다. |
 
 본 프로젝트는 주문 성공 시 Redis Sorted Set에 메뉴 주문 횟수를 반영하고, MySQL의 `daily_menu_sales`에도 일별 주문 횟수를 누적한다. 인기 메뉴 조회는 Redis를 우선 사용하고, Redis 장애 또는 데이터 불일치 시 MySQL 일별 집계 테이블을 기준으로 복구할 수 있게 설계한다.
+
+Redis Sentinel은 현재 확정 구현이 아니라 향후 master 장애 자동 전환 대안이다. Sentinel은 sharding이나 쓰기 부하 분산 수단이 아니다. 상세 범위는 [ADR-003](adr/ADR-003-redis-sorted-set-daily-aggregation.md)에 있다.
 
 ## 4. 도메인 모델
 
@@ -289,6 +278,7 @@ sequenceDiagram
   participant Lock as Redisson
   participant DB as MySQL
   participant Redis
+  participant Publisher as Outbox Publisher
   participant Kafka
 
   Client->>API: POST /api/v1/orders
@@ -305,9 +295,11 @@ sequenceDiagram
   API->>Redis: ZINCRBY popular menu
   API->>Lock: unlock
   API-->>Client: order response
-  Kafka->>DB: outbox polling
-  Kafka->>Kafka: publish order-paid event
-  Kafka->>DB: mark published
+  Publisher->>DB: claim READY rows
+  DB-->>Publisher: PROCESSING rows + claim deadline
+  Publisher->>Kafka: publish order-paid event
+  Kafka-->>Publisher: acknowledge
+  Publisher->>DB: mark PUBLISHED
 ```
 
 ## 7. 동시성 제어 전략
@@ -318,7 +310,7 @@ sequenceDiagram
 
 - Lock key: `point:user:{userId}`
 - wait time: 짧게 설정하여 장시간 대기 요청을 방지한다.
-- lease time: 비즈니스 로직 예상 수행 시간보다 약간 길게 설정한다.
+- lease/watchdog: 기준 테스트와 장애 주입 후 하나의 정책을 명시한다. lease 만료나 watchdog 중단이 안전을 보장하지 않으므로 DB 정합성 검증을 유지한다.
 - unlock: 반드시 `finally`에서 수행한다.
 
 DB 트랜잭션은 다음 작업을 하나의 원자적 단위로 묶는다.
@@ -356,6 +348,8 @@ Redis Sorted Set은 빠른 조회를 위한 자료구조다. 정확성 검증과
 | Kafka 발행 실패 테스트 | 발행 실패 시 Outbox 이벤트가 재시도 대상으로 남는지 검증한다. |
 | 인기 메뉴 테스트 | 최근 7일 기준 TOP 3가 정확히 계산되는지 검증한다. |
 | Redis 복구 테스트 | Redis 데이터 유실 시 일별 집계 테이블로 랭킹을 복구할 수 있는지 검증한다. |
+
+필수 정합성 조건은 [도메인 모델의 Consistency Invariants](docs/03-domain-model.md#consistency-invariants)가 소유한다. 일반 부하, hot key, 충전/주문 경합, Outbox backlog, API·Redis·Kafka 장애 복구와 처리량·p50/p95/p99·오류율·lock wait·DB pool·Outbox 체류시간·consumer lag 측정 계획은 [품질 및 운영 규칙](docs/09-quality-operations-and-rules.md)에 있다. TPS와 p95 목표 수치는 기준 테스트 결과 후 확정한다.
 
 ## 10. 문서 구조
 
@@ -402,6 +396,10 @@ specs/
 
 adr/
   ADR-000-template.md
+  ADR-001-redisson-distributed-lock.md
+  ADR-002-transactional-outbox-kafka.md
+  ADR-003-redis-sorted-set-daily-aggregation.md
+  ADR-004-domain-packages-three-layer.md
 ```
 
 ## 11. 기능별 상세 문서

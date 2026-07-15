@@ -124,6 +124,21 @@ Menu 1:N DailyMenuSale
 
 Redis Sorted Set은 빠른 조회용이며, MySQL `daily_menu_sales`가 복구 기준이다.
 
+## Consistency Invariants
+
+These conditions are mandatory regardless of whether concurrency control uses Redisson or a MySQL pessimistic lock:
+
+| Invariant | Required condition |
+|---|---|
+| No negative point | A committed `user_points.balance` is always zero or greater. An insufficient-balance order changes no point, order, payment, history, aggregate, or Outbox state. |
+| No lost update | Every committed charge or point use is reflected exactly once in the final balance and has one matching `point_histories` record. Concurrent operations must not overwrite one another. |
+| No duplicate payment | One order has at most one payment. A retry or concurrent execution for the same order identity must not create a second payment or deduct points twice. |
+| No Outbox omission | Every committed paid order has its `ORDER_PAID` Outbox event saved in the same transaction. A rolled-back order has no publishable event. |
+| Idempotent event consumption | Re-delivery of the same immutable Outbox event ID does not repeat a downstream business effect. |
+| Recoverable ranking | MySQL `daily_menu_sales` remains sufficient to rebuild Redis ranking after Redis data loss. |
+
+Load and failure tests are invalid if any invariant fails, even when their throughput or latency target is met.
+
 ## Glossary
 
 | Term | Meaning |
