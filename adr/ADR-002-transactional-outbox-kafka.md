@@ -101,9 +101,13 @@ Kafka adds broker and partition operations, consumer-lag monitoring, and replay/
 
 ## Follow-up
 
-- Define retry interval and max retry count.
-- Define dead-letter or manual recovery policy for permanently failing events.
-- Define claim batch size, claim timeout, recovery cadence, and the exact SQL/JPA locking approach.
+- The implementation polls every 1 second, claims at most 50 rows with a 30-second deadline,
+  waits up to 5 seconds for the Kafka acknowledgement, and moves an event to `FAILED` after
+  5 failed publication attempts.
+- Claim selection uses a MySQL pessimistic row lock in a short transaction. A new UUID token is
+  assigned to each row, and completion/retry takes the row lock again and verifies that token.
+- `FAILED` is the manual-recovery boundary; automatic publication does not claim it.
+- Consumer idempotency is persisted by the composite key `(consumer_group, event_id)`.
 - Add tests for Outbox saved on order success and not saved on order failure.
 - Add tests for publisher success/failure state transitions.
 - Add tests for competing publisher workers, process failure after claim, stale-claim recovery, and publish-acknowledged/status-update-failed duplicate delivery.

@@ -68,8 +68,11 @@ Redis Sentinel is not part of the confirmed implementation. It is a future avail
 
 ## Follow-up
 
-- Define Redis key TTL.
-- Define reconciliation job or recovery command.
+- Daily ranking keys use a 14-day TTL; temporary union keys use a 1-minute TTL and are deleted
+  after the query.
+- `RankingRebuildService` reconstructs the requested date range from `daily_menu_sales`.
+  A missing/empty Redis result or Redis read failure serves the MySQL aggregate and attempts
+  reconstruction without changing the committed order result.
 - Add tests for last-7-days calculation.
 - Add tests for Redis rebuild from `daily_menu_sales`.
 - Test Redis unavailability and recovery first; use the evidence to decide whether a later Sentinel ADR is warranted.

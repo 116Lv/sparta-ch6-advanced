@@ -179,5 +179,29 @@ If authentication is added later, request `userId` must be replaced or verified 
 
 ## Open Questions
 
-- Open Question: Should `payload` use MySQL JSON type or text column for portability?
 - Open Question: What is the exact outbox retention period?
+
+## Implemented Event Consumption Contract
+
+### processed_events
+
+| Column | Type | Constraint | Description |
+|---|---|---|---|
+| consumer_group | varchar(100) | PK with event_id | Kafka consumer group |
+| event_id | bigint | PK with consumer_group | Immutable Outbox event ID |
+| processed_at | datetime | not null | First accepted delivery time |
+
+The Kafka topic is `coffee.order.paid`. The producer uses `aggregate_id` as the partition key,
+so ordering is limited to one aggregate key and global ordering is not assumed. The message is:
+
+```json
+{
+  "eventId": 1,
+  "eventType": "ORDER_PAID",
+  "aggregateId": 100,
+  "payload": { "userId": 1, "menuId": 10, "paymentAmount": 4500 }
+}
+```
+
+Each consumer group inserts `(consumer_group, event_id)` with `INSERT IGNORE` before applying
+its group-owned effect. A redelivery therefore cannot pass the same group's idempotency gate twice.

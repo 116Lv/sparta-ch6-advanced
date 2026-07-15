@@ -76,7 +76,11 @@ This choice is conditional on comparative verification. The same contention scen
 
 ## Follow-up
 
-- Define concrete wait time and lease/watchdog policy after baseline measurements. Document whether a fixed lease or watchdog-managed lease is used; do not combine assumptions from both modes.
+- The implementation uses a 200 ms acquisition wait and Redisson watchdog renewal with a
+  30-second watchdog timeout. It does not pass a fixed lease to `tryLock`, so fixed-lease and
+  watchdog assumptions are not mixed.
+- Unlock first checks `isHeldByCurrentThread()`. Redis acquisition failure never falls through
+  to an unlocked point mutation.
 - Add concurrency tests for same-user multiple orders.
 - Add concurrency tests for charge and order running at the same time.
 - Compare Redisson and MySQL pessimistic locking with identical normal-load and hot-user workloads. Measure throughput, p50/p95/p99 latency, error and timeout rate, lock wait time, and DB connection-pool usage.
