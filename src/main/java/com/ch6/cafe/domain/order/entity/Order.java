@@ -37,12 +37,12 @@ public class Order {
     protected Order() {
     }
 
-    public Order(Long userId, Long menuId, long orderPrice) {
+    public Order(Long userId, Long menuId, long orderPrice, LocalDateTime orderedAt) {
         this.userId = userId;
         this.menuId = menuId;
         this.orderPrice = orderPrice;
         this.status = OrderStatus.PAID;
-        this.orderedAt = LocalDateTime.now();
+        this.orderedAt = orderedAt;
     }
 
     public Long getId() {
@@ -63,5 +63,9 @@ public class Order {
 
     public OrderStatus getStatus() {
         return status;
+    }
+
+    public LocalDateTime getOrderedAt() {
+        return orderedAt;
     }
 }

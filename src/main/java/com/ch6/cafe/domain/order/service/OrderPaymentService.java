@@ -20,7 +20,9 @@ import com.ch6.cafe.domain.ranking.service.MenuSalesRecorder;
 import com.ch6.cafe.global.lock.DistributedLockManager;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -38,6 +40,7 @@ public class OrderPaymentService {
     private final OutboxEventRepository outboxEventRepository;
     private final MenuSalesRecorder salesRecorder;
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
     public OrderPaymentService(
             DistributedLockManager lockManager,
@@ -49,7 +52,8 @@ public class OrderPaymentService {
             PaymentRepository paymentRepository,
             OutboxEventRepository outboxEventRepository,
             MenuSalesRecorder salesRecorder,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            Clock clock) {
         this.lockManager = lockManager;
         this.transactionTemplate = transactionTemplate;
         this.menuRepository = menuRepository;
@@ -60,20 +64,22 @@ public class OrderPaymentService {
         this.outboxEventRepository = outboxEventRepository;
         this.salesRecorder = salesRecorder;
         this.objectMapper = objectMapper;
+        this.clock = clock;
     }
 
     public OrderResponse order(long userId, long menuId) {
         if (userId <= 0 || menuId <= 0) {
             throw new IllegalArgumentException("User and menu identifiers must be positive.");
         }
-        LocalDate salesDate = LocalDate.now();
-        OrderResponse response = lockManager.withUserPointLock(userId, () ->
-                transactionTemplate.execute(status -> executeOrder(userId, menuId, salesDate)));
-        salesRecorder.recordCache(salesDate, menuId);
-        return response;
+        OrderExecution execution = lockManager.withUserPointLock(userId, () ->
+                transactionTemplate.execute(status -> executeOrder(userId, menuId)));
+        salesRecorder.recordCache(execution.salesDate(), menuId);
+        return execution.response();
     }
 
-    private OrderResponse executeOrder(long userId, long menuId, LocalDate salesDate) {
+    private OrderExecution executeOrder(long userId, long menuId) {
+        LocalDateTime orderedAt = LocalDateTime.now(clock);
+        LocalDate salesDate = orderedAt.toLocalDate();
         Menu menu = menuRepository.findById(menuId).orElseThrow(MenuNotFoundException::new);
         if (!menu.isOnSale()) {
             throw new MenuNotAvailableException();
@@ -84,18 +90,19 @@ public class OrderPaymentService {
         point.use(menu.getPrice());
         pointHistoryRepository.save(PointHistory.use(userId, menu.getPrice(), point.getBalance()));
 
-        Order order = orderRepository.save(new Order(userId, menuId, menu.getPrice()));
+        Order order = orderRepository.save(new Order(userId, menuId, menu.getPrice(), orderedAt));
         paymentRepository.save(new Payment(order.getId(), userId, menu.getPrice()));
         salesRecorder.recordDurable(salesDate, menuId);
         outboxEventRepository.save(OutboxEvent.orderPaid(order.getId(), orderPaidPayload(userId, menuId, menu.getPrice())));
 
-        return new OrderResponse(
+        OrderResponse response = new OrderResponse(
                 order.getId(),
                 userId,
                 menuId,
                 menu.getPrice(),
                 point.getBalance(),
                 order.getStatus());
+        return new OrderExecution(response, salesDate);
     }
 
     private String orderPaidPayload(long userId, long menuId, long paymentAmount) {
@@ -107,5 +114,8 @@ public class OrderPaymentService {
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("ORDER_PAID payload serialization failed.", exception);
         }
+    }
+
+    private record OrderExecution(OrderResponse response, LocalDate salesDate) {
     }
 }
