@@ -4,16 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.ch6.cafe.domain.outbox.publisher.OutboxPublisher;
 import com.ch6.cafe.domain.ranking.entity.PopularMenu;
+import java.lang.reflect.Method;
 import java.time.LocalDate;
-import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -90,12 +90,26 @@ class DailyMenuSalesRepositoryMySqlIntegrationTest {
     }
 
     @Test
-    void aggregateReadsAreImplementedByQueryDslFragmentRatherThanJpqlQueries() {
-        assertThat(Arrays.stream(DailyMenuSalesRepository.class.getDeclaredMethods())
-                .filter(method -> method.isAnnotationPresent(Query.class))
-                .map(method -> method.getName())
-                .toList())
-                .containsExactly("increment");
+    void aggregateReadsAreImplementedByQueryDslFragmentRatherThanJpqlQueries()
+            throws NoSuchMethodException {
+        Method aggregateBetween = DailyMenuSalesQueryRepository.class.getDeclaredMethod(
+                "aggregateBetween", LocalDate.class, LocalDate.class);
+        Method summarizeBetween = DailyMenuSalesQueryRepository.class.getDeclaredMethod(
+                "summarizeBetween", LocalDate.class, LocalDate.class);
+
+        assertThat(aggregateBetween.getAnnotation(Query.class)).isNull();
+        assertThat(summarizeBetween.getAnnotation(Query.class)).isNull();
+    }
+
+    @Test
+    void incrementRetainsNativeMySqlUpsertQuery() throws NoSuchMethodException {
+        Method increment = DailyMenuSalesRepository.class.getDeclaredMethod(
+                "increment", LocalDate.class, Long.class);
+
+        Query query = increment.getAnnotation(Query.class);
+
+        assertThat(query).isNotNull();
+        assertThat(query.nativeQuery()).isTrue();
     }
 
     private void insert(LocalDate date, long menuId, long count) {

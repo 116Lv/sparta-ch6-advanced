@@ -27,6 +27,7 @@ commands_run:
   - "verify.integration RED: run verify-20260716-level5-task2-red-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.integration GREEN: run verify-20260716-level5-task2-green-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.integration final GREEN: run verify-20260716-level5-task2-green-02; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
+  - "verify.integration Task 2 review fix: run verify-20260716-level5-task2-review-green-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
 tests_run:
   - "RED canonical contract: 1 failure with 19 violations"
   - "RED E2E allowlist: 2 failures"
@@ -36,6 +37,8 @@ tests_run:
   - "Final focused Task 1 contracts: 5 tests passed"
   - "Task 1 review fix RED: 1 test failed in 3 subtests for missing, non-directory, and escaping E2E working directories"
   - "Task 1 review fix GREEN: 6 focused tests passed"
+  - "Task 2 review fix source RED: missing explicit fragment method and native increment annotation contracts"
+  - "Task 2 review fix focused static GREEN: explicit fragment and increment contracts present"
 blockers: []
 skill_ids:
   - superpowers:test-driven-development
@@ -66,10 +69,11 @@ Implement Tasks 1-5 sequentially under TDD and the official command-runner polic
 - Addressed the Task 1 Important review finding: common working-directory validation now applies to every configured executable, while only Gradle argv enters wrapper-specific validation.
 - Task 2 RED assertions now cover exact grouped projection values and require aggregate reads to leave JPQL `@Query` methods.
 - Task 2 production aggregation now uses a custom Spring Data repository fragment backed by `JPAQueryFactory`; the native MySQL increment UPSERT remains unchanged.
+- Task 2 review fix explicitly reflects on both fragment aggregate methods to prohibit JPQL annotations and separately proves `increment` retains a native `@Query`.
 
 # Current State
 
-Task 2 QueryDSL implementation is in progress. Its official RED launch is blocked on this Windows host before attempt reservation because the workflow supports product execution only on POSIX; static review and a fresh official GREEN attempt remain.
+Task 2 QueryDSL implementation and focused review fix are committed/static-GREEN. Official integration launches remain blocked before attempt reservation because the workflow supports product execution only on POSIX.
 
 # Decisions
 
@@ -89,6 +93,9 @@ Task 2 QueryDSL implementation is in progress. Its official RED launch is blocke
 - Task 2 RED run `verify-20260716-level5-task2-red-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, artifact, or test count.
 - Task 2 GREEN run `verify-20260716-level5-task2-green-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, artifact, or test count.
 - Task 2 final GREEN run `verify-20260716-level5-task2-green-02`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, artifact, or test count.
+- Task 2 review-fix source RED detected all missing focused contracts in the pre-fix test: explicit fragment lookup, both aggregate method names, and native-query validation.
+- Task 2 review-fix focused static GREEN confirmed explicit lookup of both fragment methods, absence assertions for each `@Query`, explicit `increment(LocalDate, Long)` lookup, and `nativeQuery() == true`.
+- Task 2 review-fix official run `verify-20260716-level5-task2-review-green-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, artifact, or test count.
 
 # Blockers
 
