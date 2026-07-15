@@ -26,6 +26,12 @@ Write integration tests for:
 - Outbox event persistence
 - Redis ranking update
 
+Popular-menu verification must cover the inclusive seven-day window, outside-range exclusion,
+top-three tie ordering, exact `days=7&limit=3` validation, fixed-clock alignment, all-marker cache
+hits, partial marker loss, complete empty dates, stale-key deletion, TTL and temporary-key cleanup,
+missing-menu and Redis-failure fallback, and deterministic rebuild/update interleavings. MySQL
+counts remain authoritative in every failure case.
+
 ### Real API Verification
 
 Any API behavior change requires real HTTP request verification against a running server unless blocked by missing project setup. If blocked, report `BLOCKED` with the reason.

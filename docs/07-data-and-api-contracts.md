@@ -181,6 +181,17 @@ If authentication is added later, request `userId` must be replaced or verified 
 
 - Open Question: What is the exact outbox retention period?
 
+## Popular Menu Cache Contract
+
+`GET /api/v1/menus/popular` accepts only `days=7&limit=3`. The inclusive range is the application
+clock's current date and the preceding six dates. Results order by `orderCount DESC, menuId ASC`.
+
+MySQL `daily_menu_sales` is authoritative. A Redis range is usable only when every date has a
+`popular-menu:complete:{yyyy-MM-dd}` marker. Daily data and marker keys expire after 14 days;
+one-minute temporary union/rebuild keys are always cleaned up. Incomplete, unavailable, or
+unresolvable cache data falls back to MySQL and triggers a full-range rebuild including empty
+dates.
+
 ## Implemented Event Consumption Contract
 
 ### processed_events

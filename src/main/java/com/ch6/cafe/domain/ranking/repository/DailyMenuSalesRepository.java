@@ -3,6 +3,7 @@ package com.ch6.cafe.domain.ranking.repository;
 import com.ch6.cafe.domain.ranking.entity.DailyMenuSale;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -30,4 +31,6 @@ public interface DailyMenuSalesRepository extends JpaRepository<DailyMenuSale, L
     List<MenuSalesAggregate> aggregateBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
 
     List<DailyMenuSale> findAllBySalesDateBetween(LocalDate from, LocalDate to);
+
+    Optional<DailyMenuSale> findBySalesDateAndMenuId(LocalDate salesDate, Long menuId);
 }

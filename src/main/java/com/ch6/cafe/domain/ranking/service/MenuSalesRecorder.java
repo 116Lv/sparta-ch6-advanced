@@ -4,7 +4,6 @@ import com.ch6.cafe.domain.ranking.repository.DailyMenuSalesRepository;
 import com.ch6.cafe.domain.ranking.repository.RedisPopularMenuRepository;
 import java.time.LocalDate;
 import org.slf4j.Logger;
-import org.springframework.dao.DataAccessException;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
@@ -15,12 +14,15 @@ public class MenuSalesRecorder {
 
     private final DailyMenuSalesRepository dailyRepository;
     private final RedisPopularMenuRepository redisRepository;
+    private final RankingDateLock dateLock;
 
     public MenuSalesRecorder(
             DailyMenuSalesRepository dailyRepository,
-            RedisPopularMenuRepository redisRepository) {
+            RedisPopularMenuRepository redisRepository,
+            RankingDateLock dateLock) {
         this.dailyRepository = dailyRepository;
         this.redisRepository = redisRepository;
+        this.dateLock = dateLock;
     }
 
     public void recordDurable(LocalDate date, long menuId) {
@@ -29,8 +31,9 @@ public class MenuSalesRecorder {
 
     public void recordCache(LocalDate date, long menuId) {
         try {
-            redisRepository.increment(date, menuId);
-        } catch (DataAccessException exception) {
+            dateLock.execute(date, () -> dailyRepository.findBySalesDateAndMenuId(date, menuId)
+                    .ifPresent(sale -> redisRepository.setAbsolute(date, menuId, sale.getOrderCount())));
+        } catch (RuntimeException exception) {
             log.warn("Redis ranking update failed; MySQL aggregate remains the recovery source. menuId={}", menuId);
         }
     }
