@@ -2,7 +2,7 @@
   "$schema": "./schemas/workflow-cache.schema.json",
   "$id": "ai/workflow-cache.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-14T00:00:00Z",
+  "updatedAt": "2026-07-15T00:00:00Z",
   "entries": [
     {
       "id": "phase-2b-handoff-context",
@@ -12,7 +12,7 @@
         "paths": [
           {
             "path": "ai/agent-handoff.json",
-            "sha256": "c22d8afd14a774654641a4a4ecb18f74713710c8022d01199fecf0ff3bba47d1"
+          "sha256": "8372002f070970735528b6964750aa16ffba7a0624550fc07eb0f09457ed8a98"
           }
         ],
         "environmentFingerprint": null
@@ -54,6 +54,11 @@
       "id": "phase-2-verification-cache-identity",
       "summary": "Verification-decision cache reuse requires the exact ordered required-plus-optional check set with check/producer-indexed leaf-result and schema-bound evidence digests, plus task, gate, commit, change type, entry point, policy, environment, and expiry identity; the current native result lacks a correlated durable envelope, so no canonical reusable PASS decision is materialized.",
       "createdAt": "2026-07-14T00:00:00Z"
+    },
+    {
+      "id": "phase-gated-lazy-loading",
+      "summary": "Use context-map schemaVersion 2 route phases and agent-handoff schemaVersion 2 context state to read late, opt into deferred scope narrowly, and block handoffs with missing required context.",
+      "createdAt": "2026-07-15T00:00:00Z"
     }
   ],
   "invalidationEvents": []

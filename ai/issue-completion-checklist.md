@@ -10,7 +10,7 @@ Complete **Before Implementation**, **During Implementation**, and **Pre-QA Read
 
 ## Before Implementation
 
-- [ ] The mandatory routing gate in `ai/document-routing.md` was completed.
+- [ ] The Work Route ownership gate in `ai/document-routing.md` was completed.
 - [ ] The owning feature outcome is recorded as `specs/{feature}` or `none`.
 - [ ] The required owner documents and feature-spec files were read.
 - [ ] Acceptance criteria and the verification level are clear.

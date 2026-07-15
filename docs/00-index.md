@@ -22,7 +22,7 @@ The project should be understandable from repository Markdown files alone. Exter
 
 1. `AGENTS.md`
 2. `ai/document-routing.md`
-3. Run the routing gate and record the owning feature outcome.
+3. Use Work Route and record the owning feature outcome.
 4. If the work is feature-owned, read `specs/{feature}/spec.md` first.
 5. When dispatching subagents, read `ai/subagent-workflow.md` and `ai/github-issue-planning.md`, create one GitHub Issue per cohesive, independently closable work item, and initialize `ai/work-logs/issue-{number}/README.md` plus role-specific logs. Use `tracking_status: pending_issue` only after a documented creation failure; keep workflow progress in `status`.
 6. Then read only the relevant `docs/00~09`, `ai/*`, and phase-gated `specs/{feature}/*` files required by `ai/document-routing.md`.
@@ -54,7 +54,7 @@ For interrupted or resumed delegated work, start with `ai/work-logs/index.md`, t
 
 | Document | Purpose |
 |---|---|
-| `ai/document-routing.md` | First ownership and reading-order gate for every task |
+| `ai/document-routing.md` | Task classification, Work Route ownership, and phase-gated reading |
 | `ai/context-map.md` | Phase 2A route IDs, repository surfaces, generated/excluded paths, and minimal reading routes |
 | `ai/cache-policy.md` | Phase 2A cache keys, freshness, reuse, and conservative invalidation rules |
 | `ai/tool-call-policy.md` | Phase 2A policy for broad searches, repeated reads, command rediscovery, and host-tool limits |

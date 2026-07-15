@@ -4,6 +4,7 @@
 import argparse
 import base64
 import codecs
+from collections import Counter
 from collections.abc import Mapping, Sequence
 import ctypes
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -28,6 +29,7 @@ import tempfile
 import time
 import traceback
 from types import MappingProxyType
+from urllib.parse import urlsplit
 import uuid
 
 try:
@@ -140,7 +142,11 @@ SCHEMA_NAMES = (
 SCHEMA_ALLOWLIST = {
     instance_schema: {
         "path": f"ai/schemas/{schema_name}.schema.json",
-        "id": f"urn:sparta-ch6-advanced:ai-workflow:schema:{schema_name}:v1",
+        "version": 2 if schema_name in {"context-map", "agent-handoff"} else 1,
+        "id": (
+            f"urn:sparta-ch6-advanced:ai-workflow:schema:{schema_name}:"
+            f"v{2 if schema_name in {'context-map', 'agent-handoff'} else 1}"
+        ),
     }
     for schema_name in SCHEMA_NAMES
     for instance_schema in (
@@ -825,9 +831,13 @@ def load_approved_schema(root, schema_path):
         raise InvalidStateError([
             validation_error("SCHEMA_ID_MISMATCH", schema_path="/$id", message="schema ID does not match the approved project URN")
         ])
-    if schema.get("schemaVersion") != 1:
+    if schema.get("schemaVersion") != profile["version"]:
         raise InvalidStateError([
-            validation_error("SCHEMA_VERSION_MISMATCH", schema_path="/schemaVersion", message="schema must declare version 1")
+            validation_error(
+                "SCHEMA_VERSION_MISMATCH",
+                schema_path="/schemaVersion",
+                message=f"schema must declare version {profile['version']}",
+            )
         ])
     reject_external_schema_references(schema)
     try:
@@ -1165,13 +1175,13 @@ def validate_repository_instance(root, instance_path):
                 message="instance schema is not in the internal allowlist",
             )
         ])
-    if instance.get("schemaVersion") != 1:
+    if instance.get("schemaVersion") != profile["version"]:
         raise InvalidStateError([
             validation_error(
                 "UNSUPPORTED_SCHEMA_VERSION",
                 "/schemaVersion",
                 "/properties/schemaVersion/const",
-                "only schemaVersion 1 is supported",
+                f"schemaVersion {profile['version']} is required for this schema",
             )
         ])
 
@@ -6507,31 +6517,576 @@ def repo_intake_result(result, reason=None, data=None, errors=None):
 
 def context_map_paths(context):
     for route_index, route in enumerate(context.get("routes", [])):
-        for path_index, path in enumerate(route.get("requiredDocuments", [])):
-            yield ("routes", route_index, "requiredDocuments", path_index), path
+        for phase_index, phase in enumerate(route.get("phases", [])):
+            for name in ("requiredDocuments", "deferredDocuments"):
+                for path_index, path in enumerate(phase.get(name, [])):
+                    yield ("routes", route_index, "phases", phase_index, name, path_index), path
+            for trigger_index, trigger in enumerate(phase.get("deferredDocumentTriggers", [])):
+                for path_index, path in enumerate(trigger.get("documents", [])):
+                    yield (
+                        "routes", route_index, "phases", phase_index,
+                        "deferredDocumentTriggers", trigger_index, "documents", path_index,
+                    ), path
+            for subject_index, subject in enumerate(phase.get("rediscoverySubjects", [])):
+                for path_index, path in enumerate(subject.get("documents", [])):
+                    yield (
+                        "routes", route_index, "phases", phase_index,
+                        "rediscoverySubjects", subject_index, "documents", path_index,
+                    ), path
     for surface_index, surface in enumerate(context.get("surfaces", [])):
         for path_index, path in enumerate(surface.get("paths", [])):
             yield ("surfaces", surface_index, "paths", path_index), path
-    for name in ("generatedPaths", "excludedPaths"):
+    for name in ("generatedPaths",):
         for index, path in enumerate(context.get(name, [])):
             yield (name, index), path
 
 
+def context_map_scopes(context):
+    for route_index, route in enumerate(context.get("routes", [])):
+        for phase_index, phase in enumerate(route.get("phases", [])):
+            for path_index, scope in enumerate(phase.get("includePaths", [])):
+                yield ("routes", route_index, "phases", phase_index, "includePaths", path_index), scope
+            for opt_in_index, opt_in in enumerate(phase.get("optInPaths", [])):
+                yield (
+                    "routes", route_index, "phases", phase_index,
+                    "optInPaths", opt_in_index, "path",
+                ), opt_in["path"]
+    for name in ("deferredPaths", "excludedPaths"):
+        for index, scope in enumerate(context.get(name, [])):
+            yield (name, index), scope
+
+
+CANONICAL_ROUTE_PHASES = {
+    "answer": {"answer"},
+    "light-structure": {"light-structure"},
+    "feature-work": {"feature-requirements", "implementation", "verification", "completion"},
+    "repo-wide-ai-workflow": {"implementation", "verification", "completion", "workflow-rediscovery"},
+}
+
+CANONICAL_ROUTE_OWNERSHIP = {
+    "answer": "NONE_ALLOWED",
+    "light-structure": "DIRECT_DOCUMENT",
+    "feature-work": "FEATURE_REQUIRED",
+    "repo-wide-ai-workflow": "NONE_ALLOWED",
+}
+
+CANONICAL_NOT_RUN_PROJECT_COMMANDS = [
+    "Gradle",
+    "build",
+    "product/unit project tests",
+    "application server",
+    "Docker Compose",
+    "HTTP/curl/API",
+    "database",
+    "migration",
+    "seed",
+    "infrastructure commands",
+]
+
+CANONICAL_ACTIVITY_TRIGGER_REQUIREMENTS = {
+    ("answer", "answer"): {
+        "ANSWER": frozenset(),
+    },
+    ("light-structure", "light-structure"): {
+        "DOCUMENT_EDIT": frozenset(),
+    },
+    ("feature-work", "feature-requirements"): {
+        "REQUIREMENTS": frozenset(),
+    },
+    ("feature-work", "implementation"): {
+        "PLANNING": frozenset({"A plan is being created or executed."}),
+        "EXECUTION": frozenset({
+            "A plan is being created or executed.",
+            "Tasks are being executed or handed to verification.",
+        }),
+        "VERIFICATION_HANDOFF": frozenset({
+            "Tasks are being executed or handed to verification.",
+        }),
+    },
+    ("feature-work", "verification"): {
+        "INDEPENDENT_AUDIT": frozenset({
+            "The applicable verification level or gate must be determined.",
+        }),
+        "VERIFICATION_HANDOFF": frozenset({
+            "Verification handoff requires the execution task record.",
+            "The applicable verification level or gate must be determined.",
+        }),
+    },
+    ("feature-work", "completion"): {
+        "COMPLETION": frozenset({
+            "Feature completion criteria are evaluated.",
+            "The QA gate is applied.",
+            "An evidence-based done claim is prepared.",
+            "Issue closure readiness is evaluated.",
+        }),
+    },
+    ("repo-wide-ai-workflow", "implementation"): {
+        activity: frozenset({
+            "Route, cache, tool, or resource policy is being changed or rediscovered.",
+        })
+        for activity in ("PLANNING", "EXECUTION", "VERIFICATION_HANDOFF")
+    },
+    ("repo-wide-ai-workflow", "verification"): {
+        "INDEPENDENT_AUDIT": frozenset(),
+        "VERIFICATION_HANDOFF": frozenset(),
+    },
+    ("repo-wide-ai-workflow", "completion"): {
+        "COMPLETION": frozenset({
+            "The QA gate is applied.",
+            "An evidence-based done claim is prepared.",
+            "Issue closure readiness is evaluated.",
+        }),
+    },
+    ("repo-wide-ai-workflow", "workflow-rediscovery"): {
+        "REDISCOVERY": frozenset(),
+    },
+}
+
+CANONICAL_ACTIVITY_IDS = frozenset(
+    activity
+    for requirements in CANONICAL_ACTIVITY_TRIGGER_REQUIREMENTS.values()
+    for activity in requirements
+)
+
+CANONICAL_REDISCOVERY_SUBJECTS = {
+    "ROUTING_POLICY": (
+        "Routing policy is being rediscovered.",
+        frozenset({"ai/context-map.md"}),
+    ),
+    "CACHE_POLICY": (
+        "Cache policy is being rediscovered.",
+        frozenset({"ai/cache-policy.md"}),
+    ),
+    "WORKFLOW_CACHE_STATE": (
+        "Workflow cache state is being rediscovered.",
+        frozenset({"ai/workflow-cache.md", "ai/workflow-cache.json"}),
+    ),
+    "TOOL_POLICY": (
+        "Tool-call policy is being rediscovered.",
+        frozenset({"ai/tool-call-policy.md"}),
+    ),
+    "RESOURCE_BUDGET": (
+        "Resource budget policy is being rediscovered.",
+        frozenset({"ai/resource-budget.md"}),
+    ),
+    "PROJECT_STATE": (
+        "Project state is being rediscovered.",
+        frozenset({"ai/project-state.json"}),
+    ),
+    "COMMAND_REGISTRY": (
+        "Command registry state is being rediscovered.",
+        frozenset({"ai/command-registry.json"}),
+    ),
+}
+
+
+def is_exact_repository_ref(path):
+    return (
+        isinstance(path, str)
+        and bool(path)
+        and not path.startswith("/")
+        and not path.endswith("/")
+        and "//" not in path
+        and not any(character in path for character in "\\:%?*[]{}")
+        and all(component not in {".", ".."} for component in path.split("/"))
+    )
+
+
+def is_work_log_scope(scope):
+    if scope.get("kind") == "descendant-directory":
+        name = scope.get("name")
+        return name in {"ai", "work-logs"} or (
+            isinstance(name, str) and re.fullmatch(r"issue-[1-9][0-9]*", name) is not None
+        )
+    path = scope.get("path")
+    return isinstance(path, str) and path_is_at_or_below(path, "ai/work-logs")
+
+
+def active_issue_url_matches(issue_url, issue_number):
+    if (
+        not isinstance(issue_url, str)
+        or not isinstance(issue_number, int)
+        or isinstance(issue_number, bool)
+        or issue_number < 1
+    ):
+        return False
+    expected = f"https://github.com/116Lv/sparta-ch6-advanced/issues/{issue_number}"
+    if issue_url != expected:
+        return False
+    try:
+        parsed = urlsplit(issue_url)
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == "github.com"
+        and parsed.path == f"/116Lv/sparta-ch6-advanced/issues/{issue_number}"
+        and parsed.query == ""
+        and parsed.fragment == ""
+    )
+
+
+def path_is_at_or_below(path, base):
+    return path == base or path.startswith(base + "/")
+
+
+def path_scope_key(scope):
+    return json.dumps(scope, sort_keys=True, separators=(",", ":"))
+
+
+def path_scope_matches(scope, path):
+    kind = scope["kind"]
+    if kind == "exact":
+        return path == scope["path"]
+    if kind == "subtree":
+        return path_is_at_or_below(path, scope["path"])
+    if kind == "direct-children":
+        parent, separator, name = path.rpartition("/")
+        return bool(separator) and parent == scope["path"] and name.endswith(scope["suffix"])
+    return scope["name"] in path.split("/")
+
+
+def path_scope_is_contained(scope, container):
+    if scope == container:
+        return True
+    scope_kind = scope["kind"]
+    container_kind = container["kind"]
+    if scope_kind == "exact":
+        return path_scope_matches(container, scope["path"])
+    if container_kind == "subtree" and scope_kind in {"subtree", "direct-children"}:
+        return path_is_at_or_below(scope["path"], container["path"])
+    if container_kind == "descendant-directory" and scope_kind in {"subtree", "direct-children"}:
+        return container["name"] in scope["path"].split("/")
+    return False
+
+
+def path_scopes_conflict(left, right):
+    if path_scope_is_contained(left, right) or path_scope_is_contained(right, left):
+        return True
+    kinds = {left["kind"], right["kind"]}
+    if "descendant-directory" in kinds:
+        if kinds <= {"descendant-directory"}:
+            return True
+        other = right if left["kind"] == "descendant-directory" else left
+        return other["kind"] == "subtree"
+    if kinds == {"subtree", "direct-children"}:
+        subtree = left if left["kind"] == "subtree" else right
+        direct = right if left["kind"] == "subtree" else left
+        parent, separator, name = subtree["path"].rpartition("/")
+        return bool(separator) and parent == direct["path"] and name.endswith(direct["suffix"])
+    if left["kind"] == right["kind"] == "direct-children":
+        return left["path"] == right["path"] and (
+            left["suffix"].endswith(right["suffix"])
+            or right["suffix"].endswith(left["suffix"])
+        )
+    return False
+
+
+def validate_context_map_semantics(context):
+    errors = []
+    routes = context.get("routes", [])
+    route_ids = [route.get("id") for route in routes]
+    if len(route_ids) != len(set(route_ids)):
+        errors.append(validation_error(
+            "CONTEXT_MAP_ROUTE_DUPLICATE",
+            instance_path="/routes",
+            message="context-map route IDs must be unique",
+        ))
+    if set(route_ids) != set(CANONICAL_ROUTE_PHASES):
+        errors.append(validation_error(
+            "CONTEXT_MAP_ROUTE_SET_INVALID",
+            instance_path="/routes",
+            message="context-map must contain exactly the canonical route IDs",
+        ))
+
+    excluded_paths = {path_scope_key(scope): scope for scope in context.get("excludedPaths", [])}
+    deferred_paths = {path_scope_key(scope): scope for scope in context.get("deferredPaths", [])}
+    if set(excluded_paths) & set(deferred_paths):
+        errors.append(validation_error(
+            "CONTEXT_MAP_EXCLUDED_DEFERRED_CONFLICT",
+            instance_path="/deferredPaths",
+            message="excluded paths cannot also be route-opt-in deferred paths",
+        ))
+
+    for route_index, route in enumerate(routes):
+        route_id = route.get("id")
+        expected_ownership = CANONICAL_ROUTE_OWNERSHIP.get(route_id)
+        if expected_ownership is not None and route.get("owningFeature") != expected_ownership:
+            errors.append(validation_error(
+                "CONTEXT_MAP_ROUTE_OWNERSHIP_INVALID",
+                instance_path=f"/routes/{route_index}/owningFeature",
+                message="route ownership does not match the canonical route contract",
+            ))
+        phase_ids = [phase.get("id") for phase in route.get("phases", [])]
+        if len(phase_ids) != len(set(phase_ids)):
+            errors.append(validation_error(
+                "CONTEXT_MAP_PHASE_DUPLICATE",
+                instance_path=f"/routes/{route_index}/phases",
+                message="phase IDs must be unique within a route",
+            ))
+        expected_phases = CANONICAL_ROUTE_PHASES.get(route_id)
+        if expected_phases is not None and set(phase_ids) != expected_phases:
+            errors.append(validation_error(
+                "CONTEXT_MAP_PHASE_SET_INVALID",
+                instance_path=f"/routes/{route_index}/phases",
+                message="route phases do not match the canonical route-phase contract",
+            ))
+
+        for phase_index, phase in enumerate(route.get("phases", [])):
+            expected_context_mode = "OPTIONAL" if (
+                route_id == "answer" and phase.get("id") == "answer"
+            ) else "REQUIRED"
+            if phase.get("repositoryContextMode") != expected_context_mode:
+                errors.append(validation_error(
+                    "CONTEXT_MAP_REPOSITORY_CONTEXT_MODE_INVALID",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/repositoryContextMode",
+                    message=(
+                        f"{route_id}/{phase.get('id')} must use "
+                        f"repositoryContextMode {expected_context_mode}"
+                    ),
+                ))
+            required = set(phase.get("requiredDocuments", []))
+            deferred = set(phase.get("deferredDocuments", []))
+            overlap = required & deferred
+            if overlap:
+                errors.append(validation_error(
+                    "CONTEXT_MAP_DOCUMENT_SCOPE_CONFLICT",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}",
+                    message=f"documents cannot be both required and deferred: {sorted(overlap)}",
+                ))
+            triggered = {
+                document
+                for trigger in phase.get("deferredDocumentTriggers", [])
+                for document in trigger.get("documents", [])
+            }
+            if triggered != deferred:
+                errors.append(validation_error(
+                    "CONTEXT_MAP_DEFERRED_DOCUMENT_TRIGGER_COVERAGE_INVALID",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/deferredDocumentTriggers",
+                    message="deferredDocuments must equal the union of deferred trigger documents",
+                ))
+            document_trigger_ids = [
+                trigger.get("trigger")
+                for trigger in phase.get("deferredDocumentTriggers", [])
+            ]
+            opt_in_trigger_ids = [
+                entry.get("trigger")
+                for entry in phase.get("optInPaths", [])
+            ]
+            if len(document_trigger_ids) != len(set(document_trigger_ids)):
+                errors.append(validation_error(
+                    "CONTEXT_MAP_DOCUMENT_TRIGGER_DUPLICATE",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/deferredDocumentTriggers",
+                    message="document trigger identities must be unique within a phase",
+                ))
+            if len(opt_in_trigger_ids) != len(set(opt_in_trigger_ids)):
+                errors.append(validation_error(
+                    "CONTEXT_MAP_OPT_IN_TRIGGER_DUPLICATE",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/optInPaths",
+                    message="opt-in trigger identities must be unique within a phase",
+                ))
+            trigger_kind_collision = set(document_trigger_ids) & set(opt_in_trigger_ids)
+            if trigger_kind_collision:
+                errors.append(validation_error(
+                    "CONTEXT_MAP_TRIGGER_KIND_COLLISION",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}",
+                    message=f"document and opt-in triggers must have disjoint identities: {sorted(trigger_kind_collision)}",
+                ))
+            canonical_triggers = set(document_trigger_ids) | set(opt_in_trigger_ids)
+            activity_entries = phase.get("activityRequirements", [])
+            activity_ids = [entry.get("activityId") for entry in activity_entries]
+            if len(activity_ids) != len(set(activity_ids)):
+                errors.append(validation_error(
+                    "CONTEXT_MAP_ACTIVITY_DUPLICATE",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/activityRequirements",
+                    message="activity requirement IDs must be unique within a phase",
+                ))
+            actual_activity_requirements = {
+                entry.get("activityId"): frozenset(entry.get("mandatoryTriggers", []))
+                for entry in activity_entries
+            }
+            expected_activity_requirements = CANONICAL_ACTIVITY_TRIGGER_REQUIREMENTS.get(
+                (route_id, phase.get("id")),
+            )
+            if actual_activity_requirements != expected_activity_requirements:
+                errors.append(validation_error(
+                    "CONTEXT_MAP_ACTIVITY_REQUIREMENTS_INVALID",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/activityRequirements",
+                    message="activities and their mandatory triggers must match the canonical route-phase contract",
+                ))
+            unknown_mandatory = {
+                trigger
+                for entry in activity_entries
+                for trigger in entry.get("mandatoryTriggers", [])
+                if trigger not in canonical_triggers
+            }
+            if unknown_mandatory:
+                errors.append(validation_error(
+                    "CONTEXT_MAP_MANDATORY_TRIGGER_UNKNOWN",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/activityRequirements",
+                    message=f"mandatory triggers must use canonical phase triggers: {sorted(unknown_mandatory)}",
+                ))
+            subject_entries = phase.get("rediscoverySubjects", [])
+            subject_ids = [entry.get("id") for entry in subject_entries]
+            if len(subject_ids) != len(set(subject_ids)):
+                errors.append(validation_error(
+                    "CONTEXT_MAP_REDISCOVERY_SUBJECT_DUPLICATE",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/rediscoverySubjects",
+                    message="rediscovery subject IDs must be unique",
+                ))
+            actual_subjects = {
+                entry.get("id"): (
+                    entry.get("trigger"),
+                    frozenset(entry.get("documents", [])),
+                )
+                for entry in subject_entries
+            }
+            expected_subjects = (
+                CANONICAL_REDISCOVERY_SUBJECTS
+                if (route_id, phase.get("id")) == (
+                    "repo-wide-ai-workflow", "workflow-rediscovery",
+                )
+                else {}
+            )
+            if actual_subjects != expected_subjects:
+                errors.append(validation_error(
+                    "CONTEXT_MAP_REDISCOVERY_SUBJECTS_INVALID",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/rediscoverySubjects",
+                    message="rediscovery subjects must match the canonical closed subject mapping",
+                ))
+            subject_trigger_mappings = {
+                (trigger, tuple(sorted(documents)))
+                for trigger, documents in actual_subjects.values()
+            }
+            document_trigger_mappings = {
+                (entry.get("trigger"), tuple(sorted(entry.get("documents", []))))
+                for entry in phase.get("deferredDocumentTriggers", [])
+            }
+            if subject_trigger_mappings and subject_trigger_mappings != document_trigger_mappings:
+                errors.append(validation_error(
+                    "CONTEXT_MAP_REDISCOVERY_TRIGGER_MAPPING_INVALID",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/rediscoverySubjects",
+                    message="rediscovery subject documents and triggers must exactly match deferred trigger mappings",
+                ))
+            include_paths = phase.get("includePaths", [])
+            opt_in_paths = [entry.get("path") for entry in phase.get("optInPaths", [])]
+            uncovered_required = {
+                document for document in required
+                if not any(
+                    path_scope_is_contained({"kind": "exact", "path": document}, included)
+                    for included in include_paths
+                )
+            }
+            if uncovered_required:
+                errors.append(validation_error(
+                    "CONTEXT_MAP_REQUIRED_DOCUMENT_NOT_INCLUDED",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/includePaths",
+                    message=f"required documents must be covered by default include scopes: {sorted(uncovered_required)}",
+                ))
+            default_deferred_documents = {
+                document for document in deferred
+                if any(
+                    path_scope_is_contained({"kind": "exact", "path": document}, included)
+                    for included in include_paths
+                )
+            }
+            if default_deferred_documents:
+                errors.append(validation_error(
+                    "CONTEXT_MAP_DEFAULT_INCLUDE_COVERS_DEFERRED_DOCUMENT",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/includePaths",
+                    message=f"default include scopes cannot cover deferred documents: {sorted(default_deferred_documents)}",
+                ))
+            if any(
+                path_scope_is_contained(selected, excluded)
+                for selected in include_paths + opt_in_paths
+                for excluded in excluded_paths.values()
+            ):
+                errors.append(validation_error(
+                    "CONTEXT_MAP_EXCLUDED_INCLUDE_CONFLICT",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}",
+                    message="excluded paths cannot be included or opted in",
+                ))
+            if any(
+                path_scopes_conflict(included, deferred)
+                for included in include_paths
+                for deferred in deferred_paths.values()
+            ):
+                errors.append(validation_error(
+                    "CONTEXT_MAP_DEFAULT_DEFERRED_CONFLICT",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/includePaths",
+                    message="default include paths cannot also be globally deferred",
+                ))
+            unknown_opt_ins = {
+                path_scope_key(scope)
+                for scope in opt_in_paths
+            } - set(deferred_paths)
+            if unknown_opt_ins:
+                errors.append(validation_error(
+                    "CONTEXT_MAP_OPT_IN_NOT_DEFERRED",
+                    instance_path=f"/routes/{route_index}/phases/{phase_index}/optInPaths",
+                    message=f"opt-in paths must come from deferredPaths: {sorted(unknown_opt_ins)}",
+                ))
+
+    if errors:
+        raise InvalidStateError(errors)
+    return context
+
+
+def validate_repository_relative_path(repository_root, relative, allow_feature=True):
+    parts = relative.split("/") if isinstance(relative, str) else []
+    if (
+        not parts
+        or relative.startswith("/")
+        or "\\" in relative
+        or ":" in relative
+        or "%" in relative
+        or any(character in relative for character in "*?[]")
+        or any(part in ("", ".", "..") for part in parts)
+        or (
+            any(character in relative for character in "{}")
+            and (
+                not allow_feature
+                or relative.count("{feature}") != 1
+                or re.fullmatch(r"specs/\{feature\}/[^{}]+", relative) is None
+            )
+        )
+    ):
+        raise ValueError("invalid repository path")
+    resolved = (repository_root / Path(*parts)).resolve(strict=False)
+    resolved.relative_to(repository_root)
+
+
+def validate_path_scope(repository_root, scope):
+    kind = scope.get("kind") if isinstance(scope, dict) else None
+    if kind in {"exact", "subtree", "direct-children"}:
+        validate_repository_relative_path(
+            repository_root,
+            scope.get("path"),
+            allow_feature=kind == "exact",
+        )
+    elif kind == "descendant-directory":
+        if re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", scope.get("name", "")) is None:
+            raise ValueError("invalid descendant directory name")
+    else:
+        raise ValueError("unknown path scope kind")
+    if kind == "direct-children" and re.fullmatch(r"\.[A-Za-z0-9]+", scope.get("suffix", "")) is None:
+        raise ValueError("invalid direct-child suffix")
+
+
 def validate_context_map_paths(root, context):
     repository_root = Path(root).resolve(strict=True)
-    for pointer, relative in context_map_paths(context):
-        try:
-            candidate = Path(relative)
-            if candidate.is_absolute() or any(part in ("", ".", "..") for part in candidate.parts):
-                raise ValueError("invalid repository path")
-            resolved = (repository_root / candidate).resolve(strict=False)
-            resolved.relative_to(repository_root)
-        except (OSError, ValueError) as error:
-            raise InvalidStateError([validation_error(
-                "CONTEXT_MAP_PATH_INVALID",
-                instance_path=json_pointer(pointer),
-                message="context-map path must remain repository relative",
-            )]) from error
+    try:
+        for pointer, relative in context_map_paths(context):
+            validate_repository_relative_path(repository_root, relative)
+        for pointer, scope in context_map_scopes(context):
+            validate_path_scope(repository_root, scope)
+    except (OSError, ValueError) as error:
+        raise InvalidStateError([validation_error(
+            "CONTEXT_MAP_PATH_INVALID",
+            instance_path=json_pointer(pointer),
+            message="context-map path or scope must remain repository relative",
+        )]) from error
+    return context
 
 
 def project_state_refresh_proposals(project_state):
@@ -6627,6 +7182,584 @@ def validate_handoff_skill_set(handoff, catalog):
             "HANDOFF_REQUIRED_SKILL_MISSING",
             message="handoff must contain every catalog skill ID exactly once",
         )])
+
+
+def expand_feature_path(path, owning_feature):
+    if "{feature}" not in path:
+        return path
+    if owning_feature == "none":
+        return path
+    return path.replace("specs/{feature}", owning_feature)
+
+
+def expand_feature_path_scope(scope, owning_feature):
+    if scope.get("kind") != "exact":
+        return scope
+    return {
+        **scope,
+        "path": expand_feature_path(scope["path"], owning_feature),
+    }
+
+
+def validate_handoff_context(handoff, context):
+    errors = []
+    if handoff.get("notRunProjectCommands") != CANONICAL_NOT_RUN_PROJECT_COMMANDS:
+        errors.append(validation_error(
+            "HANDOFF_NOT_RUN_PROJECT_COMMANDS_INVALID",
+            instance_path="/notRunProjectCommands",
+            message="handoff must preserve the canonical ordered project-command prohibition list",
+        ))
+    route_id = handoff.get("routeId")
+    task_phase = handoff.get("taskPhase")
+    expected_phases = CANONICAL_ROUTE_PHASES.get(route_id)
+    expected_ownership = CANONICAL_ROUTE_OWNERSHIP.get(route_id)
+    canonical_route_phase = expected_phases is not None and task_phase in expected_phases
+    route = next((item for item in context.get("routes", []) if item.get("id") == route_id), None)
+    phase = None if route is None or not canonical_route_phase else next(
+        (item for item in route.get("phases", []) if item.get("id") == task_phase),
+        None,
+    )
+    if not canonical_route_phase or route is None or phase is None:
+        errors.append(validation_error(
+            "HANDOFF_ROUTE_PHASE_UNKNOWN",
+            instance_path="/taskPhase",
+            message="handoff route and task phase must select a canonical context-map phase",
+        ))
+    else:
+        owning_feature = handoff.get("owningFeature", "none")
+        if expected_ownership == "FEATURE_REQUIRED" and owning_feature == "none":
+            errors.append(validation_error(
+                "HANDOFF_OWNING_FEATURE_REQUIRED",
+                instance_path="/owningFeature",
+                message="feature-work handoff cannot dispatch without an owning feature",
+            ))
+        elif (
+            expected_ownership == "FEATURE_REQUIRED"
+            and (
+                not isinstance(owning_feature, str)
+                or re.fullmatch(r"specs/[A-Za-z0-9][A-Za-z0-9._-]*", owning_feature) is None
+            )
+        ):
+            errors.append(validation_error(
+                "HANDOFF_OWNING_FEATURE_INVALID",
+                instance_path="/owningFeature",
+                message="feature-work owning feature must match specs/<feature>",
+            ))
+        if (
+            expected_ownership in {"NONE_ALLOWED", "DIRECT_DOCUMENT"}
+            and owning_feature != "none"
+        ):
+            errors.append(validation_error(
+                "HANDOFF_OWNING_FEATURE_FORBIDDEN",
+                instance_path="/owningFeature",
+                message="non-feature handoff cannot declare an owning feature",
+            ))
+
+        base_required = {
+            expand_feature_path(path, owning_feature)
+            for path in phase.get("requiredDocuments", [])
+        }
+        document_trigger_mappings = [
+            (
+                trigger.get("trigger"),
+                {
+                    expand_feature_path(path, owning_feature)
+                    for path in trigger.get("documents", [])
+                },
+            )
+            for trigger in phase.get("deferredDocumentTriggers", [])
+        ]
+        document_trigger_ids = [trigger for trigger, _ in document_trigger_mappings]
+        opt_in_triggers = {
+            entry.get("trigger")
+            for entry in phase.get("optInPaths", [])
+        }
+        canonical_triggers = set(document_trigger_ids) | opt_in_triggers
+        activated_triggers = set(handoff.get("activatedTriggers", []))
+        unknown_activations = activated_triggers - canonical_triggers
+        if unknown_activations:
+            errors.append(validation_error(
+                "HANDOFF_TRIGGER_ACTIVATION_UNKNOWN",
+                instance_path="/activatedTriggers",
+                message=f"activated triggers must belong to the selected route-phase: {sorted(unknown_activations)}",
+            ))
+        activity_id = handoff.get("activityId")
+        phase_activity_requirements = {
+            entry.get("activityId"): set(entry.get("mandatoryTriggers", []))
+            for entry in phase.get("activityRequirements", [])
+        }
+        if activity_id not in CANONICAL_ACTIVITY_IDS:
+            errors.append(validation_error(
+                "HANDOFF_ACTIVITY_UNKNOWN",
+                instance_path="/activityId",
+                message="handoff activity must use a canonical closed identifier",
+            ))
+        elif activity_id not in phase_activity_requirements:
+            errors.append(validation_error(
+                "HANDOFF_ACTIVITY_INCOMPATIBLE",
+                instance_path="/activityId",
+                message="handoff activity is incompatible with the selected route-phase",
+            ))
+        mandatory_triggers = phase_activity_requirements.get(activity_id, set())
+        missing_mandatory = mandatory_triggers - activated_triggers
+        if missing_mandatory and handoff.get("contextStatus") != "BLOCKED":
+            errors.append(validation_error(
+                "HANDOFF_MANDATORY_TRIGGER_MISSING",
+                instance_path="/activatedTriggers",
+                message=f"non-BLOCKED handoff must activate mandatory phase triggers: {sorted(missing_mandatory)}",
+            ))
+        activated_documents = {
+            document
+            for trigger in activated_triggers
+            for mapping_trigger, documents in document_trigger_mappings
+            if mapping_trigger == trigger
+            for document in documents
+        }
+        effective_required = base_required | activated_documents
+        read_documents = set(handoff.get("readDocuments", []))
+        selected_documents = set(handoff.get("selectedDocuments", []))
+        selected_subjects = set(handoff.get("rediscoverySubjects", []))
+        subject_mappings = {
+            entry.get("id"): (
+                entry.get("trigger"),
+                {
+                    expand_feature_path(path, owning_feature)
+                    for path in entry.get("documents", [])
+                },
+            )
+            for entry in phase.get("rediscoverySubjects", [])
+        }
+        if task_phase == "workflow-rediscovery":
+            unknown_subjects = selected_subjects - set(subject_mappings)
+            if unknown_subjects:
+                errors.append(validation_error(
+                    "HANDOFF_REDISCOVERY_SUBJECT_UNKNOWN",
+                    instance_path="/rediscoverySubjects",
+                    message=f"rediscovery subjects must use canonical identifiers: {sorted(unknown_subjects)}",
+                ))
+            if not selected_subjects and handoff.get("contextStatus") != "BLOCKED":
+                errors.append(validation_error(
+                    "HANDOFF_REDISCOVERY_SUBJECT_REQUIRED",
+                    instance_path="/rediscoverySubjects",
+                    message="non-BLOCKED workflow rediscovery must select at least one subject",
+                ))
+            selected_subject_triggers = {
+                subject_mappings[subject][0]
+                for subject in selected_subjects & set(subject_mappings)
+            }
+            missing_subject_triggers = selected_subject_triggers - activated_triggers
+            if missing_subject_triggers and handoff.get("contextStatus") != "BLOCKED":
+                errors.append(validation_error(
+                    "HANDOFF_REDISCOVERY_SUBJECT_TRIGGER_MISSING",
+                    instance_path="/activatedTriggers",
+                    message=f"selected rediscovery subjects require their canonical triggers: {sorted(missing_subject_triggers)}",
+                ))
+            all_subject_triggers = {
+                trigger for trigger, _ in subject_mappings.values()
+            }
+            unselected_subject_triggers = (
+                activated_triggers & all_subject_triggers
+            ) - selected_subject_triggers
+            if unselected_subject_triggers:
+                errors.append(validation_error(
+                    "HANDOFF_REDISCOVERY_SUBJECT_TRIGGER_UNSELECTED",
+                    instance_path="/activatedTriggers",
+                    message="rediscovery subject triggers cannot activate without selecting their subject",
+                ))
+            selected_subject_documents = {
+                document
+                for subject in selected_subjects & set(subject_mappings)
+                for document in subject_mappings[subject][1]
+            }
+            all_subject_documents = {
+                document
+                for _, documents in subject_mappings.values()
+                for document in documents
+            }
+            unselected_subject_documents = (
+                read_documents & all_subject_documents
+            ) - selected_subject_documents
+            if unselected_subject_documents:
+                errors.append(validation_error(
+                    "HANDOFF_REDISCOVERY_DOCUMENT_UNSELECTED",
+                    instance_path="/readDocuments",
+                    message=f"rediscovery documents require their subject selection: {sorted(unselected_subject_documents)}",
+                ))
+        elif selected_subjects:
+            errors.append(validation_error(
+                "HANDOFF_REDISCOVERY_SUBJECT_FORBIDDEN",
+                instance_path="/rediscoverySubjects",
+                message="rediscovery subjects are allowed only in workflow-rediscovery",
+            ))
+        repository_context_required = handoff.get("repositoryContextRequired")
+        repository_context_mode = phase.get("repositoryContextMode")
+        if repository_context_mode == "REQUIRED" and repository_context_required is not True:
+            errors.append(validation_error(
+                "HANDOFF_REPOSITORY_CONTEXT_REQUIRED",
+                instance_path="/repositoryContextRequired",
+                message="the selected route-phase requires repository context",
+            ))
+        if route_id == "answer":
+            if repository_context_required is True and not selected_documents:
+                errors.append(validation_error(
+                    "HANDOFF_SELECTED_DOCUMENT_REQUIRED",
+                    instance_path="/selectedDocuments",
+                    message="repository-dependent Answer Mode requires an explicit document selection",
+                ))
+            if repository_context_required is False and selected_documents:
+                errors.append(validation_error(
+                    "HANDOFF_SELECTED_DOCUMENT_FORBIDDEN",
+                    instance_path="/selectedDocuments",
+                    message="repository-independent Answer Mode cannot select repository documents",
+                ))
+        if route_id == "light-structure" and not selected_documents:
+            errors.append(validation_error(
+                "HANDOFF_SELECTED_DOCUMENT_REQUIRED",
+                instance_path="/selectedDocuments",
+                message="Light Route requires at least one explicit document selection",
+            ))
+        if not selected_documents.issubset(read_documents):
+            errors.append(validation_error(
+                "HANDOFF_SELECTED_DOCUMENT_UNREAD",
+                instance_path="/selectedDocuments",
+                message="selected documents must be present in readDocuments",
+            ))
+        missing = effective_required - read_documents
+        if missing and handoff.get("contextStatus") != "BLOCKED":
+            errors.append(validation_error(
+                (
+                    "HANDOFF_EFFECTIVE_REQUIRED_CONTEXT_MISSING"
+                    if missing & activated_documents
+                    else "HANDOFF_REQUIRED_CONTEXT_MISSING"
+                ),
+                instance_path="/readDocuments",
+                message=f"effective required route-phase documents are missing: {sorted(missing)}",
+            ))
+
+        expected_deferred = {
+            expand_feature_path(path, owning_feature)
+            for path in phase.get("deferredDocuments", [])
+        } - activated_documents
+        actual_deferred = set(handoff.get("deferredDocuments", []))
+        if read_documents & actual_deferred:
+            errors.append(validation_error(
+                "HANDOFF_READ_DOCUMENT_STILL_DEFERRED",
+                instance_path="/readDocuments",
+                message="read documents cannot remain in the still-deferred document set",
+            ))
+        if actual_deferred != expected_deferred:
+            errors.append(validation_error(
+                "HANDOFF_DEFERRED_CONTEXT_MISMATCH",
+                instance_path="/deferredDocuments",
+                message="handoff must preserve exactly the selected phase's still-deferred document set",
+            ))
+
+        expected_triggers = [
+            (
+                trigger.get("trigger"),
+                tuple(sorted(expand_feature_path(path, owning_feature) for path in trigger.get("documents", []))),
+            )
+            for trigger in phase.get("deferredDocumentTriggers", [])
+        ]
+        actual_triggers = [
+            (trigger.get("trigger"), tuple(sorted(trigger.get("documents", []))))
+            for trigger in handoff.get("deferredDocumentTriggers", [])
+        ]
+        expected_trigger_counts = Counter(trigger for trigger, _ in expected_triggers)
+        actual_trigger_counts = Counter(trigger for trigger, _ in actual_triggers)
+        if (
+            len(actual_triggers) != len(expected_triggers)
+            or Counter(actual_triggers) != Counter(expected_triggers)
+            or any(count != 1 for count in expected_trigger_counts.values())
+            or any(count != 1 for count in actual_trigger_counts.values())
+        ):
+            errors.append(validation_error(
+                "HANDOFF_DEFERRED_TRIGGERS_MISMATCH",
+                instance_path="/deferredDocumentTriggers",
+                message="handoff must preserve the selected phase's deferred document triggers",
+            ))
+
+        expected_reroute_triggers = set(phase.get("rerouteTriggers", []))
+        if not expected_reroute_triggers.issubset(set(handoff.get("rerouteTriggers", []))):
+            errors.append(validation_error(
+                "HANDOFF_REROUTE_TRIGGERS_MISSING",
+                instance_path="/rerouteTriggers",
+                message="handoff must preserve every selected phase re-route trigger",
+            ))
+
+        include_paths = handoff.get("includePaths", [])
+        excluded_paths = context.get("excludedPaths", [])
+        if any(
+            path_scope_is_contained(included, excluded)
+            for included in include_paths
+            for excluded in excluded_paths
+        ):
+            errors.append(validation_error(
+                "HANDOFF_EXCLUDED_PATH_INCLUDED",
+                instance_path="/includePaths",
+                message="handoff cannot include a canonical excluded path",
+            ))
+        default_includes = {
+            path_scope_key(expand_feature_path_scope(scope, owning_feature))
+            for scope in phase.get("includePaths", [])
+        }
+        include_scope_keys = {path_scope_key(scope) for scope in include_paths}
+        if not default_includes.issubset(include_scope_keys):
+            errors.append(validation_error(
+                "HANDOFF_DEFAULT_SCOPE_MISSING",
+                instance_path="/includePaths",
+                message="handoff must preserve every expanded route-phase default scope",
+            ))
+        exact_include_paths = {
+            scope["path"] for scope in include_paths if scope.get("kind") == "exact"
+        }
+        missing_selected_exact_scopes = selected_documents - exact_include_paths
+        if missing_selected_exact_scopes:
+            errors.append(validation_error(
+                "HANDOFF_SELECTED_DOCUMENT_EXACT_SCOPE_MISSING",
+                instance_path="/includePaths",
+                message=f"selected documents require matching exact include scopes: {sorted(missing_selected_exact_scopes)}",
+            ))
+        unscoped_reads = {
+            document for document in read_documents
+            if not any(
+                path_scope_is_contained({"kind": "exact", "path": document}, included)
+                for included in include_paths
+            )
+        }
+        if unscoped_reads:
+            errors.append(validation_error(
+                "HANDOFF_READ_DOCUMENT_NOT_INCLUDED",
+                instance_path="/readDocuments",
+                message=f"read documents must be covered by includePaths: {sorted(unscoped_reads)}",
+            ))
+        activated_without_exact_scope = activated_documents - exact_include_paths
+        if activated_without_exact_scope:
+            errors.append(validation_error(
+                "HANDOFF_ACTIVATED_DOCUMENT_EXACT_SCOPE_MISSING",
+                instance_path="/includePaths",
+                message=f"activated deferred documents require matching exact include scopes: {sorted(activated_without_exact_scope)}",
+            ))
+        allowed_opt_ins = [entry["path"] for entry in phase.get("optInPaths", [])]
+        unauthorized_deferred = [
+            included
+            for included in include_paths
+            if path_scope_key(included) not in default_includes
+            and any(
+                path_scope_is_contained(included, deferred)
+                for deferred in context.get("deferredPaths", [])
+            )
+            and not any(path_scope_is_contained(included, opt_in) for opt_in in allowed_opt_ins)
+        ]
+        if unauthorized_deferred:
+            errors.append(validation_error(
+                "HANDOFF_DEFERRED_PATH_NOT_OPTED_IN",
+                instance_path="/includePaths",
+                message="handoff includes deferred paths without a route-phase opt-in",
+            ))
+        inactive_opt_ins = [
+            included
+            for included in include_paths
+            if path_scope_key(included) not in default_includes
+            and any(
+                path_scope_is_contained(included, deferred)
+                for deferred in context.get("deferredPaths", [])
+            )
+            and any(
+                path_scope_is_contained(included, entry["path"])
+                and entry["trigger"] not in activated_triggers
+                for entry in phase.get("optInPaths", [])
+            )
+            and not any(
+                path_scope_is_contained(included, entry["path"])
+                and entry["trigger"] in activated_triggers
+                for entry in phase.get("optInPaths", [])
+            )
+        ]
+        if inactive_opt_ins:
+            errors.append(validation_error(
+                "HANDOFF_OPT_IN_TRIGGER_NOT_ACTIVATED",
+                instance_path="/includePaths",
+                message="handoff includes opt-in scope whose canonical trigger is not activated",
+            ))
+        activated_opt_ins = [
+            entry["path"] for entry in phase.get("optInPaths", [])
+            if entry["trigger"] in activated_triggers
+        ]
+        authorized_extra_scopes = []
+        unauthorized_extra_scopes = []
+        selected_scope_keys = {
+            path_scope_key({"kind": "exact", "path": document})
+            for document in selected_documents
+        }
+        activated_document_scope_keys = {
+            path_scope_key({"kind": "exact", "path": document})
+            for document in activated_documents
+        }
+        for included in include_paths:
+            key = path_scope_key(included)
+            if (
+                key in default_includes
+                or key in selected_scope_keys
+                or key in activated_document_scope_keys
+            ):
+                continue
+            if (
+                included.get("kind") == "exact"
+                and any(path_scope_is_contained(included, opt_in) for opt_in in activated_opt_ins)
+            ):
+                authorized_extra_scopes.append(included)
+            else:
+                unauthorized_extra_scopes.append(included)
+        if unauthorized_extra_scopes:
+            errors.append(validation_error(
+                "HANDOFF_INCLUDE_SCOPE_UNAUTHORIZED",
+                instance_path="/includePaths",
+                message="additional include scopes require direct selection or an activated opt-in",
+            ))
+        unread_opt_in_paths = {
+            scope["path"] for scope in authorized_extra_scopes
+            if scope["path"] not in read_documents
+        }
+        if unread_opt_in_paths and handoff.get("contextStatus") != "BLOCKED":
+            errors.append(validation_error(
+                "HANDOFF_OPT_IN_EXACT_SCOPE_UNREAD",
+                instance_path="/readDocuments",
+                message=f"materialized opt-in exact scopes must be read: {sorted(unread_opt_in_paths)}",
+            ))
+
+    if (
+        {path_scope_key(scope) for scope in handoff.get("deferredPaths", [])}
+        != {path_scope_key(scope) for scope in context.get("deferredPaths", [])}
+    ):
+        errors.append(validation_error(
+            "HANDOFF_DEFERRED_PATHS_MISMATCH",
+            instance_path="/deferredPaths",
+            message="handoff must preserve the canonical deferred path set",
+        ))
+
+    include_paths = handoff.get("includePaths", [])
+    reusable_refs = handoff.get("reusableContextRefs", [])
+    work_log_scopes = [scope for scope in include_paths if is_work_log_scope(scope)]
+    reusable_work_log_refs = [
+        reference for reference in reusable_refs
+        if isinstance(reference, str) and path_is_at_or_below(reference, "ai/work-logs")
+    ]
+    work_log_triggers = {
+        entry.get("trigger")
+        for entry in (phase or {}).get("optInPaths", [])
+        if entry.get("path") == {"kind": "subtree", "path": "ai/work-logs"}
+    }
+    work_log_trigger_active = bool(work_log_triggers & set(handoff.get("activatedTriggers", [])))
+    active_issue = handoff.get("activeIssue")
+    active_refs = []
+    if active_issue is None:
+        if work_log_trigger_active or work_log_scopes or reusable_work_log_refs:
+            errors.append(validation_error(
+                "HANDOFF_ACTIVE_ISSUE_REQUIRED",
+                instance_path="/activeIssue",
+                message="an activated work-log trigger or work-log context requires an active Issue",
+            ))
+    elif not isinstance(active_issue, dict):
+        errors.append(validation_error(
+            "HANDOFF_ACTIVE_ISSUE_SCOPE_INVALID",
+            instance_path="/activeIssue",
+            message="activeIssue must be null or an active Issue object",
+        ))
+    else:
+        issue_number = active_issue.get("number")
+        issue_url = active_issue.get("issueUrl")
+        active_prefix = f"ai/work-logs/issue-{issue_number}/"
+        summary_ref = active_issue.get("summaryRef")
+        role_refs = active_issue.get("roleLogRefs", [])
+        active_refs = [summary_ref, *role_refs] if isinstance(role_refs, list) else [summary_ref]
+        active_ref_set = set(active_refs)
+        if (
+            not isinstance(issue_number, int)
+            or isinstance(issue_number, bool)
+            or issue_number < 1
+            or summary_ref != f"{active_prefix}README.md"
+            or not isinstance(role_refs, list)
+            or not role_refs
+            or len(role_refs) != len(set(role_refs))
+            or summary_ref in role_refs
+            or len(active_ref_set) != len(active_refs)
+            or any(
+                not is_exact_repository_ref(path) or not path.startswith(active_prefix)
+                for path in active_refs
+            )
+        ):
+            errors.append(validation_error(
+                "HANDOFF_ACTIVE_ISSUE_SCOPE_INVALID",
+                instance_path="/activeIssue",
+                message="active Issue refs must be safe, distinct, and number-bound summary and role-log paths",
+            ))
+        if not active_issue_url_matches(issue_url, issue_number):
+            errors.append(validation_error(
+                "HANDOFF_ACTIVE_ISSUE_URL_INVALID",
+                instance_path="/activeIssue/issueUrl",
+                message="active Issue URL must be the exact canonical repository Issue URL bound to its number",
+            ))
+        if not work_log_trigger_active:
+            errors.append(validation_error(
+                "HANDOFF_ACTIVE_ISSUE_TRIGGER_INACTIVE",
+                instance_path="/activatedTriggers",
+                message="activeIssue requires its canonical work-log opt-in trigger",
+            ))
+        invalid_work_log_scopes = [
+            scope for scope in work_log_scopes
+            if scope.get("kind") != "exact" or scope.get("path") not in active_ref_set
+        ]
+        if invalid_work_log_scopes:
+            errors.append(validation_error(
+                "HANDOFF_WORK_LOG_SCOPE_NOT_ACTIVE_REF",
+                instance_path="/includePaths",
+                message="work-log scopes must be exact scopes in the active Issue ref set",
+            ))
+        if any(reference not in active_ref_set for reference in reusable_work_log_refs):
+            errors.append(validation_error(
+                "HANDOFF_REUSABLE_WORK_LOG_NOT_ACTIVE_REF",
+                instance_path="/reusableContextRefs",
+                message="reusable work-log refs must belong to the active Issue ref set",
+            ))
+
+    invalid_reusable_refs = [
+        reference for reference in reusable_refs if not is_exact_repository_ref(reference)
+    ]
+    if invalid_reusable_refs:
+        errors.append(validation_error(
+            "HANDOFF_REUSABLE_CONTEXT_REF_INVALID",
+            instance_path="/reusableContextRefs",
+            message="reusable context refs must be repository-safe exact paths",
+        ))
+    excluded_reusable_refs = [
+        reference for reference in reusable_refs
+        if is_exact_repository_ref(reference)
+        and any(
+            path_scope_is_contained({"kind": "exact", "path": reference}, excluded)
+            for excluded in context.get("excludedPaths", [])
+        )
+    ]
+    if excluded_reusable_refs:
+        errors.append(validation_error(
+            "HANDOFF_REUSABLE_CONTEXT_EXCLUDED",
+            instance_path="/reusableContextRefs",
+            message="reusable context refs cannot select a canonical excluded path",
+        ))
+    included_exact_paths = {
+        scope["path"]
+        for scope in include_paths
+        if scope.get("kind") == "exact"
+    }
+    if active_issue is not None and not set(active_refs).issubset(included_exact_paths):
+        errors.append(validation_error(
+            "HANDOFF_ACTIVE_ISSUE_NOT_INCLUDED",
+            instance_path="/includePaths",
+            message="active Issue summary and role logs must be explicitly opted into the handoff scope",
+        ))
+    if errors:
+        raise InvalidStateError(errors)
+    return handoff
 
 
 def verification_cache_evidence_schema(check):
@@ -6959,6 +8092,75 @@ def cache_invalidation_report(root, workflow_cache):
     return report
 
 
+def validate_workflow_cache_semantics(workflow_cache):
+    canonical_id = "phase-2b-handoff-context"
+    canonical_path = "ai/agent-handoff.json"
+    entries = workflow_cache.get("entries", [])
+    canonical_entries = [entry for entry in entries if entry.get("id") == canonical_id]
+    if not canonical_entries:
+        raise InvalidStateError([validation_error(
+            "WORKFLOW_CACHE_HANDOFF_ENTRY_MISSING",
+            instance_path="/entries",
+            message="workflow cache must contain the canonical handoff entry",
+        )])
+    if len(canonical_entries) != 1:
+        raise InvalidStateError([validation_error(
+            "WORKFLOW_CACHE_HANDOFF_ENTRY_DUPLICATE",
+            instance_path="/entries",
+            message="workflow cache must contain exactly one canonical handoff entry",
+        )])
+    canonical_entry = canonical_entries[0]
+    if canonical_entry.get("kind") != "HANDOFF_CONTEXT":
+        raise InvalidStateError([validation_error(
+            "WORKFLOW_CACHE_HANDOFF_ENTRY_INVALID",
+            instance_path="/entries",
+            message="canonical handoff entry must use HANDOFF_CONTEXT kind",
+        )])
+    binding_count = sum(
+        item.get("path") == canonical_path
+        for item in canonical_entry.get("key", {}).get("paths", [])
+    )
+    if binding_count != 1:
+        raise InvalidStateError([validation_error(
+            "WORKFLOW_CACHE_HANDOFF_BINDING_INVALID",
+            instance_path="/entries",
+            message="canonical handoff entry must bind ai/agent-handoff.json exactly once",
+        )])
+    entry_ids = [entry.get("id") for entry in entries]
+    if len(entry_ids) != len(set(entry_ids)):
+        raise InvalidStateError([validation_error(
+            "WORKFLOW_CACHE_ENTRY_ID_DUPLICATE",
+            instance_path="/entries",
+            message="workflow cache entry IDs must be unique",
+        )])
+    for entry_index, entry in enumerate(entries):
+        paths = entry.get("key", {}).get("paths")
+        if not isinstance(paths, list):
+            continue
+        path_identities = [item.get("path") for item in paths]
+        if len(path_identities) != len(set(path_identities)):
+            raise InvalidStateError([validation_error(
+                "WORKFLOW_CACHE_PATH_DUPLICATE",
+                instance_path=f"/entries/{entry_index}/key/paths",
+                message="cache key path identities must be unique within each entry",
+            )])
+    if any(
+        entry is not canonical_entry
+        and entry.get("kind") == "HANDOFF_CONTEXT"
+        and any(
+            item.get("path") == canonical_path
+            for item in entry.get("key", {}).get("paths", [])
+        )
+        for entry in entries
+    ):
+        raise InvalidStateError([validation_error(
+            "WORKFLOW_CACHE_HANDOFF_BINDING_AMBIGUOUS",
+            instance_path="/entries",
+            message="only the canonical handoff entry may bind ai/agent-handoff.json",
+        )])
+    return canonical_id
+
+
 def publish_repo_intake_result(root, result, status):
     try:
         validate(root, result, "ai/schemas/repo-intake-result.schema.json")
@@ -6974,6 +8176,7 @@ def repo_intake(root):
     try:
         context = validate_repository_instance(root, root / "ai" / "context-map.json")
         workflow_cache = validate_repository_instance(root, root / "ai" / "workflow-cache.json")
+        canonical_handoff_cache_id = validate_workflow_cache_semantics(workflow_cache)
         project_state = validate_repository_instance(root, root / "ai" / "project-state.json")
         registry = validate_repository_instance(root, root / "ai" / "command-registry.json")
         skill_catalog = validate_repository_instance(root, root / "ai" / "skill-catalog.json")
@@ -6981,14 +8184,26 @@ def repo_intake(root):
         handoff = validate_repository_instance(root, root / "ai" / "agent-handoff.json")
         validate_handoff_skill_set(handoff, skill_catalog)
         validate_context_map_paths(root, context)
+        validate_context_map_semantics(context)
+        validate_handoff_context(handoff, context)
+        cache_invalidation = cache_invalidation_report(root, workflow_cache)
         data = {
             "contextMapRef": "ai/context-map.json",
             "workflowCacheRef": "ai/workflow-cache.json",
             "projectStateRefresh": project_state_refresh_proposals(project_state),
             "commandDiscoveryUpdates": command_discovery_update_proposals(registry),
-            "cacheInvalidation": cache_invalidation_report(root, workflow_cache),
+            "cacheInvalidation": cache_invalidation,
             "createdAiRuns": False,
         }
+        if handoff.get("contextStatus") in {"READY", "PARTIAL"}:
+            handoff_cache_report = next(
+                report for report in cache_invalidation
+                if report["entryId"] == canonical_handoff_cache_id
+            )
+            if handoff_cache_report["status"] in {"STALE", "UNCERTAIN"}:
+                return publish_repo_intake_result(root, repo_intake_result(
+                    "BLOCKED", f"HANDOFF_CONTEXT_CACHE_{handoff_cache_report['status']}", data,
+                ), 2)
         return publish_repo_intake_result(root, repo_intake_result("PASS", None, data), 0)
     except InvalidStateError as error:
         return publish_repo_intake_result(root, repo_intake_result(

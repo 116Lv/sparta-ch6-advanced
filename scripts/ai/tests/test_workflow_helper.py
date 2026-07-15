@@ -7384,10 +7384,1238 @@ class Phase2AContextCacheTests(unittest.TestCase):
         self.assertIn("repo-intake-result", self.helper.SCHEMA_NAMES)
         context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
         cache = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/workflow-cache.json")
-        self.assertEqual(context["schemaVersion"], 1)
+        self.assertEqual(context["schemaVersion"], 2)
         self.assertEqual(cache["schemaVersion"], 1)
         self.assertTrue(context["routes"])
         self.assertIsInstance(cache["entries"], list)
+
+    def test_context_map_expresses_phase_gated_lazy_loading(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        self.helper.validate_context_map_semantics(context)
+        route_phases = {
+            (route["id"], phase["id"]): phase
+            for route in context["routes"]
+            for phase in route["phases"]
+        }
+        expected = {
+            ("answer", "answer"),
+            ("light-structure", "light-structure"),
+            ("feature-work", "feature-requirements"),
+            ("feature-work", "implementation"),
+            ("feature-work", "verification"),
+            ("feature-work", "completion"),
+            ("repo-wide-ai-workflow", "implementation"),
+            ("repo-wide-ai-workflow", "verification"),
+            ("repo-wide-ai-workflow", "completion"),
+            ("repo-wide-ai-workflow", "workflow-rediscovery"),
+        }
+        self.assertEqual(set(route_phases), expected)
+
+        heavy = {
+            "ai/context-map.md",
+            "ai/cache-policy.md",
+            "ai/tool-call-policy.md",
+            "ai/resource-budget.md",
+            "ai/workflow-cache.md",
+        }
+        for key in (("answer", "answer"), ("light-structure", "light-structure")):
+            self.assertTrue(heavy.isdisjoint(route_phases[key]["requiredDocuments"]))
+        self.assertIn(
+            "specs/{feature}/spec.md",
+            route_phases[("feature-work", "feature-requirements")]["requiredDocuments"],
+        )
+
+        self.assertNotIn(
+            "specs",
+            route_phases[("feature-work", "feature-requirements")]["requiredDocuments"],
+        )
+        rediscovery = route_phases[("repo-wide-ai-workflow", "workflow-rediscovery")]
+        self.assertEqual(rediscovery["requiredDocuments"], ["ai/context-map.json"])
+        self.assertTrue(heavy.issubset({
+            document
+            for subject in rediscovery["rediscoverySubjects"]
+            for document in subject["documents"]
+        }))
+        for key, phase in route_phases.items():
+            self.assertIn("activityRequirements", phase, key)
+            self.assertIsInstance(phase["activityRequirements"], list, key)
+            self.assertTrue(phase["activityRequirements"], key)
+            self.assertIn("rediscoverySubjects", phase, key)
+            if key != ("repo-wide-ai-workflow", "workflow-rediscovery"):
+                self.assertTrue(heavy.isdisjoint(phase["requiredDocuments"]), key)
+        feature_implementation = route_phases[("feature-work", "implementation")]
+        self.assertTrue({
+            "specs/{feature}/plan.md",
+            "specs/{feature}/tasks.md",
+            "specs/{feature}/decisions.md",
+            "specs/{feature}/checklist.md",
+        }.issubset(feature_implementation["deferredDocuments"]))
+        self.assertEqual(
+            {(scope["kind"], scope["path"]) for scope in context["deferredPaths"]},
+            {
+                ("subtree", "ai/work-logs"),
+                ("subtree", "ai/fixtures"),
+                ("subtree", "ai/schemas"),
+                ("subtree", "docs/superpowers"),
+            },
+        )
+
+    def parse_context_map_repository_surfaces(self, markdown):
+        def atx_h2_title(line):
+            match = re.fullmatch(r" {0,3}##(?:[ \t]+(.*?))?[ \t]*", line)
+            if match is None:
+                return None
+            title = (match.group(1) or "").strip()
+            return re.sub(r"(?:^|[ \t]+)#+[ \t]*$", "", title).strip()
+
+        markdown_lines = markdown.splitlines()
+        visible_lines = []
+        fence_character = None
+        fence_length = 0
+        for index, line in enumerate(markdown_lines):
+            leading_spaces = len(line) - len(line.lstrip(" "))
+            fence_candidate = line[leading_spaces:] if leading_spaces <= 3 else None
+            if fence_character is not None:
+                if (
+                    fence_candidate is not None
+                    and re.fullmatch(
+                        rf"{re.escape(fence_character)}{{{fence_length},}}[ \t]*",
+                        fence_candidate,
+                    )
+                ):
+                    fence_character = None
+                    fence_length = 0
+                continue
+            opener = (
+                re.fullmatch(r"(`{3,}|~{3,})(.*)", fence_candidate)
+                if fence_candidate is not None
+                else None
+            )
+            if opener is not None:
+                marker, info = opener.groups()
+                if marker[0] != "`" or "`" not in info:
+                    fence_character = marker[0]
+                    fence_length = len(marker)
+                    continue
+            visible_lines.append((index, line))
+        h2_headings = [
+            (index, title)
+            for index, line in visible_lines
+            if (title := atx_h2_title(line)) is not None
+        ]
+        surface_headings = [
+            index for index, title in h2_headings
+            if title == "Repository Surfaces"
+        ]
+        if len(surface_headings) != 1:
+            raise ValueError("Repository Surfaces section must appear exactly once")
+        start = surface_headings[0] + 1
+        end = next(
+            (index for index, _ in h2_headings if index >= start),
+            len(markdown_lines),
+        )
+        lines = [
+            line for index, line in visible_lines
+            if start <= index < end and line.strip()
+        ]
+        if lines[:2] != [
+            "| Surface ID | Paths | Owner |",
+            "|---|---|---|",
+        ]:
+            raise ValueError("Repository Surfaces must start with the canonical table header")
+        rows = []
+        seen_ids = set()
+        for line in lines[2:]:
+            match = re.fullmatch(
+                r"\| `([^`]+)` \| (`[^`]+`(?:, `[^`]+`)*) \| ([^|]+) \|",
+                line,
+            )
+            if match is None:
+                raise ValueError(f"malformed Repository Surfaces data row: {line}")
+            surface_id, rendered_paths, owner = match.groups()
+            if surface_id in seen_ids:
+                raise ValueError(f"duplicate Repository Surfaces ID: {surface_id}")
+            seen_ids.add(surface_id)
+            rows.append({
+                "id": surface_id,
+                "paths": re.findall(r"`([^`]+)`", rendered_paths),
+                "owner": owner.strip(),
+            })
+        return rows
+
+    def test_context_map_markdown_repository_surfaces_mirror_canonical_json(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        markdown = self.read_repository_text("ai/context-map.md")
+        rows = self.parse_context_map_repository_surfaces(markdown)
+        self.assertEqual(len(rows), len(context["surfaces"]))
+        actual = {
+            row["id"]: {"paths": row["paths"], "owner": row["owner"]}
+            for row in rows
+        }
+        expected = {
+            surface["id"]: {
+                "paths": surface["paths"],
+                "owner": surface["owner"],
+            }
+            for surface in context["surfaces"]
+        }
+        self.assertEqual(actual, expected)
+
+    def test_context_map_markdown_repository_surface_parser_rejects_ambiguous_rows(self):
+        markdown = self.read_repository_text("ai/context-map.md")
+        ai_row = "| `ai-workflow` | `ai`, `scripts/ai` | repo-wide AI workflow |"
+        project_row = "| `project-docs` | `docs`, `README.md` | documentation routes |"
+        duplicate_table = "\n".join((
+            "| Surface ID | Paths | Owner |",
+            "|---|---|---|",
+            "| `product-source` | `src/main` | product feature specs |",
+            "| `product-tests` | `src/test` | product feature specs |",
+            "| `feature-specs` | `specs` | owning feature |",
+            ai_row,
+            project_row,
+        ))
+        cases = {
+            "identical duplicate": markdown.replace(ai_row, f"{ai_row}\n{ai_row}"),
+            "split duplicate": markdown.replace(
+                ai_row,
+                f"| `ai-workflow` | `ai` | repo-wide AI workflow |\n{ai_row}",
+            ),
+            "malformed extra": markdown.replace(
+                project_row,
+                f"| project-extra | `docs` | documentation routes |\n{project_row}",
+            ),
+            "semantic duplicate trailing space": (
+                f"{markdown}\n## Repository Surfaces \n\n{duplicate_table}\n"
+            ),
+            "semantic duplicate closing hashes": (
+                f"{markdown}\n## Repository Surfaces ##\n\n{duplicate_table}\n"
+            ),
+        }
+        for name, invalid_markdown in cases.items():
+            with self.subTest(case=name):
+                with self.assertRaises(ValueError):
+                    self.parse_context_map_repository_surfaces(invalid_markdown)
+
+    def test_context_map_markdown_repository_surface_parser_ignores_fenced_example_heading(self):
+        markdown = self.read_repository_text("ai/context-map.md")
+        real_plus_fenced_example = (
+            f"{markdown}\n```markdown\n## Repository Surfaces\nexample only\n```\n"
+        )
+        rows = self.parse_context_map_repository_surfaces(real_plus_fenced_example)
+        self.assertEqual(len(rows), 5)
+
+    def test_context_map_markdown_repository_surface_parser_rejects_fenced_fake_only(self):
+        markdown = self.read_repository_text("ai/context-map.md")
+        canonical_table = (
+            markdown.split("## Repository Surfaces\n", 1)[1]
+            .split("\n## ", 1)[0]
+            .strip()
+        )
+        fenced_fake_only = markdown.replace(
+            "## Repository Surfaces\n",
+            "## Repository Surface Notes\n",
+            1,
+        ) + (
+            f"\n~~~markdown\n## Repository Surfaces\n{canonical_table}"
+            "\n## Fence Boundary\n~~~\n"
+        )
+        with self.assertRaises(ValueError):
+            self.parse_context_map_repository_surfaces(fenced_fake_only)
+
+    def test_context_map_schema_rejects_v1_shape_and_unknown_route_or_phase(self):
+        context = json.loads((REPOSITORY_ROOT / "ai/context-map.json").read_text(encoding="utf-8"))
+        legacy = {
+            "$schema": "./schemas/context-map.schema.json",
+            "$id": "ai/context-map.json",
+            "schemaVersion": 1,
+            "updatedAt": "2026-07-12T00:00:00Z",
+            "routes": [{
+                "id": "repo-wide-ai-workflow",
+                "description": "legacy",
+                "owningFeature": "NONE_ALLOWED",
+                "requiredDocuments": ["AGENTS.md"],
+            }],
+            "surfaces": context["surfaces"],
+            "generatedPaths": context["generatedPaths"],
+            "excludedPaths": context["excludedPaths"],
+        }
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(REPOSITORY_ROOT, legacy, "ai/schemas/context-map.schema.json")
+
+        for field, value in (("id", "unknown-route"), ("phase", "unknown-phase")):
+            invalid = json.loads(json.dumps(context))
+            if field == "id":
+                invalid["routes"][0]["id"] = value
+            else:
+                invalid["routes"][0]["phases"][0]["id"] = value
+            with self.subTest(field=field):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(REPOSITORY_ROOT, invalid, "ai/schemas/context-map.schema.json")
+
+    def test_context_map_scope_schema_requires_typed_closed_variants(self):
+        context = json.loads((REPOSITORY_ROOT / "ai/context-map.json").read_text(encoding="utf-8"))
+        legacy = json.loads(json.dumps(context))
+        legacy["routes"][2]["phases"][0]["includePaths"][0] = "specs/{feature}/spec.md"
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(REPOSITORY_ROOT, legacy, "ai/schemas/context-map.schema.json")
+
+        typed = json.loads(json.dumps(context))
+        mappings = {
+            "AGENTS.md": {"kind": "exact", "path": "AGENTS.md"},
+            "ai/document-routing.md": {"kind": "exact", "path": "ai/document-routing.md"},
+            "ai/verification-gates.md": {"kind": "exact", "path": "ai/verification-gates.md"},
+            "ai/verification-policy.json": {"kind": "exact", "path": "ai/verification-policy.json"},
+            "ai/context-map.json": {"kind": "exact", "path": "ai/context-map.json"},
+            "ai/context-map.md": {"kind": "exact", "path": "ai/context-map.md"},
+            "ai/cache-policy.md": {"kind": "exact", "path": "ai/cache-policy.md"},
+            "ai/tool-call-policy.md": {"kind": "exact", "path": "ai/tool-call-policy.md"},
+            "ai/resource-budget.md": {"kind": "exact", "path": "ai/resource-budget.md"},
+            "ai/workflow-cache.md": {"kind": "exact", "path": "ai/workflow-cache.md"},
+            "ai/workflow-cache.json": {"kind": "exact", "path": "ai/workflow-cache.json"},
+            "ai/project-state.json": {"kind": "exact", "path": "ai/project-state.json"},
+            "ai/command-registry.json": {"kind": "exact", "path": "ai/command-registry.json"},
+            "scripts/ai/verification-gate.sh": {"kind": "exact", "path": "scripts/ai/verification-gate.sh"},
+            "scripts/ai/workflow_helper.py": {"kind": "exact", "path": "scripts/ai/workflow_helper.py"},
+            "scripts/ai/tests/test_workflow_helper.py": {"kind": "exact", "path": "scripts/ai/tests/test_workflow_helper.py"},
+            "specs/{feature}/spec.md": {"kind": "exact", "path": "specs/{feature}/spec.md"},
+            "src/main/**": {"kind": "subtree", "path": "src/main"},
+            "src/test/**": {"kind": "subtree", "path": "src/test"},
+            "ai/*.md": {"kind": "direct-children", "path": "ai", "suffix": ".md"},
+            "ai/*.json": {"kind": "direct-children", "path": "ai", "suffix": ".json"},
+            "ai/work-logs/**": {"kind": "subtree", "path": "ai/work-logs"},
+            "ai/fixtures/**": {"kind": "subtree", "path": "ai/fixtures"},
+            "ai/schemas/**": {"kind": "subtree", "path": "ai/schemas"},
+            "docs/superpowers/**": {"kind": "subtree", "path": "docs/superpowers"},
+            ".ai-runs/**": {"kind": "subtree", "path": ".ai-runs"},
+            ".git/**": {"kind": "subtree", "path": ".git"},
+            "**/__pycache__/**": {"kind": "descendant-directory", "name": "__pycache__"},
+            "build/**": {"kind": "subtree", "path": "build"},
+            ".gradle/**": {"kind": "subtree", "path": ".gradle"},
+            ".idea/**": {"kind": "subtree", "path": ".idea"},
+            ".worktrees/**": {"kind": "subtree", "path": ".worktrees"},
+        }
+        for route in typed["routes"]:
+            for phase in route["phases"]:
+                phase["includePaths"] = [
+                    mappings[path] if isinstance(path, str) else path
+                    for path in phase["includePaths"]
+                ]
+                for entry in phase["optInPaths"]:
+                    if isinstance(entry["path"], str):
+                        entry["path"] = mappings[entry["path"]]
+        typed["deferredPaths"] = [
+            mappings[path] if isinstance(path, str) else path for path in typed["deferredPaths"]
+        ]
+        typed["excludedPaths"] = [
+            mappings[path] if isinstance(path, str) else path for path in typed["excludedPaths"]
+        ]
+        self.helper.validate(REPOSITORY_ROOT, typed, "ai/schemas/context-map.schema.json")
+
+        unsafe_scopes = (
+            {"kind": "exact", "path": "ai/%2e%2e/out"},
+            {"kind": "exact", "path": "ai/{branch}/out"},
+            {"kind": "subtree", "path": "ai/../out"},
+            {"kind": "subtree", "path": "ai/[ab]"},
+            {"kind": "subtree", "path": "ai/?"},
+            {"kind": "subtree", "path": "ai/*/out"},
+            {"kind": "exact", "path": "https://example.test/x"},
+            {"kind": "exact", "path": "C:/outside"},
+            {"kind": "exact", "path": "//server/share"},
+            {"kind": "descendant-directory", "name": "../cache"},
+            {"kind": "direct-children", "path": "ai", "suffix": ".md/../json"},
+        )
+        for scope in unsafe_scopes:
+            invalid = json.loads(json.dumps(typed))
+            invalid["routes"][0]["phases"][0]["includePaths"] = [scope]
+            with self.subTest(scope=scope):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(REPOSITORY_ROOT, invalid, "ai/schemas/context-map.schema.json")
+
+    def test_typed_path_scope_match_conflict_and_containment_boundaries(self):
+        exact = {"kind": "exact", "path": "src/main/App.java"}
+        subtree = {"kind": "subtree", "path": "src/main"}
+        direct = {"kind": "direct-children", "path": "ai", "suffix": ".md"}
+        descendant = {"kind": "descendant-directory", "name": "__pycache__"}
+
+        for scope, path, expected in (
+            (exact, "src/main/App.java", True),
+            (exact, "src/main/Other.java", False),
+            (subtree, "src/main/App.java", True),
+            (subtree, "src/mainish/App.java", False),
+            (direct, "ai/context-map.md", True),
+            (direct, "ai/nested/context-map.md", False),
+            (direct, "ai/context-map.json", False),
+            (descendant, "src/__pycache__/module.pyc", True),
+            (descendant, "src/__pycacheish__/module.pyc", False),
+        ):
+            with self.subTest(scope=scope, path=path):
+                self.assertEqual(self.helper.path_scope_matches(scope, path), expected)
+
+        self.assertTrue(self.helper.path_scopes_conflict(exact, subtree))
+        self.assertFalse(self.helper.path_scopes_conflict(subtree, {"kind": "subtree", "path": "src/test"}))
+        self.assertTrue(self.helper.path_scopes_conflict(direct, {"kind": "exact", "path": "ai/context-map.md"}))
+        self.assertTrue(self.helper.path_scopes_conflict(subtree, descendant))
+        self.assertTrue(self.helper.path_scope_is_contained(exact, subtree))
+        self.assertTrue(self.helper.path_scope_is_contained(
+            {"kind": "subtree", "path": "src/__pycache__"}, descendant,
+        ))
+        self.assertFalse(self.helper.path_scope_is_contained(subtree, descendant))
+
+    def test_exact_path_scope_allows_only_the_single_feature_placeholder(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        repository_root = REPOSITORY_ROOT.resolve(strict=True)
+        for unsafe_path in (
+            "specs/{feature}/{branch}.md",
+            "specs/{feature}/x{branch}.md",
+        ):
+            invalid = json.loads(json.dumps(context))
+            scope = {"kind": "exact", "path": unsafe_path}
+            invalid["routes"][0]["phases"][0]["includePaths"] = [scope]
+            with self.subTest(path=unsafe_path, validator="schema"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(REPOSITORY_ROOT, invalid, "ai/schemas/context-map.schema.json")
+            with self.subTest(path=unsafe_path, validator="helper"):
+                with self.assertRaises(ValueError):
+                    self.helper.validate_path_scope(repository_root, scope)
+
+        handoff = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
+        invalid_handoff = json.loads(json.dumps(handoff))
+        invalid_handoff["includePaths"][0] = {
+            "kind": "exact",
+            "path": "specs/{feature}/{branch}.md",
+        }
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                REPOSITORY_ROOT,
+                invalid_handoff,
+                "ai/schemas/agent-handoff.schema.json",
+            )
+
+    def test_repository_paths_and_scope_paths_reject_trailing_slashes_symmetrically(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        repository_root = REPOSITORY_ROOT.resolve(strict=True)
+
+        invalid_document = json.loads(json.dumps(context))
+        invalid_document["routes"][0]["phases"][0]["requiredDocuments"].append("ai/")
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                REPOSITORY_ROOT,
+                invalid_document,
+                "ai/schemas/context-map.schema.json",
+            )
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate_context_map_paths(REPOSITORY_ROOT, invalid_document)
+        with self.assertRaises(ValueError):
+            self.helper.validate_repository_relative_path(repository_root, "ai/")
+
+        for scope in (
+            {"kind": "exact", "path": "ai/"},
+            {"kind": "subtree", "path": "ai/"},
+            {"kind": "direct-children", "path": "ai/", "suffix": ".md"},
+        ):
+            invalid_scope = json.loads(json.dumps(context))
+            invalid_scope["routes"][0]["phases"][0]["includePaths"] = [scope]
+            with self.subTest(schema="context-map", scope=scope):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        REPOSITORY_ROOT,
+                        invalid_scope,
+                        "ai/schemas/context-map.schema.json",
+                    )
+            with self.subTest(helper="path-scope", scope=scope):
+                with self.assertRaises(ValueError):
+                    self.helper.validate_path_scope(repository_root, scope)
+
+        handoff = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
+        invalid_handoff_document = json.loads(json.dumps(handoff))
+        invalid_handoff_document["readDocuments"][0] = "ai/"
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                REPOSITORY_ROOT,
+                invalid_handoff_document,
+                "ai/schemas/agent-handoff.schema.json",
+            )
+        for scope in (
+            {"kind": "exact", "path": "ai/"},
+            {"kind": "subtree", "path": "ai/"},
+            {"kind": "direct-children", "path": "ai/", "suffix": ".md"},
+        ):
+            invalid_handoff_scope = json.loads(json.dumps(handoff))
+            invalid_handoff_scope["includePaths"][0] = scope
+            with self.subTest(schema="agent-handoff", scope=scope):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        REPOSITORY_ROOT,
+                        invalid_handoff_scope,
+                        "ai/schemas/agent-handoff.schema.json",
+                    )
+
+        for name in ("", "."):
+            invalid_name = json.loads(json.dumps(context))
+            scope = {"kind": "descendant-directory", "name": name}
+            invalid_name["routes"][0]["phases"][0]["includePaths"] = [scope]
+            with self.subTest(name=name, validator="schema"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        REPOSITORY_ROOT,
+                        invalid_name,
+                        "ai/schemas/context-map.schema.json",
+                    )
+            with self.subTest(name=name, validator="helper"):
+                with self.assertRaises(ValueError):
+                    self.helper.validate_path_scope(repository_root, scope)
+
+    def test_context_map_opt_in_pairs_are_unique_but_scope_may_have_distinct_triggers(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        phase = context["routes"][2]["phases"][1]
+        original = phase["optInPaths"][0]
+
+        duplicate = json.loads(json.dumps(context))
+        duplicate_phase = duplicate["routes"][2]["phases"][1]
+        duplicate_phase["optInPaths"].append({
+            "trigger": original["trigger"],
+            "path": json.loads(json.dumps(original["path"])),
+        })
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(REPOSITORY_ROOT, duplicate, "ai/schemas/context-map.schema.json")
+
+        distinct_trigger = json.loads(json.dumps(context))
+        distinct_phase = distinct_trigger["routes"][2]["phases"][1]
+        distinct_phase["optInPaths"].append({
+            "path": json.loads(json.dumps(original["path"])),
+            "trigger": "A second explicit activation reason.",
+        })
+        self.helper.validate(
+            REPOSITORY_ROOT,
+            distinct_trigger,
+            "ai/schemas/context-map.schema.json",
+        )
+
+    def test_context_map_rejects_duplicate_document_trigger_identity(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        phase = context["routes"][3]["phases"][1]
+
+        exact_duplicate = json.loads(json.dumps(context))
+        exact_duplicate["routes"][3]["phases"][1]["deferredDocumentTriggers"].append(
+            json.loads(json.dumps(phase["deferredDocumentTriggers"][0]))
+        )
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                REPOSITORY_ROOT,
+                exact_duplicate,
+                "ai/schemas/context-map.schema.json",
+            )
+
+        different_documents = json.loads(json.dumps(context))
+        different_documents["routes"][3]["phases"][1]["deferredDocumentTriggers"].append({
+            "trigger": phase["deferredDocumentTriggers"][0]["trigger"],
+            "documents": ["ai/done-claim-template.md"],
+        })
+        with self.assertRaises(self.helper.InvalidStateError) as error:
+            self.helper.validate_context_map_semantics(different_documents)
+        self.assertIn(
+            "CONTEXT_MAP_DOCUMENT_TRIGGER_DUPLICATE",
+            {item["code"] for item in error.exception.errors},
+        )
+
+    def test_context_map_rejects_document_and_opt_in_trigger_collision(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        collision = json.loads(json.dumps(context))
+        phase = collision["routes"][3]["phases"][1]
+        phase["optInPaths"][0]["trigger"] = phase["deferredDocumentTriggers"][0]["trigger"]
+        with self.assertRaises(self.helper.InvalidStateError) as error:
+            self.helper.validate_context_map_semantics(collision)
+        self.assertIn(
+            "CONTEXT_MAP_TRIGGER_KIND_COLLISION",
+            {item["code"] for item in error.exception.errors},
+        )
+
+    def test_context_map_rejects_duplicate_opt_in_trigger_identity(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        duplicate = json.loads(json.dumps(context))
+        phase = duplicate["routes"][3]["phases"][1]
+        phase["optInPaths"][1]["trigger"] = phase["optInPaths"][0]["trigger"]
+        with self.assertRaises(self.helper.InvalidStateError) as error:
+            self.helper.validate_context_map_semantics(duplicate)
+        self.assertIn(
+            "CONTEXT_MAP_OPT_IN_TRIGGER_DUPLICATE",
+            {item["code"] for item in error.exception.errors},
+        )
+
+    def test_handoff_scope_schema_and_semantics_bind_typed_scopes(self):
+        handoff = json.loads((REPOSITORY_ROOT / "ai/agent-handoff.json").read_text(encoding="utf-8"))
+        legacy = json.loads(json.dumps(handoff))
+        legacy["includePaths"][0] = "AGENTS.md"
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(REPOSITORY_ROOT, legacy, "ai/schemas/agent-handoff.schema.json")
+
+        typed_handoff = json.loads(json.dumps(handoff))
+        typed_handoff["includePaths"] = [
+            {"kind": "exact", "path": path} if isinstance(path, str) else path
+            for path in typed_handoff["includePaths"]
+        ]
+        typed_handoff["deferredPaths"] = [
+            {"kind": "subtree", "path": path[:-3]} if isinstance(path, str) else path
+            for path in typed_handoff["deferredPaths"]
+        ]
+        self.helper.validate(REPOSITORY_ROOT, typed_handoff, "ai/schemas/agent-handoff.schema.json")
+
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        typed_context = json.loads(json.dumps(context))
+        route_phase = next(
+            phase for route in typed_context["routes"] if route["id"] == typed_handoff["routeId"]
+            for phase in route["phases"] if phase["id"] == typed_handoff["taskPhase"]
+        )
+        route_phase["includePaths"] = [
+            {"kind": "exact", "path": path} if isinstance(path, str) else path
+            for path in route_phase["includePaths"]
+        ]
+        route_phase["optInPaths"] = [
+            {
+                **entry,
+                "path": (
+                    {"kind": "subtree", "path": entry["path"][:-3]}
+                    if isinstance(entry["path"], str)
+                    else entry["path"]
+                ),
+            }
+            for entry in route_phase["optInPaths"]
+        ]
+        typed_context["deferredPaths"] = typed_handoff["deferredPaths"]
+        typed_context["excludedPaths"] = [
+            {"kind": "subtree", "path": path[:-3]}
+            for path in typed_context["excludedPaths"]
+            if isinstance(path, str) and path != "**/__pycache__/**"
+        ] + [
+            path for path in typed_context["excludedPaths"] if isinstance(path, dict)
+        ]
+        self.helper.validate_handoff_context(typed_handoff, typed_context)
+
+    def test_feature_handoff_requires_every_expanded_default_scope(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        canonical_handoff = self.helper.validate_repository_instance(
+            REPOSITORY_ROOT,
+            "ai/agent-handoff.json",
+        )
+        feature_route = next(route for route in context["routes"] if route["id"] == "feature-work")
+        active_issue = canonical_handoff["activeIssue"]
+        active_scopes = [
+            {"kind": "exact", "path": active_issue["summaryRef"]},
+            *[
+                {"kind": "exact", "path": path}
+                for path in active_issue["roleLogRefs"]
+            ],
+        ]
+
+        for phase_id, removed_kind in (
+            ("implementation", "exact"),
+            ("implementation", "subtree"),
+            ("verification", "exact"),
+            ("verification", "subtree"),
+        ):
+            phase = next(item for item in feature_route["phases"] if item["id"] == phase_id)
+            handoff = json.loads(json.dumps(canonical_handoff))
+            handoff["routeId"] = "feature-work"
+            handoff["taskPhase"] = phase_id
+            handoff["owningFeature"] = "specs/chat"
+            handoff["contextStatus"] = "READY"
+            handoff["activityId"] = (
+                "EXECUTION" if phase_id == "implementation" else "INDEPENDENT_AUDIT"
+            )
+            handoff["rediscoverySubjects"] = []
+            work_log_trigger = next(
+                entry["trigger"] for entry in phase["optInPaths"]
+                if entry["path"] == {"kind": "subtree", "path": "ai/work-logs"}
+            )
+            activity = next(
+                entry for entry in phase["activityRequirements"]
+                if entry["activityId"] == handoff["activityId"]
+            )
+            handoff["activatedTriggers"] = [*activity["mandatoryTriggers"], work_log_trigger]
+            activated_documents = {
+                self.helper.expand_feature_path(path, handoff["owningFeature"])
+                for trigger in phase["deferredDocumentTriggers"]
+                if trigger["trigger"] in handoff["activatedTriggers"]
+                for path in trigger["documents"]
+            }
+            handoff["readDocuments"] = [
+                "specs/chat/spec.md",
+                *sorted(activated_documents),
+                active_issue["summaryRef"],
+                *active_issue["roleLogRefs"],
+            ]
+            handoff["deferredDocuments"] = [
+                self.helper.expand_feature_path(path, handoff["owningFeature"])
+                for path in phase["deferredDocuments"]
+                if self.helper.expand_feature_path(path, handoff["owningFeature"])
+                not in activated_documents
+            ]
+            handoff["deferredDocumentTriggers"] = [
+                {
+                    "trigger": trigger["trigger"],
+                    "documents": [
+                        self.helper.expand_feature_path(path, handoff["owningFeature"])
+                        for path in trigger["documents"]
+                    ],
+                }
+                for trigger in phase["deferredDocumentTriggers"]
+            ]
+            handoff["rerouteTriggers"] = list(phase["rerouteTriggers"])
+            defaults = [
+                (
+                    {
+                        **scope,
+                        "path": self.helper.expand_feature_path(
+                            scope["path"],
+                            handoff["owningFeature"],
+                        ),
+                    }
+                    if scope["kind"] == "exact"
+                    else json.loads(json.dumps(scope))
+                )
+                for scope in phase["includePaths"]
+            ]
+            handoff["includePaths"] = defaults + [
+                {"kind": "exact", "path": document}
+                for document in sorted(activated_documents)
+            ] + active_scopes
+            self.helper.validate_handoff_context(handoff, context)
+
+            missing = json.loads(json.dumps(handoff))
+            missing["includePaths"].remove(
+                next(scope for scope in missing["includePaths"] if scope["kind"] == removed_kind)
+            )
+            with self.subTest(phase=phase_id, removed_kind=removed_kind):
+                with self.assertRaises(self.helper.InvalidStateError) as error:
+                    self.helper.validate_handoff_context(missing, context)
+                self.assertIn(
+                    "HANDOFF_DEFAULT_SCOPE_MISSING",
+                    {item["code"] for item in error.exception.errors},
+                )
+
+    def test_handoff_route_ownership_is_bidirectional(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        context = json.loads(json.dumps(context))
+        context["deferredPaths"] = []
+        for route in context["routes"]:
+            for phase in route["phases"]:
+                phase["optInPaths"] = []
+        canonical_handoff = self.helper.validate_repository_instance(
+            REPOSITORY_ROOT,
+            "ai/agent-handoff.json",
+        )
+
+        def handoff_for(route_id, phase_id, owning_feature):
+            route = next(route for route in context["routes"] if route["id"] == route_id)
+            phase = next(phase for phase in route["phases"] if phase["id"] == phase_id)
+            handoff = json.loads(json.dumps(canonical_handoff))
+            handoff["routeId"] = route_id
+            handoff["taskPhase"] = phase_id
+            handoff["owningFeature"] = owning_feature
+            handoff["deferredPaths"] = []
+            handoff["activityId"] = {
+                ("answer", "answer"): "ANSWER",
+                ("light-structure", "light-structure"): "DOCUMENT_EDIT",
+                ("repo-wide-ai-workflow", "implementation"): "EXECUTION",
+                ("feature-work", "implementation"): "EXECUTION",
+            }[(route_id, phase_id)]
+            handoff["rediscoverySubjects"] = []
+            activity = next(
+                entry for entry in phase["activityRequirements"]
+                if entry["activityId"] == handoff["activityId"]
+            )
+            handoff["activatedTriggers"] = list(activity["mandatoryTriggers"])
+            activated_documents = {
+                self.helper.expand_feature_path(path, owning_feature)
+                for trigger in phase["deferredDocumentTriggers"]
+                if trigger["trigger"] in handoff["activatedTriggers"]
+                for path in trigger["documents"]
+            }
+            handoff["readDocuments"] = [
+                self.helper.expand_feature_path(path, owning_feature)
+                for path in phase["requiredDocuments"]
+            ] + sorted(activated_documents)
+            handoff["deferredDocuments"] = [
+                self.helper.expand_feature_path(path, owning_feature)
+                for path in phase["deferredDocuments"]
+                if self.helper.expand_feature_path(path, owning_feature)
+                not in activated_documents
+            ]
+            handoff["deferredDocumentTriggers"] = [
+                {
+                    "trigger": trigger["trigger"],
+                    "documents": [
+                        self.helper.expand_feature_path(path, owning_feature)
+                        for path in trigger["documents"]
+                    ],
+                }
+                for trigger in phase["deferredDocumentTriggers"]
+            ]
+            handoff["rerouteTriggers"] = list(phase["rerouteTriggers"])
+            handoff["includePaths"] = [
+                self.helper.expand_feature_path_scope(scope, owning_feature)
+                for scope in phase["includePaths"]
+            ] + [
+                {"kind": "exact", "path": document}
+                for document in sorted(activated_documents)
+            ]
+            handoff["activeIssue"] = None
+            handoff["repositoryContextRequired"] = phase["repositoryContextMode"] == "REQUIRED"
+            handoff["selectedDocuments"] = []
+            if route_id == "light-structure":
+                selected = "docs/01-product-overview.md"
+                handoff["selectedDocuments"] = [selected]
+                handoff["readDocuments"].append(selected)
+                handoff["includePaths"].append({"kind": "exact", "path": selected})
+            return handoff
+
+        for route_id, phase_id in (
+            ("answer", "answer"),
+            ("light-structure", "light-structure"),
+            ("repo-wide-ai-workflow", "implementation"),
+        ):
+            working = handoff_for(route_id, phase_id, "none")
+            self.helper.validate(
+                REPOSITORY_ROOT,
+                working,
+                "ai/schemas/agent-handoff.schema.json",
+            )
+            self.helper.validate_handoff_context(working, context)
+
+            broken = handoff_for(route_id, phase_id, "specs/chat")
+            with self.subTest(route=route_id, validator="schema"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        REPOSITORY_ROOT,
+                        broken,
+                        "ai/schemas/agent-handoff.schema.json",
+                    )
+            with self.subTest(route=route_id, validator="helper"):
+                with self.assertRaises(self.helper.InvalidStateError) as error:
+                    self.helper.validate_handoff_context(broken, context)
+                self.assertIn(
+                    "HANDOFF_OWNING_FEATURE_FORBIDDEN",
+                    {item["code"] for item in error.exception.errors},
+                )
+
+        working_feature = handoff_for("feature-work", "implementation", "specs/chat")
+        self.helper.validate(
+            REPOSITORY_ROOT,
+            working_feature,
+            "ai/schemas/agent-handoff.schema.json",
+        )
+        self.helper.validate_handoff_context(working_feature, context)
+
+        for invalid_ownership in (
+            "chat",
+            "specs/",
+            "specs/chat/extra",
+            "specs/{feature}",
+        ):
+            malformed_feature = handoff_for(
+                "feature-work",
+                "implementation",
+                invalid_ownership,
+            )
+            with self.subTest(ownership=invalid_ownership, validator="schema"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        REPOSITORY_ROOT,
+                        malformed_feature,
+                        "ai/schemas/agent-handoff.schema.json",
+                    )
+            with self.subTest(ownership=invalid_ownership, validator="helper"):
+                with self.assertRaises(self.helper.InvalidStateError) as error:
+                    self.helper.validate_handoff_context(malformed_feature, context)
+                self.assertIn(
+                    "HANDOFF_OWNING_FEATURE_INVALID",
+                    {item["code"] for item in error.exception.errors},
+                )
+
+        for line_terminator in ("\n", "\r", "\r\n"):
+            line_terminated_feature = json.loads(json.dumps(working_feature))
+            line_terminated_feature["owningFeature"] = f"specs/chat{line_terminator}"
+            with self.subTest(line_terminator=repr(line_terminator), validator="schema"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        REPOSITORY_ROOT,
+                        line_terminated_feature,
+                        "ai/schemas/agent-handoff.schema.json",
+                    )
+            with self.subTest(line_terminator=repr(line_terminator), validator="helper"):
+                with self.assertRaises(self.helper.InvalidStateError) as error:
+                    self.helper.validate_handoff_context(line_terminated_feature, context)
+                self.assertIn(
+                    "HANDOFF_OWNING_FEATURE_INVALID",
+                    {item["code"] for item in error.exception.errors},
+                )
+
+        broken_feature = handoff_for("feature-work", "implementation", "none")
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                REPOSITORY_ROOT,
+                broken_feature,
+                "ai/schemas/agent-handoff.schema.json",
+            )
+        with self.assertRaises(self.helper.InvalidStateError) as error:
+            self.helper.validate_handoff_context(broken_feature, context)
+        self.assertIn(
+            "HANDOFF_OWNING_FEATURE_REQUIRED",
+            {item["code"] for item in error.exception.errors},
+        )
+
+    def test_context_map_route_variants_bind_canonical_ownership_in_schema_and_helper(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        canonical_ownership = {
+            "answer": "NONE_ALLOWED",
+            "light-structure": "DIRECT_DOCUMENT",
+            "feature-work": "FEATURE_REQUIRED",
+            "repo-wide-ai-workflow": "NONE_ALLOWED",
+        }
+        ownership_values = {"NONE_ALLOWED", "DIRECT_DOCUMENT", "FEATURE_REQUIRED"}
+
+        for route_index, route in enumerate(context["routes"]):
+            for invalid_ownership in ownership_values - {canonical_ownership[route["id"]]}:
+                invalid = json.loads(json.dumps(context))
+                invalid["routes"][route_index]["owningFeature"] = invalid_ownership
+                with self.subTest(route=route["id"], ownership=invalid_ownership, validator="schema"):
+                    with self.assertRaises(self.helper.InvalidStateError):
+                        self.helper.validate(
+                            REPOSITORY_ROOT,
+                            invalid,
+                            "ai/schemas/context-map.schema.json",
+                        )
+                with self.subTest(route=route["id"], ownership=invalid_ownership, validator="helper"):
+                    with self.assertRaises(self.helper.InvalidStateError) as error:
+                        self.helper.validate_context_map_semantics(invalid)
+                    self.assertIn(
+                        "CONTEXT_MAP_ROUTE_OWNERSHIP_INVALID",
+                        {item["code"] for item in error.exception.errors},
+                    )
+
+        invalid_phase_ids = {
+            "answer": "implementation",
+            "light-structure": "answer",
+            "feature-work": "answer",
+            "repo-wide-ai-workflow": "feature-requirements",
+        }
+        for route_index, route in enumerate(context["routes"]):
+            invalid = json.loads(json.dumps(context))
+            invalid["routes"][route_index]["phases"][0]["id"] = invalid_phase_ids[route["id"]]
+            with self.subTest(route=route["id"], phase=invalid_phase_ids[route["id"]], validator="schema"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        REPOSITORY_ROOT,
+                        invalid,
+                        "ai/schemas/context-map.schema.json",
+                    )
+            with self.subTest(route=route["id"], phase=invalid_phase_ids[route["id"]], validator="helper"):
+                with self.assertRaises(self.helper.InvalidStateError) as error:
+                    self.helper.validate_context_map_semantics(invalid)
+                self.assertIn(
+                    "CONTEXT_MAP_PHASE_SET_INVALID",
+                    {item["code"] for item in error.exception.errors},
+                )
+
+    def test_handoff_route_variants_bind_canonical_phase_and_ownership_in_schema_and_helper(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        handoff = self.helper.validate_repository_instance(
+            REPOSITORY_ROOT,
+            "ai/agent-handoff.json",
+        )
+        mutations = (
+            ("answer", "implementation", "none"),
+            ("light-structure", "answer", "none"),
+            ("feature-work", "answer", "specs/chat"),
+            ("repo-wide-ai-workflow", "feature-requirements", "none"),
+        )
+
+        for route_id, task_phase, owning_feature in mutations:
+            invalid = json.loads(json.dumps(handoff))
+            invalid["routeId"] = route_id
+            invalid["taskPhase"] = task_phase
+            invalid["owningFeature"] = owning_feature
+            with self.subTest(route=route_id, phase=task_phase, validator="schema"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        REPOSITORY_ROOT,
+                        invalid,
+                        "ai/schemas/agent-handoff.schema.json",
+                    )
+            with self.subTest(route=route_id, phase=task_phase, validator="helper"):
+                with self.assertRaises(self.helper.InvalidStateError) as error:
+                    self.helper.validate_handoff_context(invalid, context)
+                self.assertIn(
+                    "HANDOFF_ROUTE_PHASE_UNKNOWN",
+                    {item["code"] for item in error.exception.errors},
+                )
+
+    def test_context_map_semantics_reject_duplicate_and_conflicting_scope(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        mutations = []
+
+        duplicate_route = json.loads(json.dumps(context))
+        duplicate_route["routes"].append(json.loads(json.dumps(duplicate_route["routes"][0])))
+        mutations.append(duplicate_route)
+
+        duplicate_phase = json.loads(json.dumps(context))
+        duplicate_phase["routes"][0]["phases"].append(
+            json.loads(json.dumps(duplicate_phase["routes"][0]["phases"][0]))
+        )
+        mutations.append(duplicate_phase)
+
+        document_conflict = json.loads(json.dumps(context))
+        phase = document_conflict["routes"][2]["phases"][0]
+        phase["deferredDocuments"].append(phase["requiredDocuments"][0])
+        mutations.append(document_conflict)
+
+        excluded_opt_in = json.loads(json.dumps(context))
+        excluded_opt_in["routes"][0]["phases"][0]["optInPaths"].append({
+            "path": excluded_opt_in["excludedPaths"][0],
+            "trigger": "invalid opt-in",
+        })
+        mutations.append(excluded_opt_in)
+
+        excluded_descendant = json.loads(json.dumps(context))
+        excluded_descendant["routes"][0]["phases"][0]["includePaths"].append(
+            {"kind": "exact", "path": ".git/config"}
+        )
+        mutations.append(excluded_descendant)
+
+        excluded_deferred = json.loads(json.dumps(context))
+        excluded_deferred["deferredPaths"].append(excluded_deferred["excludedPaths"][0])
+        mutations.append(excluded_deferred)
+
+        default_deferred = json.loads(json.dumps(context))
+        default_deferred["routes"][0]["phases"][0]["includePaths"].append(
+            default_deferred["deferredPaths"][0]
+        )
+        mutations.append(default_deferred)
+
+        unknown_opt_in = json.loads(json.dumps(context))
+        unknown_opt_in["routes"][0]["phases"][0]["optInPaths"].append({
+            "path": {"kind": "subtree", "path": "unregistered"},
+            "trigger": "invalid opt-in",
+        })
+        mutations.append(unknown_opt_in)
+
+        unknown_mandatory = json.loads(json.dumps(context))
+        unknown_mandatory["routes"][0]["phases"][0]["activityRequirements"][0]["mandatoryTriggers"].append(
+            "This is not a canonical trigger."
+        )
+        mutations.append(unknown_mandatory)
+
+        for invalid in mutations:
+            with self.subTest(mutation=mutations.index(invalid)):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate_context_map_semantics(invalid)
+
+    def test_context_map_document_state_and_scope_are_closed_together(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+
+        self.helper.validate_context_map_semantics(context)
+        orphan_deferred = json.loads(json.dumps(context))
+        orphan_deferred["routes"][0]["phases"][0]["deferredDocuments"].append("README.md")
+        with self.assertRaises(self.helper.InvalidStateError) as canonical_error:
+            self.helper.validate_context_map_semantics(orphan_deferred)
+        self.assertIn(
+            "CONTEXT_MAP_DEFERRED_DOCUMENT_TRIGGER_COVERAGE_INVALID",
+            {item["code"] for item in canonical_error.exception.errors},
+        )
+
+        normalized = json.loads(json.dumps(context))
+        for route in normalized["routes"]:
+            for phase in route["phases"]:
+                phase["repositoryContextMode"] = (
+                    "OPTIONAL" if phase["id"] == "answer" else "REQUIRED"
+                )
+                phase["deferredDocuments"] = sorted({
+                    document
+                    for trigger in phase["deferredDocumentTriggers"]
+                    for document in trigger["documents"]
+                })
+                if route["id"] == "repo-wide-ai-workflow" and phase["id"] == "implementation":
+                    phase["includePaths"] = [
+                        {"kind": "exact", "path": document}
+                        for document in phase["requiredDocuments"]
+                    ] + [
+                        {"kind": "exact", "path": "scripts/ai/workflow_helper.py"},
+                        {"kind": "exact", "path": "scripts/ai/tests/test_workflow_helper.py"},
+                    ]
+
+        self.helper.validate_context_map_semantics(normalized)
+
+        required_unscoped = json.loads(json.dumps(normalized))
+        required_unscoped["routes"][2]["phases"][0]["includePaths"] = []
+        with self.assertRaises(self.helper.InvalidStateError) as required_error:
+            self.helper.validate_context_map_semantics(required_unscoped)
+        self.assertIn(
+            "CONTEXT_MAP_REQUIRED_DOCUMENT_NOT_INCLUDED",
+            {item["code"] for item in required_error.exception.errors},
+        )
+
+        deferred_included = json.loads(json.dumps(normalized))
+        light = deferred_included["routes"][1]["phases"][0]
+        light["includePaths"].append({
+            "kind": "exact", "path": light["deferredDocuments"][0],
+        })
+        with self.assertRaises(self.helper.InvalidStateError) as deferred_error:
+            self.helper.validate_context_map_semantics(deferred_included)
+        self.assertIn(
+            "CONTEXT_MAP_DEFAULT_INCLUDE_COVERS_DEFERRED_DOCUMENT",
+            {item["code"] for item in deferred_error.exception.errors},
+        )
+
+    def test_repository_context_mode_is_fixed_by_canonical_route_phase(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        cases = (
+            ("answer", "answer", "REQUIRED"),
+            ("light-structure", "light-structure", "OPTIONAL"),
+            ("feature-work", "implementation", "OPTIONAL"),
+        )
+        for route_id, phase_id, invalid_mode in cases:
+            invalid = json.loads(json.dumps(context))
+            phase = next(
+                phase for route in invalid["routes"] if route["id"] == route_id
+                for phase in route["phases"] if phase["id"] == phase_id
+            )
+            phase["repositoryContextMode"] = invalid_mode
+            with self.subTest(route=route_id, phase=phase_id):
+                with self.assertRaises(self.helper.InvalidStateError) as error:
+                    self.helper.validate_context_map_semantics(invalid)
+                self.assertIn(
+                    "CONTEXT_MAP_REPOSITORY_CONTEXT_MODE_INVALID",
+                    {item["code"] for item in error.exception.errors},
+                )
+
+    def test_answer_and_light_do_not_defer_reroute_only_routing_document(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        for route_id, phase_id in (
+            ("answer", "answer"),
+            ("light-structure", "light-structure"),
+        ):
+            phase = next(
+                phase for route in context["routes"] if route["id"] == route_id
+                for phase in route["phases"] if phase["id"] == phase_id
+            )
+            triggered_documents = {
+                document
+                for trigger in phase["deferredDocumentTriggers"]
+                for document in trigger["documents"]
+            }
+            with self.subTest(route=route_id):
+                self.assertNotIn("ai/document-routing.md", phase["deferredDocuments"])
+                self.assertNotIn("ai/document-routing.md", triggered_documents)
+
+    def test_context_map_path_contract_rejects_unsafe_components_after_wildcards(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        for unsafe_path in (
+            "*/C:/outside",
+            "*/https://example.test/x",
+            "ai/[.][.]/outside",
+            "ai/%2e%2E/out",
+            "ai%2foutside",
+            "ai/%5Cout",
+            "ai/%3a/out",
+            "*/%252e%252e/out",
+            "ai/%252e%252e/out",
+            "ai/%252foutside",
+            "ai/%25252e%25252e/out",
+            "ai/%25253a/out",
+            "ai/%25255cout",
+            "ai/[.-.][.-.]/out",
+        ):
+            invalid = json.loads(json.dumps(context))
+            invalid["routes"][0]["phases"][0]["includePaths"].append(unsafe_path)
+            with self.subTest(path=unsafe_path, validator="schema"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(REPOSITORY_ROOT, invalid, "ai/schemas/context-map.schema.json")
+            with self.subTest(path=unsafe_path, validator="path-helper"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate_context_map_paths(REPOSITORY_ROOT, invalid)
+
+    def test_context_map_typed_scopes_detect_intersections(self):
+        for left, right in (
+            (
+                {"kind": "subtree", "path": "src/main"},
+                {"kind": "descendant-directory", "name": "__pycache__"},
+            ),
+            (
+                {"kind": "subtree", "path": "ai"},
+                {"kind": "subtree", "path": "ai/schemas"},
+            ),
+            (
+                {"kind": "direct-children", "path": "ai", "suffix": ".md"},
+                {"kind": "exact", "path": "ai/context-map.md"},
+            ),
+        ):
+            for first, second in ((left, right), (right, left)):
+                with self.subTest(left=first, right=second):
+                    self.assertTrue(self.helper.path_scopes_conflict(first, second))
+        for left, right in (
+            (
+                {"kind": "subtree", "path": "src/main"},
+                {"kind": "subtree", "path": "src/test"},
+            ),
+            (
+                {"kind": "direct-children", "path": "ai", "suffix": ".md"},
+                {"kind": "direct-children", "path": "ai", "suffix": ".json"},
+            ),
+        ):
+            with self.subTest(left=left, right=right):
+                self.assertFalse(self.helper.path_scopes_conflict(left, right))
+
+    def test_context_map_containment_rejects_guaranteed_excluded_descendants(self):
+        excluded = {"kind": "descendant-directory", "name": "__pycache__"}
+        self.assertTrue(
+            self.helper.path_scope_is_contained(
+                {"kind": "subtree", "path": "src/__pycache__"},
+                excluded,
+            )
+        )
+        self.assertFalse(
+            self.helper.path_scope_is_contained(
+                {"kind": "subtree", "path": "src"},
+                excluded,
+            )
+        )
+        self.assertTrue(self.helper.path_scope_is_contained(
+            {"kind": "exact", "path": ".git/config"},
+            {"kind": "subtree", "path": ".git"},
+        ))
+        self.assertTrue(self.helper.path_scope_is_contained(
+            {"kind": "subtree", "path": "build/classes"},
+            {"kind": "subtree", "path": "build"},
+        ))
+
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        contained = json.loads(json.dumps(context))
+        contained["routes"][0]["phases"][0]["includePaths"].append(
+            {"kind": "subtree", "path": "src/__pycache__"}
+        )
+        with self.assertRaises(self.helper.InvalidStateError) as error:
+            self.helper.validate_context_map_semantics(contained)
+        self.assertIn(
+            "CONTEXT_MAP_EXCLUDED_INCLUDE_CONFLICT",
+            {item["code"] for item in error.exception.errors},
+        )
+
+
+    def test_context_map_feature_placeholder_is_limited_to_specs_feature_component(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        for unsafe_path in ("docs/{feature}/spec.md", "specs/{feature}"):
+            invalid = json.loads(json.dumps(context))
+            invalid["routes"][0]["phases"][0]["requiredDocuments"].append(unsafe_path)
+            with self.subTest(path=unsafe_path, validator="schema"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(REPOSITORY_ROOT, invalid, "ai/schemas/context-map.schema.json")
+            with self.subTest(path=unsafe_path, validator="helper"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate_context_map_paths(REPOSITORY_ROOT, invalid)
+        self.assertEqual(
+            self.helper.expand_feature_path("specs/{feature}/spec.md", "specs/chat"),
+            "specs/chat/spec.md",
+        )
 
     def test_verification_decision_cache_schema_requires_complete_identity(self):
         cache = {
@@ -7465,6 +8693,35 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
         self.addCleanup(remove_readonly_tree, self.root.parent)
         shutil.copytree(REPOSITORY_ROOT, self.root, ignore=shutil.ignore_patterns(".git", ".ai-runs", "__pycache__"))
 
+    def handoff_cache_entry(self):
+        cache = self.workflow_cache()
+        return next(entry for entry in cache["entries"] if entry["id"] == "phase-2b-handoff-context")
+
+    def workflow_cache(self):
+        return json.loads((self.root / "ai" / "workflow-cache.json").read_text(encoding="utf-8"))
+
+    def write_workflow_cache(self, cache):
+        (self.root / "ai" / "workflow-cache.json").write_text(
+            json.dumps(cache, indent=2) + "\n", encoding="utf-8",
+        )
+
+    def assert_repo_intake_invalid(self, expected_reason):
+        result, status = self.helper.repo_intake(self.root)
+        self.assertEqual((result["result"], result["reason"], status), (
+            "INVALID_STATE", expected_reason, 5,
+        ))
+
+    def path_cache_entry(self, entry_id, kind, paths):
+        return {
+            "id": entry_id,
+            "kind": kind,
+            "status": "FRESH",
+            "key": {"paths": paths, "environmentFingerprint": None},
+            "summary": f"{entry_id} fixture.",
+            "evidenceRefs": [item["path"] for item in paths],
+            "createdAt": "2026-07-15T00:00:00Z",
+        }
+
     def test_repo_intake_passes_with_schema_backed_proposals_and_no_ai_runs(self):
         result, status = self.helper.repo_intake(self.root)
         self.assertEqual((result["operation"], result["result"], status), ("REPO_INTAKE", "PASS", 0))
@@ -7480,21 +8737,39 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
     def test_repo_intake_rejects_context_route_escape(self):
         context_path = self.root / "ai" / "context-map.json"
         context = json.loads(context_path.read_text(encoding="utf-8"))
-        context["routes"][0]["requiredDocuments"].append("../outside.md")
+        context["routes"][0]["phases"][0]["requiredDocuments"].append("../outside.md")
         context_path.write_text(json.dumps(context), encoding="utf-8")
         result, status = self.helper.repo_intake(self.root)
         self.assertEqual((result["operation"], result["result"], status), ("REPO_INTAKE", "INVALID_STATE", 5))
         self.assertIn(result["reason"], ("CONTEXT_MAP_PATH_INVALID", "SCHEMA_VALIDATION_ERROR"))
 
+    def test_repo_intake_rejects_every_new_context_map_path_field_escape(self):
+        context_path = self.root / "ai" / "context-map.json"
+        original = json.loads(context_path.read_text(encoding="utf-8"))
+        mutations = (
+            lambda data, value: data["routes"][0]["phases"][0]["requiredDocuments"].append(value),
+            lambda data, value: data["routes"][0]["phases"][0]["deferredDocuments"].append(value),
+            lambda data, value: data["routes"][1]["phases"][0]["deferredDocumentTriggers"][0]["documents"].append(value),
+            lambda data, value: data["routes"][0]["phases"][0]["includePaths"].append(value),
+            lambda data, value: data["routes"][0]["phases"][0]["optInPaths"].append({"path": value, "trigger": "test"}),
+            lambda data, value: data["deferredPaths"].append(value),
+        )
+        invalid_paths = ("../outside", "C:/absolute", "https://example.test/path", "ai\\schemas\\escape")
+        for mutation_index, mutation in enumerate(mutations):
+            for invalid_path in invalid_paths:
+                with self.subTest(field=mutation_index, path=invalid_path):
+                    context = json.loads(json.dumps(original))
+                    mutation(context, invalid_path)
+                    context_path.write_text(json.dumps(context), encoding="utf-8")
+                    result, status = self.helper.repo_intake(self.root)
+                    self.assertEqual((result["result"], status), ("INVALID_STATE", 5))
+                    context_path.write_text(json.dumps(original), encoding="utf-8")
+
     def test_repo_intake_reports_stale_and_uncertain_cache_entries(self):
         cache_path = self.root / "ai" / "workflow-cache.json"
         stale_digest = "0" * 64
-        cache = {
-            "$schema": "./schemas/workflow-cache.schema.json",
-            "$id": "ai/workflow-cache.json",
-            "schemaVersion": 1,
-            "updatedAt": "2026-07-12T00:00:00Z",
-            "entries": [
+        cache = self.workflow_cache()
+        cache["entries"].extend([
                 {
                     "id": "read-agents",
                     "kind": "FILE_DISCOVERY",
@@ -7519,16 +8794,229 @@ class Phase2ARepoIntakeTests(unittest.TestCase):
                     "evidenceRefs": [],
                     "createdAt": "2026-07-12T00:00:00Z"
                 }
-            ],
-            "handoffNotes": [],
-            "invalidationEvents": []
-        }
+            ])
         cache_path.write_text(json.dumps(cache), encoding="utf-8")
         result, status = self.helper.repo_intake(self.root)
         self.assertEqual((result["result"], status), ("PASS", 0))
         invalidation = {item["entryId"]: item["status"] for item in result["data"]["cacheInvalidation"]}
         self.assertEqual(invalidation["read-agents"], "STALE")
         self.assertEqual(invalidation["unmapped"], "UNCERTAIN")
+
+    def test_repo_intake_rejects_missing_canonical_handoff_cache_entry(self):
+        cache = self.workflow_cache()
+        cache["entries"] = []
+        self.write_workflow_cache(cache)
+
+        self.assert_repo_intake_invalid("WORKFLOW_CACHE_HANDOFF_ENTRY_MISSING")
+
+    def test_repo_intake_rejects_canonical_handoff_cache_wrong_kind_or_path(self):
+        original = self.workflow_cache()
+        mutations = (
+            (
+                "kind",
+                lambda entry: entry.update({"kind": "FILE_DISCOVERY"}),
+                "WORKFLOW_CACHE_HANDOFF_ENTRY_INVALID",
+            ),
+            (
+                "path",
+                lambda entry: entry["key"]["paths"][0].update({"path": "ai/context-map.json"}),
+                "WORKFLOW_CACHE_HANDOFF_BINDING_INVALID",
+            ),
+        )
+        for name, mutation, reason in mutations:
+            with self.subTest(name=name):
+                cache = json.loads(json.dumps(original))
+                canonical = next(
+                    entry for entry in cache["entries"]
+                    if entry["id"] == "phase-2b-handoff-context"
+                )
+                mutation(canonical)
+                self.write_workflow_cache(cache)
+                self.assert_repo_intake_invalid(reason)
+
+    def test_repo_intake_rejects_spoof_handoff_binding_before_stale_evaluation(self):
+        cache = self.workflow_cache()
+        spoof = json.loads(json.dumps(self.handoff_cache_entry()))
+        spoof["id"] = "spoof-handoff-context"
+        spoof["key"]["paths"][0]["sha256"] = "0" * 64
+        cache["entries"].append(spoof)
+        self.write_workflow_cache(cache)
+
+        self.assert_repo_intake_invalid("WORKFLOW_CACHE_HANDOFF_BINDING_AMBIGUOUS")
+
+    def test_repo_intake_rejects_duplicate_canonical_handoff_entry(self):
+        cache = self.workflow_cache()
+        duplicate = json.loads(json.dumps(self.handoff_cache_entry()))
+        duplicate["summary"] = "Distinct duplicate canonical entry fixture."
+        cache["entries"].append(duplicate)
+        self.write_workflow_cache(cache)
+
+        self.assert_repo_intake_invalid("WORKFLOW_CACHE_HANDOFF_ENTRY_DUPLICATE")
+
+    def test_repo_intake_rejects_duplicate_canonical_handoff_path_binding(self):
+        cache = self.workflow_cache()
+        canonical = next(
+            entry for entry in cache["entries"]
+            if entry["id"] == "phase-2b-handoff-context"
+        )
+        duplicate = json.loads(json.dumps(canonical["key"]["paths"][0]))
+        duplicate["sha256"] = "0" * 64
+        canonical["key"]["paths"].append(duplicate)
+        self.write_workflow_cache(cache)
+
+        self.assert_repo_intake_invalid("WORKFLOW_CACHE_HANDOFF_BINDING_INVALID")
+
+    def test_workflow_cache_schema_rejects_exact_duplicate_entries_and_paths(self):
+        cache = self.workflow_cache()
+        cache["entries"].append(json.loads(json.dumps(cache["entries"][0])))
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(self.root, cache, "ai/schemas/workflow-cache.schema.json")
+
+        cache = self.workflow_cache()
+        canonical = next(
+            entry for entry in cache["entries"]
+            if entry["id"] == "phase-2b-handoff-context"
+        )
+        canonical["key"]["paths"].append(json.loads(json.dumps(canonical["key"]["paths"][0])))
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(self.root, cache, "ai/schemas/workflow-cache.schema.json")
+
+    def test_repo_intake_schema_invalid_precedes_missing_canonical_cache_semantics(self):
+        cache = self.workflow_cache()
+        cache.pop("updatedAt")
+        cache["entries"] = []
+        self.write_workflow_cache(cache)
+
+        self.assert_repo_intake_invalid("SCHEMA_VALIDATION_ERROR")
+
+    def test_repo_intake_rejects_duplicate_noncanonical_entry_ids(self):
+        cache = self.workflow_cache()
+        agents_digest = hashlib.sha256((self.root / "AGENTS.md").read_bytes()).hexdigest()
+        index_digest = hashlib.sha256((self.root / "docs" / "00-index.md").read_bytes()).hexdigest()
+        cache["entries"].extend([
+            self.path_cache_entry(
+                "duplicate-general-entry",
+                "FILE_DISCOVERY",
+                [{"path": "AGENTS.md", "sha256": agents_digest}],
+            ),
+            self.path_cache_entry(
+                "duplicate-general-entry",
+                "COMMAND_EVIDENCE_SUMMARY",
+                [{"path": "docs/00-index.md", "sha256": index_digest}],
+            ),
+        ])
+        self.write_workflow_cache(cache)
+
+        self.assert_repo_intake_invalid("WORKFLOW_CACHE_ENTRY_ID_DUPLICATE")
+
+    def test_repo_intake_rejects_duplicate_path_identity_with_different_digest(self):
+        cache = self.workflow_cache()
+        agents_digest = hashlib.sha256((self.root / "AGENTS.md").read_bytes()).hexdigest()
+        cache["entries"].append(self.path_cache_entry(
+            "duplicate-path-entry",
+            "FILE_DISCOVERY",
+            [
+                {"path": "AGENTS.md", "sha256": agents_digest},
+                {"path": "AGENTS.md", "sha256": "0" * 64},
+            ],
+        ))
+        self.write_workflow_cache(cache)
+
+        self.assert_repo_intake_invalid("WORKFLOW_CACHE_PATH_DUPLICATE")
+
+    def test_repo_intake_allows_different_entries_to_bind_same_general_path(self):
+        cache = self.workflow_cache()
+        agents_digest = hashlib.sha256((self.root / "AGENTS.md").read_bytes()).hexdigest()
+        shared_path = [{"path": "AGENTS.md", "sha256": agents_digest}]
+        cache["entries"].extend([
+            self.path_cache_entry("shared-file-read", "FILE_DISCOVERY", shared_path),
+            self.path_cache_entry(
+                "shared-command-input", "COMMAND_EVIDENCE_SUMMARY", shared_path,
+            ),
+        ])
+        self.write_workflow_cache(cache)
+
+        result, status = self.helper.repo_intake(self.root)
+
+        self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
+
+    def test_repo_intake_blocks_ready_handoff_when_canonical_cache_digest_is_stale(self):
+        handoff_path = self.root / "ai" / "agent-handoff.json"
+        handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        handoff["decisions"].append("Semantically valid mutation after the cached digest was recorded.")
+        handoff_path.write_text(json.dumps(handoff, indent=2) + "\n", encoding="utf-8")
+
+        result, status = self.helper.repo_intake(self.root)
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "HANDOFF_CONTEXT_CACHE_STALE", 2,
+        ))
+        self.assertEqual(result["errors"][0]["code"], "HANDOFF_CONTEXT_CACHE_STALE")
+        self.assertEqual(result["data"]["cacheInvalidation"][0]["status"], "STALE")
+        self.assertIn("digest", result["data"]["cacheInvalidation"][0]["reason"].lower())
+
+    def test_repo_intake_blocks_partial_handoff_when_canonical_cache_is_uncertain(self):
+        handoff_path = self.root / "ai" / "agent-handoff.json"
+        handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        handoff["contextStatus"] = "PARTIAL"
+        handoff_path.write_text(json.dumps(handoff, indent=2) + "\n", encoding="utf-8")
+        entry = self.handoff_cache_entry()
+        entry["key"]["paths"][0]["sha256"] = hashlib.sha256(handoff_path.read_bytes()).hexdigest()
+        entry["key"]["paths"].append({
+            "path": "ai/missing-handoff-dependency.json",
+            "sha256": "0" * 64,
+        })
+        cache_path = self.root / "ai" / "workflow-cache.json"
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        canonical_index = next(
+            index for index, item in enumerate(cache["entries"])
+            if item["kind"] == "HANDOFF_CONTEXT"
+        )
+        cache["entries"][canonical_index] = entry
+        cache_path.write_text(json.dumps(cache, indent=2) + "\n", encoding="utf-8")
+
+        result, status = self.helper.repo_intake(self.root)
+
+        self.assertEqual((result["result"], result["reason"], status), (
+            "BLOCKED", "HANDOFF_CONTEXT_CACHE_UNCERTAIN", 2,
+        ))
+        self.assertEqual(result["errors"][0]["code"], "HANDOFF_CONTEXT_CACHE_UNCERTAIN")
+        self.assertEqual(result["data"]["cacheInvalidation"][0]["status"], "UNCERTAIN")
+        self.assertIn("unavailable", result["data"]["cacheInvalidation"][0]["reason"].lower())
+
+    def test_repo_intake_keeps_fresh_ready_handoff_pass(self):
+        result, status = self.helper.repo_intake(self.root)
+
+        self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
+        handoff_report = next(
+            item for item in result["data"]["cacheInvalidation"]
+            if item["entryId"] == self.handoff_cache_entry()["id"]
+        )
+        self.assertEqual(handoff_report["status"], "FRESH")
+
+    def test_repo_intake_keeps_stale_handoff_advisory_when_context_is_already_blocked(self):
+        handoff_path = self.root / "ai" / "agent-handoff.json"
+        handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+        handoff["contextStatus"] = "BLOCKED"
+        handoff["decisions"].append("Blocked handoff mutation leaves cached context stale.")
+        handoff_path.write_text(json.dumps(handoff, indent=2) + "\n", encoding="utf-8")
+
+        result, status = self.helper.repo_intake(self.root)
+
+        self.assertEqual((result["result"], result["reason"], status), ("PASS", None, 0))
+        self.assertEqual(result["data"]["cacheInvalidation"][0]["status"], "STALE")
+
+    def test_handoff_cache_digest_compares_raw_line_ending_bytes(self):
+        handoff_path = self.root / "ai" / "agent-handoff.json"
+        lf_bytes = handoff_path.read_bytes().replace(b"\r\n", b"\n")
+        handoff_path.write_bytes(lf_bytes.replace(b"\n", b"\r\n"))
+        entry = self.handoff_cache_entry()
+        entry["key"]["paths"][0]["sha256"] = hashlib.sha256(lf_bytes).hexdigest()
+
+        report = self.helper.cache_invalidation_report(self.root, {"entries": [entry]})
+
+        self.assertEqual(report[0]["status"], "STALE")
+        self.assertIn("digest", report[0]["reason"].lower())
 
     def verification_cache_entry(self):
         policy_path = self.root / "ai" / "verification-policy.json"
@@ -8015,12 +9503,159 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
         "seed",
         "scripts/ai/command-runner.sh run",
     )
+    CANONICAL_NOT_RUN_PROJECT_COMMANDS = (
+        "Gradle",
+        "build",
+        "product/unit project tests",
+        "application server",
+        "Docker Compose",
+        "HTTP/curl/API",
+        "database",
+        "migration",
+        "seed",
+        "infrastructure commands",
+    )
 
     def setUp(self):
         self.helper = load_helper()
 
     def read_repository_text(self, relative_path):
         return (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
+
+    def handoff_for_phase(
+        self, route_id, phase_id, *, status="READY", issue_backed=True,
+        activate_mandatory=False, activity_id=None,
+    ):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        canonical = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
+        route = next(route for route in context["routes"] if route["id"] == route_id)
+        phase = next(phase for phase in route["phases"] if phase["id"] == phase_id)
+        owning_feature = "specs/chat" if route_id == "feature-work" else "none"
+        handoff = json.loads(json.dumps(canonical))
+        handoff.update({
+            "routeId": route_id,
+            "taskPhase": phase_id,
+            "owningFeature": owning_feature,
+            "contextStatus": status,
+            "repositoryContextRequired": phase.get("repositoryContextMode") == "REQUIRED",
+            "activityId": activity_id or {
+                ("answer", "answer"): "ANSWER",
+                ("light-structure", "light-structure"): "DOCUMENT_EDIT",
+                ("feature-work", "feature-requirements"): "REQUIREMENTS",
+                ("feature-work", "implementation"): "EXECUTION",
+                ("feature-work", "verification"): "INDEPENDENT_AUDIT",
+                ("feature-work", "completion"): "COMPLETION",
+                ("repo-wide-ai-workflow", "implementation"): "EXECUTION",
+                ("repo-wide-ai-workflow", "verification"): "INDEPENDENT_AUDIT",
+                ("repo-wide-ai-workflow", "completion"): "COMPLETION",
+                ("repo-wide-ai-workflow", "workflow-rediscovery"): "REDISCOVERY",
+            }[(route_id, phase_id)],
+            "rediscoverySubjects": [],
+            "selectedDocuments": [],
+            "activatedTriggers": [],
+            "readDocuments": [
+                self.helper.expand_feature_path(path, owning_feature)
+                for path in phase["requiredDocuments"]
+            ],
+            "deferredDocuments": [
+                self.helper.expand_feature_path(path, owning_feature)
+                for path in phase["deferredDocuments"]
+            ],
+            "deferredDocumentTriggers": [
+                {
+                    "trigger": entry["trigger"],
+                    "documents": [
+                        self.helper.expand_feature_path(path, owning_feature)
+                        for path in entry["documents"]
+                    ],
+                }
+                for entry in phase["deferredDocumentTriggers"]
+            ],
+            "includePaths": [
+                self.helper.expand_feature_path_scope(scope, owning_feature)
+                for scope in phase["includePaths"]
+            ],
+            "rerouteTriggers": list(phase["rerouteTriggers"]),
+        })
+        if activate_mandatory:
+            activity = next(
+                entry for entry in phase["activityRequirements"]
+                if entry["activityId"] == handoff["activityId"]
+            )
+            handoff["activatedTriggers"].extend(activity["mandatoryTriggers"])
+            activated_documents = {
+                self.helper.expand_feature_path(path, owning_feature)
+                for entry in phase["deferredDocumentTriggers"]
+                if entry["trigger"] in handoff["activatedTriggers"]
+                for path in entry["documents"]
+            }
+            handoff["readDocuments"].extend(sorted(activated_documents))
+            handoff["deferredDocuments"] = [
+                path for path in handoff["deferredDocuments"]
+                if path not in activated_documents
+            ]
+            handoff["includePaths"].extend([
+                {"kind": "exact", "path": document}
+                for document in sorted(activated_documents)
+            ])
+        work_log_opt_in = next((
+            entry for entry in phase["optInPaths"]
+            if entry["path"] == {"kind": "subtree", "path": "ai/work-logs"}
+        ), None)
+        if issue_backed:
+            if work_log_opt_in is None:
+                raise AssertionError(f"{route_id}/{phase_id} has no work-log opt-in")
+            handoff["activatedTriggers"].append(work_log_opt_in["trigger"])
+            handoff["includePaths"].extend([
+                {"kind": "exact", "path": handoff["activeIssue"]["summaryRef"]},
+                *[
+                    {"kind": "exact", "path": path}
+                    for path in handoff["activeIssue"]["roleLogRefs"]
+                ],
+            ])
+            handoff["readDocuments"].extend([
+                handoff["activeIssue"]["summaryRef"],
+                *handoff["activeIssue"]["roleLogRefs"],
+            ])
+        else:
+            handoff["activeIssue"] = None
+        if route_id == "answer":
+            handoff["repositoryContextRequired"] = False
+        elif route_id == "light-structure":
+            selected = "docs/01-product-overview.md"
+            handoff["selectedDocuments"] = [selected]
+            handoff["readDocuments"].append(selected)
+            handoff["includePaths"].append({"kind": "exact", "path": selected})
+        return context, phase, handoff
+
+    def activate_document_trigger(self, handoff, trigger_entry):
+        handoff["activatedTriggers"].append(trigger_entry["trigger"])
+        for document in trigger_entry["documents"]:
+            expanded = self.helper.expand_feature_path(document, handoff["owningFeature"])
+            handoff["readDocuments"].append(expanded)
+            handoff["deferredDocuments"].remove(expanded)
+            handoff["includePaths"].append({"kind": "exact", "path": expanded})
+
+    def rediscovery_handoff(self, subject_id):
+        context, phase, handoff = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "workflow-rediscovery", issue_backed=False,
+        )
+        subject = next(
+            entry for entry in phase["rediscoverySubjects"]
+            if entry["id"] == subject_id
+        )
+        handoff["rediscoverySubjects"] = [subject_id]
+        trigger = next(
+            entry for entry in phase["deferredDocumentTriggers"]
+            if entry["trigger"] == subject["trigger"]
+        )
+        self.activate_document_trigger(handoff, trigger)
+        return context, phase, handoff
+
+    def assert_handoff_error(self, handoff, context, code):
+        with self.assertRaises(self.helper.InvalidStateError) as error:
+            self.helper.validate_handoff_context(handoff, context)
+        self.assertIn(code, {item["code"] for item in error.exception.errors})
 
     def test_phase_2b_skill_catalog_and_documents_are_complete(self):
         self.assertIn("skill-catalog", self.helper.SCHEMA_NAMES)
@@ -8059,9 +9694,26 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
         handoff = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
         catalog = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/skill-catalog.json")
         self.helper.validate_handoff_skill_set(handoff, catalog)
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        self.helper.validate_handoff_context(handoff, context)
         cache = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/workflow-cache.json")
         self.assertEqual(handoff["routeId"], "repo-wide-ai-workflow")
         self.assertEqual(handoff["owningFeature"], "none")
+        self.assertEqual(handoff["taskPhase"], "verification")
+        for field in (
+            "activatedTriggers",
+            "readDocuments",
+            "deferredDocuments",
+            "deferredDocumentTriggers",
+            "includePaths",
+            "deferredPaths",
+            "decisions",
+            "openQuestions",
+            "remainingWork",
+            "remainingVerificationEvidence",
+            "rerouteTriggers",
+        ):
+            self.assertIn(field, handoff)
         self.assertEqual(handoff["githubIssue"]["trackingStatus"], "issue_backed")
         self.assertEqual(handoff["githubIssue"]["issueNumber"], 7)
         self.assertFalse(handoff["githubIssue"]["reconciliationRequired"])
@@ -8076,8 +9728,16 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
             "trackingStatus": "issue_backed",
         })
         self.assertEqual(set(handoff["skillIds"]), set(self.REQUIRED_SKILLS))
-        self.assertIn("ai/work-logs/issue-5/README.md", handoff["reusableContextRefs"])
-        self.assertIn("ai/work-logs/issue-6/README.md", handoff["workLogRefs"])
+        self.assertEqual(handoff["activeIssue"]["number"], 10)
+        self.assertEqual(
+            handoff["activeIssue"]["issueUrl"],
+            "https://github.com/116Lv/sparta-ch6-advanced/issues/10",
+        )
+        self.assertEqual(handoff["activeIssue"]["summaryRef"], "ai/work-logs/issue-10/README.md")
+        self.assertEqual(set(handoff["activeIssue"]["roleLogRefs"]), {
+            "ai/work-logs/issue-10/implementation-agent.md",
+            "ai/work-logs/issue-10/reviewer.md",
+        })
         for not_run in (
             "Gradle",
             "build",
@@ -8108,6 +9768,647 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
         self.assertIn("ai/work-logs/issue-6/README.md", refs)
         self.assertFalse(any(ref.startswith(".ai-runs/") for ref in refs))
         self.assertTrue(any(note["id"] == "phase-2b-skills-handoff" for note in cache["handoffNotes"]))
+
+    def test_handoff_schema_rejects_noncanonical_not_run_project_commands(self):
+        canonical = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
+        variants = {
+            "arbitrary-ten": ["x"] * 10,
+            "duplicate": list(self.CANONICAL_NOT_RUN_PROJECT_COMMANDS[:-1]) + ["seed"],
+            "missing": list(self.CANONICAL_NOT_RUN_PROJECT_COMMANDS[:-1]),
+            "extra": list(self.CANONICAL_NOT_RUN_PROJECT_COMMANDS) + ["another command"],
+            "replacement": list(self.CANONICAL_NOT_RUN_PROJECT_COMMANDS[:-1]) + ["replacement"],
+            "reordered": list(reversed(self.CANONICAL_NOT_RUN_PROJECT_COMMANDS)),
+        }
+        for name, commands in variants.items():
+            invalid = json.loads(json.dumps(canonical))
+            invalid["notRunProjectCommands"] = commands
+            with self.subTest(name=name), self.assertRaises(self.helper.InvalidStateError):
+                self.helper.validate(
+                    REPOSITORY_ROOT,
+                    invalid,
+                    "ai/schemas/agent-handoff.schema.json",
+                )
+
+    def test_handoff_semantics_rejects_noncanonical_not_run_project_commands(self):
+        canonical = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        variants = {
+            "arbitrary-ten": ["x"] * 10,
+            "duplicate": list(self.CANONICAL_NOT_RUN_PROJECT_COMMANDS[:-1]) + ["seed"],
+            "missing": list(self.CANONICAL_NOT_RUN_PROJECT_COMMANDS[:-1]),
+            "extra": list(self.CANONICAL_NOT_RUN_PROJECT_COMMANDS) + ["another command"],
+            "replacement": list(self.CANONICAL_NOT_RUN_PROJECT_COMMANDS[:-1]) + ["replacement"],
+            "reordered": list(reversed(self.CANONICAL_NOT_RUN_PROJECT_COMMANDS)),
+        }
+        for name, commands in variants.items():
+            invalid = json.loads(json.dumps(canonical))
+            invalid["notRunProjectCommands"] = commands
+            with self.subTest(name=name):
+                self.assert_handoff_error(
+                    invalid,
+                    context,
+                    "HANDOFF_NOT_RUN_PROJECT_COMMANDS_INVALID",
+                )
+
+    def test_handoff_missing_required_context_is_blocked_or_rejected(self):
+        handoff = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        invalid = json.loads(json.dumps(handoff))
+        invalid["readDocuments"] = []
+        invalid["contextStatus"] = "READY"
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate_handoff_context(invalid, context)
+
+        blocked = json.loads(json.dumps(invalid))
+        blocked["contextStatus"] = "BLOCKED"
+        self.helper.validate_handoff_context(blocked, context)
+
+        missing_trigger = json.loads(json.dumps(handoff))
+        missing_trigger["deferredDocumentTriggers"].pop()
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate_handoff_context(missing_trigger, context)
+
+        featureless = json.loads(json.dumps(handoff))
+        featureless["routeId"] = "feature-work"
+        featureless["taskPhase"] = "feature-requirements"
+        featureless["contextStatus"] = "BLOCKED"
+        featureless["deferredDocuments"] = [
+            "specs/{feature}/plan.md",
+            "specs/{feature}/tasks.md",
+            "specs/{feature}/decisions.md",
+            "specs/{feature}/checklist.md",
+        ]
+        featureless["deferredDocumentTriggers"] = context["routes"][2]["phases"][0]["deferredDocumentTriggers"]
+        featureless["rerouteTriggers"] = context["routes"][2]["phases"][0]["rerouteTriggers"]
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate_handoff_context(featureless, context)
+
+    def test_completion_ready_rejects_missing_mandatory_trigger_activation(self):
+        context, phase, handoff = self.handoff_for_phase("feature-work", "completion")
+        self.assertTrue(phase["activityRequirements"][0]["mandatoryTriggers"])
+        self.assert_handoff_error(handoff, context, "HANDOFF_MANDATORY_TRIGGER_MISSING")
+
+    def test_plan_only_requires_plan_context_without_execution_tasks(self):
+        context, phase, handoff = self.handoff_for_phase(
+            "feature-work", "implementation", issue_backed=False,
+            activity_id="PLANNING",
+        )
+        plan_trigger = next(
+            entry for entry in phase["deferredDocumentTriggers"]
+            if entry["documents"] == ["specs/{feature}/plan.md"]
+        )
+        self.activate_document_trigger(handoff, plan_trigger)
+        self.helper.validate_handoff_context(handoff, context)
+
+    def test_independent_audit_requires_policy_without_execution_task_handoff(self):
+        context, phase, handoff = self.handoff_for_phase(
+            "feature-work", "verification", issue_backed=False,
+            activity_id="INDEPENDENT_AUDIT",
+        )
+        policy_trigger = next(
+            entry for entry in phase["deferredDocumentTriggers"]
+            if "ai/verification-policy.json" in entry["documents"]
+        )
+        self.activate_document_trigger(handoff, policy_trigger)
+        self.helper.validate_handoff_context(handoff, context)
+
+    def test_execution_and_verification_handoff_remain_task_gated(self):
+        context, _, execution = self.handoff_for_phase(
+            "feature-work", "implementation", issue_backed=False,
+            activity_id="EXECUTION",
+        )
+        self.assert_handoff_error(
+            execution, context, "HANDOFF_MANDATORY_TRIGGER_MISSING",
+        )
+
+        context, phase, verification_handoff = self.handoff_for_phase(
+            "feature-work", "verification", issue_backed=False,
+            activity_id="VERIFICATION_HANDOFF",
+        )
+        policy_trigger = next(
+            entry for entry in phase["deferredDocumentTriggers"]
+            if "ai/verification-policy.json" in entry["documents"]
+        )
+        self.activate_document_trigger(verification_handoff, policy_trigger)
+        self.assert_handoff_error(
+            verification_handoff, context, "HANDOFF_MANDATORY_TRIGGER_MISSING",
+        )
+
+    def test_activity_is_closed_and_route_phase_compatible(self):
+        context, _, planning = self.handoff_for_phase(
+            "feature-work", "implementation", issue_backed=False,
+            activity_id="PLANNING",
+        )
+        unknown = json.loads(json.dumps(planning))
+        unknown["activityId"] = "MAKE_IT_SO"
+        self.assert_handoff_error(unknown, context, "HANDOFF_ACTIVITY_UNKNOWN")
+
+        incompatible = json.loads(json.dumps(planning))
+        incompatible["activityId"] = "INDEPENDENT_AUDIT"
+        self.assert_handoff_error(
+            incompatible, context, "HANDOFF_ACTIVITY_INCOMPATIBLE",
+        )
+
+    def test_rediscovery_requires_a_closed_subject_selection(self):
+        context, _, no_subject = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "workflow-rediscovery", issue_backed=False,
+        )
+        self.assert_handoff_error(
+            no_subject, context, "HANDOFF_REDISCOVERY_SUBJECT_REQUIRED",
+        )
+
+        unknown = json.loads(json.dumps(no_subject))
+        unknown["rediscoverySubjects"] = ["EVERYTHING"]
+        self.assert_handoff_error(
+            unknown, context, "HANDOFF_REDISCOVERY_SUBJECT_UNKNOWN",
+        )
+
+        context, _, non_rediscovery = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "verification", issue_backed=False,
+        )
+        non_rediscovery["rediscoverySubjects"] = ["CACHE_POLICY"]
+        self.assert_handoff_error(
+            non_rediscovery, context, "HANDOFF_REDISCOVERY_SUBJECT_FORBIDDEN",
+        )
+
+    def test_rediscovery_reads_only_selected_subject_documents(self):
+        context, phase, handoff = self.rediscovery_handoff("CACHE_POLICY")
+        selected = next(
+            entry for entry in phase["rediscoverySubjects"]
+            if entry["id"] == "CACHE_POLICY"
+        )
+        self.helper.validate_handoff_context(handoff, context)
+        self.assertEqual(
+            set(handoff["readDocuments"]),
+            set(phase["requiredDocuments"]) | set(selected["documents"]),
+        )
+
+        extra_subject = next(
+            entry for entry in phase["rediscoverySubjects"]
+            if entry["id"] == "TOOL_POLICY"
+        )
+        arbitrary = json.loads(json.dumps(handoff))
+        extra_document = extra_subject["documents"][0]
+        arbitrary["readDocuments"].append(extra_document)
+        arbitrary["includePaths"].append({"kind": "exact", "path": extra_document})
+        self.assert_handoff_error(
+            arbitrary, context, "HANDOFF_REDISCOVERY_DOCUMENT_UNSELECTED",
+        )
+
+    def test_activated_document_trigger_requires_document_to_be_read(self):
+        context, phase, handoff = self.handoff_for_phase("repo-wide-ai-workflow", "verification")
+        document_trigger = phase["deferredDocumentTriggers"][0]
+        handoff["activatedTriggers"].append(document_trigger["trigger"])
+        handoff["deferredDocuments"].remove(document_trigger["documents"][0])
+        self.assert_handoff_error(handoff, context, "HANDOFF_EFFECTIVE_REQUIRED_CONTEXT_MISSING")
+
+    def test_answer_and_light_routes_make_repository_context_explicit(self):
+        context, _, answer = self.handoff_for_phase(
+            "answer", "answer", issue_backed=False,
+        )
+        answer["repositoryContextRequired"] = False
+        self.helper.validate_handoff_context(answer, context)
+
+        required_answer = json.loads(json.dumps(answer))
+        required_answer["repositoryContextRequired"] = True
+        self.assert_handoff_error(
+            required_answer, context, "HANDOFF_SELECTED_DOCUMENT_REQUIRED",
+        )
+
+        context, _, light = self.handoff_for_phase(
+            "light-structure", "light-structure", issue_backed=False,
+        )
+        light["repositoryContextRequired"] = False
+        self.assert_handoff_error(
+            light, context, "HANDOFF_REPOSITORY_CONTEXT_REQUIRED",
+        )
+        light.update({
+            "repositoryContextRequired": True,
+            "selectedDocuments": ["docs/01-product-overview.md"],
+            "readDocuments": ["docs/01-product-overview.md"],
+            "includePaths": [{"kind": "exact", "path": "docs/01-product-overview.md"}],
+        })
+        self.helper.validate_handoff_context(light, context)
+
+        placeholder_selection = json.loads(json.dumps(light))
+        placeholder_selection["selectedDocuments"] = ["specs/{feature}/spec.md"]
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                REPOSITORY_ROOT,
+                placeholder_selection,
+                "ai/schemas/agent-handoff.schema.json",
+            )
+
+    def test_selected_read_and_deferred_documents_obey_include_scopes(self):
+        context, _, handoff = self.handoff_for_phase(
+            "light-structure", "light-structure", issue_backed=False,
+        )
+        handoff.update({
+            "repositoryContextRequired": True,
+            "selectedDocuments": ["docs/01-product-overview.md"],
+            "readDocuments": ["docs/01-product-overview.md"],
+            "includePaths": [{"kind": "exact", "path": "docs/01-product-overview.md"}],
+        })
+        self.helper.validate_handoff_context(handoff, context)
+
+        unread_selected = json.loads(json.dumps(handoff))
+        unread_selected["readDocuments"] = []
+        self.assert_handoff_error(
+            unread_selected, context, "HANDOFF_SELECTED_DOCUMENT_UNREAD",
+        )
+
+        unscoped_read = json.loads(json.dumps(handoff))
+        unscoped_read["includePaths"] = []
+        self.assert_handoff_error(
+            unscoped_read, context, "HANDOFF_READ_DOCUMENT_NOT_INCLUDED",
+        )
+
+        still_deferred = json.loads(json.dumps(handoff))
+        still_deferred["readDocuments"].append(still_deferred["deferredDocuments"][0])
+        still_deferred["includePaths"].append({
+            "kind": "exact", "path": still_deferred["deferredDocuments"][0],
+        })
+        self.assert_handoff_error(
+            still_deferred, context, "HANDOFF_READ_DOCUMENT_STILL_DEFERRED",
+        )
+
+    def test_activated_document_and_opt_in_scopes_are_materialized_exactly(self):
+        context, phase, handoff = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "verification", issue_backed=False,
+        )
+        document_trigger = phase["deferredDocumentTriggers"][0]
+        document = document_trigger["documents"][0]
+        handoff["activatedTriggers"].append(document_trigger["trigger"])
+        handoff["readDocuments"].append(document)
+        handoff["deferredDocuments"].remove(document)
+        self.assert_handoff_error(
+            handoff, context, "HANDOFF_ACTIVATED_DOCUMENT_EXACT_SCOPE_MISSING",
+        )
+        handoff["includePaths"].append({"kind": "exact", "path": document})
+        self.helper.validate_handoff_context(handoff, context)
+
+        schema_opt_in = next(
+            entry for entry in phase["optInPaths"]
+            if entry["path"] == {"kind": "subtree", "path": "ai/schemas"}
+        )
+        selected_schema = "ai/schemas/agent-handoff.schema.json"
+        handoff["activatedTriggers"].append(schema_opt_in["trigger"])
+        handoff["includePaths"].append({"kind": "exact", "path": selected_schema})
+        self.assert_handoff_error(
+            handoff, context, "HANDOFF_OPT_IN_EXACT_SCOPE_UNREAD",
+        )
+        handoff["readDocuments"].append(selected_schema)
+        self.helper.validate_handoff_context(handoff, context)
+
+        blocked = json.loads(json.dumps(handoff))
+        blocked["contextStatus"] = "BLOCKED"
+        blocked["readDocuments"].remove(selected_schema)
+        self.helper.validate_handoff_context(blocked, context)
+
+    def test_arbitrary_nondefault_include_scope_is_rejected(self):
+        context, _, handoff = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "verification", issue_backed=False,
+        )
+        handoff["includePaths"].append({"kind": "exact", "path": "README.md"})
+        self.assert_handoff_error(
+            handoff, context, "HANDOFF_INCLUDE_SCOPE_UNAUTHORIZED",
+        )
+
+    def test_activated_document_is_removed_from_still_deferred_set(self):
+        context, phase, handoff = self.handoff_for_phase("repo-wide-ai-workflow", "verification")
+        document_trigger = phase["deferredDocumentTriggers"][0]
+        document = document_trigger["documents"][0]
+        handoff["activatedTriggers"].append(document_trigger["trigger"])
+        handoff["readDocuments"].append(document)
+        self.assert_handoff_error(handoff, context, "HANDOFF_DEFERRED_CONTEXT_MISMATCH")
+
+        handoff["deferredDocuments"].remove(document)
+        handoff["includePaths"].append({"kind": "exact", "path": document})
+        self.helper.validate_handoff_context(handoff, context)
+
+    def test_opt_in_scope_requires_matching_activation(self):
+        context, phase, handoff = self.handoff_for_phase("repo-wide-ai-workflow", "verification")
+        schema_opt_in = next(
+            entry for entry in phase["optInPaths"]
+            if entry["path"] == {"kind": "subtree", "path": "ai/schemas"}
+        )
+        handoff["includePaths"].append({
+            "kind": "exact",
+            "path": "ai/schemas/agent-handoff.schema.json",
+        })
+        self.assert_handoff_error(handoff, context, "HANDOFF_OPT_IN_TRIGGER_NOT_ACTIVATED")
+
+        handoff["activatedTriggers"].append(schema_opt_in["trigger"])
+        handoff["readDocuments"].append("ai/schemas/agent-handoff.schema.json")
+        self.helper.validate_handoff_context(handoff, context)
+
+    def test_unknown_trigger_activation_is_rejected(self):
+        context, _, handoff = self.handoff_for_phase("repo-wide-ai-workflow", "verification")
+        handoff["activatedTriggers"].append("This trigger is not canonical.")
+        self.assert_handoff_error(handoff, context, "HANDOFF_TRIGGER_ACTIVATION_UNKNOWN")
+
+        duplicate = json.loads(json.dumps(handoff))
+        duplicate["activatedTriggers"] = [
+            duplicate["activatedTriggers"][0],
+            duplicate["activatedTriggers"][0],
+        ]
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                REPOSITORY_ROOT,
+                duplicate,
+                "ai/schemas/agent-handoff.schema.json",
+            )
+
+    def test_handoff_rejects_duplicate_deferred_trigger_mappings(self):
+        context, _, handoff = self.handoff_for_phase("repo-wide-ai-workflow", "verification")
+
+        exact_duplicate = json.loads(json.dumps(handoff))
+        exact_duplicate["deferredDocumentTriggers"].append(
+            json.loads(json.dumps(exact_duplicate["deferredDocumentTriggers"][0]))
+        )
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                REPOSITORY_ROOT,
+                exact_duplicate,
+                "ai/schemas/agent-handoff.schema.json",
+            )
+
+        different_documents = json.loads(json.dumps(handoff))
+        different_documents["deferredDocumentTriggers"].append({
+            "trigger": different_documents["deferredDocumentTriggers"][0]["trigger"],
+            "documents": ["ai/done-claim-template.md"],
+        })
+        self.assert_handoff_error(
+            different_documents,
+            context,
+            "HANDOFF_DEFERRED_TRIGGERS_MISMATCH",
+        )
+
+    def test_duplicate_qa_trigger_cannot_skip_unread_qa_gate_in_ready_handoff(self):
+        context, phase, handoff = self.handoff_for_phase("feature-work", "completion")
+        qa_trigger = next(
+            entry for entry in phase["deferredDocumentTriggers"]
+            if entry["documents"] == ["ai/qa-gate.md"]
+        )
+        phase["deferredDocumentTriggers"].append({
+            "trigger": qa_trigger["trigger"],
+            "documents": ["ai/done-claim-template.md"],
+        })
+        handoff["deferredDocumentTriggers"] = [
+            {
+                "trigger": entry["trigger"],
+                "documents": [
+                    self.helper.expand_feature_path(path, handoff["owningFeature"])
+                    for path in entry["documents"]
+                ],
+            }
+            for entry in phase["deferredDocumentTriggers"]
+        ]
+        handoff["activatedTriggers"].extend(
+            phase["activityRequirements"][0]["mandatoryTriggers"]
+        )
+        handoff["readDocuments"].extend([
+            "specs/chat/checklist.md",
+            "ai/done-claim-template.md",
+            "ai/issue-completion-checklist.md",
+        ])
+        handoff["deferredDocuments"] = ["ai/qa-gate.md"]
+
+        self.assert_handoff_error(
+            handoff,
+            context,
+            "HANDOFF_DEFERRED_TRIGGERS_MISMATCH",
+        )
+
+    def test_blocked_may_omit_mandatory_activation_but_not_canonical_identity(self):
+        context, phase, handoff = self.handoff_for_phase(
+            "feature-work", "completion", status="BLOCKED",
+        )
+        self.assertTrue(phase["activityRequirements"][0]["mandatoryTriggers"])
+        self.helper.validate_handoff_context(handoff, context)
+
+        missing_canonical_trigger = json.loads(json.dumps(handoff))
+        missing_canonical_trigger["deferredDocumentTriggers"].pop()
+        self.assert_handoff_error(
+            missing_canonical_trigger,
+            context,
+            "HANDOFF_DEFERRED_TRIGGERS_MISMATCH",
+        )
+
+        unactivated_scope = json.loads(json.dumps(handoff))
+        unactivated_scope["activatedTriggers"] = []
+        self.assert_handoff_error(
+            unactivated_scope,
+            context,
+            "HANDOFF_OPT_IN_TRIGGER_NOT_ACTIVATED",
+        )
+
+    def test_handoff_selects_only_active_issue_summary_and_role_logs(self):
+        handoff = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/agent-handoff.json")
+        desired = json.loads(json.dumps(handoff))
+        desired["activeIssue"]["issueUrl"] = (
+            "https://github.com/116Lv/sparta-ch6-advanced/issues/10"
+        )
+        self.helper.validate(
+            REPOSITORY_ROOT, desired, "ai/schemas/agent-handoff.schema.json",
+        )
+        missing_url = json.loads(json.dumps(desired))
+        missing_url["activeIssue"].pop("issueUrl")
+        with self.assertRaises(self.helper.InvalidStateError):
+            self.helper.validate(
+                REPOSITORY_ROOT, missing_url, "ai/schemas/agent-handoff.schema.json",
+            )
+        active_issue_prefix = f"ai/work-logs/issue-{handoff['activeIssue']['number']}/"
+        self.assertTrue(handoff["activeIssue"]["summaryRef"].startswith(active_issue_prefix))
+        self.assertTrue(handoff["activeIssue"]["roleLogRefs"])
+        self.assertTrue(all(path.startswith(active_issue_prefix) for path in handoff["activeIssue"]["roleLogRefs"]))
+        self.assertNotIn("ai/work-logs/**", handoff["includePaths"])
+
+    def test_every_canonical_route_phase_constructs_without_an_issue_scope(self):
+        context = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/context-map.json")
+        for route in context["routes"]:
+            for phase in route["phases"]:
+                with self.subTest(route=route["id"], phase=phase["id"]):
+                    if phase["id"] == "workflow-rediscovery":
+                        _, _, handoff = self.rediscovery_handoff("ROUTING_POLICY")
+                    else:
+                        _, _, handoff = self.handoff_for_phase(
+                            route["id"], phase["id"], issue_backed=False,
+                            activate_mandatory=True,
+                        )
+                    self.helper.validate(
+                        REPOSITORY_ROOT, handoff,
+                        "ai/schemas/agent-handoff.schema.json",
+                    )
+                    self.helper.validate_handoff_context(handoff, context)
+
+    def test_work_log_include_scope_is_closed_to_active_issue_refs(self):
+        context, _, handoff = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "verification",
+        )
+        for scope in (
+            {"kind": "exact", "path": "ai/work-logs/issue-9/README.md"},
+            {"kind": "exact", "path": "ai/work-logs/issue-10/unlisted.md"},
+            {"kind": "subtree", "path": "ai/work-logs/issue-10"},
+            {"kind": "direct-children", "path": "ai/work-logs/issue-10", "suffix": ".md"},
+            {"kind": "descendant-directory", "name": "issue-10"},
+        ):
+            invalid = json.loads(json.dumps(handoff))
+            invalid["includePaths"].append(scope)
+            with self.subTest(scope=scope):
+                self.assert_handoff_error(
+                    invalid, context, "HANDOFF_WORK_LOG_SCOPE_NOT_ACTIVE_REF",
+                )
+
+    def test_blocked_handoff_cannot_widen_work_log_scope(self):
+        context, _, handoff = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "verification", status="BLOCKED",
+        )
+        handoff["includePaths"].append({
+            "kind": "exact", "path": "ai/work-logs/issue-9/reviewer.md",
+        })
+        self.assert_handoff_error(
+            handoff, context, "HANDOFF_WORK_LOG_SCOPE_NOT_ACTIVE_REF",
+        )
+
+    def test_reusable_context_refs_reject_excluded_and_foreign_work_logs(self):
+        context, _, handoff = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "verification",
+        )
+        for reference, code in (
+            (".git/config", "HANDOFF_REUSABLE_CONTEXT_EXCLUDED"),
+            ("ai/work-logs/issue-9/README.md", "HANDOFF_REUSABLE_WORK_LOG_NOT_ACTIVE_REF"),
+            ("ai/work-logs/issue-10/unlisted.md", "HANDOFF_REUSABLE_WORK_LOG_NOT_ACTIVE_REF"),
+        ):
+            invalid = json.loads(json.dumps(handoff))
+            invalid["reusableContextRefs"].append(reference)
+            with self.subTest(reference=reference):
+                self.assert_handoff_error(invalid, context, code)
+
+    def test_active_issue_refs_must_all_be_exactly_included(self):
+        context, _, handoff = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "verification",
+        )
+        handoff["includePaths"].remove({
+            "kind": "exact", "path": handoff["activeIssue"]["roleLogRefs"][0],
+        })
+        self.assert_handoff_error(
+            handoff, context, "HANDOFF_ACTIVE_ISSUE_NOT_INCLUDED",
+        )
+
+    def test_active_issue_requires_activated_work_log_trigger(self):
+        context, phase, handoff = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "verification",
+        )
+        work_log_trigger = next(
+            entry["trigger"] for entry in phase["optInPaths"]
+            if entry["path"] == {"kind": "subtree", "path": "ai/work-logs"}
+        )
+        handoff["activatedTriggers"].remove(work_log_trigger)
+        self.assert_handoff_error(
+            handoff, context, "HANDOFF_ACTIVE_ISSUE_TRIGGER_INACTIVE",
+        )
+
+    def test_null_active_issue_rejects_work_log_scope_or_ref(self):
+        context, phase, handoff = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "verification", issue_backed=False,
+        )
+        work_log_trigger = next(
+            entry["trigger"] for entry in phase["optInPaths"]
+            if entry["path"] == {"kind": "subtree", "path": "ai/work-logs"}
+        )
+        handoff["activatedTriggers"].append(work_log_trigger)
+        for field, value in (
+            ("includePaths", {"kind": "exact", "path": "ai/work-logs/issue-10/README.md"}),
+            ("reusableContextRefs", "ai/work-logs/issue-10/README.md"),
+        ):
+            invalid = json.loads(json.dumps(handoff))
+            invalid[field].append(value)
+            with self.subTest(field=field):
+                self.assert_handoff_error(
+                    invalid, context, "HANDOFF_ACTIVE_ISSUE_REQUIRED",
+                )
+
+    def test_active_issue_refs_are_exact_number_bound_and_distinct(self):
+        context, _, handoff = self.handoff_for_phase(
+            "repo-wide-ai-workflow", "verification",
+        )
+        handoff["activeIssue"]["issueUrl"] = (
+            "https://github.com/116Lv/sparta-ch6-advanced/issues/10"
+        )
+        cases = []
+        prefix_mismatch = json.loads(json.dumps(handoff))
+        prefix_mismatch["activeIssue"]["summaryRef"] = "ai/work-logs/issue-1/README.md"
+        cases.append(("prefix", prefix_mismatch))
+        duplicate_summary = json.loads(json.dumps(handoff))
+        duplicate_summary["activeIssue"]["roleLogRefs"][0] = duplicate_summary["activeIssue"]["summaryRef"]
+        cases.append(("summary-role-duplicate", duplicate_summary))
+        duplicate_role = json.loads(json.dumps(handoff))
+        duplicate_role["activeIssue"]["roleLogRefs"][1] = duplicate_role["activeIssue"]["roleLogRefs"][0]
+        cases.append(("role-duplicate", duplicate_role))
+        for name, invalid in cases:
+            with self.subTest(case=name):
+                self.assert_handoff_error(
+                    invalid, context, "HANDOFF_ACTIVE_ISSUE_SCOPE_INVALID",
+                )
+
+        rebound = json.loads(json.dumps(handoff))
+        rebound["activeIssue"].update({
+            "number": 11,
+            "summaryRef": "ai/work-logs/issue-11/README.md",
+            "roleLogRefs": [
+                "ai/work-logs/issue-11/implementation-agent.md",
+                "ai/work-logs/issue-11/reviewer.md",
+            ],
+        })
+        rebound["includePaths"] = [
+            {
+                **scope,
+                "path": scope["path"].replace("issue-10", "issue-11"),
+            }
+            if scope.get("kind") == "exact" and scope.get("path", "").startswith("ai/work-logs/")
+            else scope
+            for scope in rebound["includePaths"]
+        ]
+        self.assert_handoff_error(
+            rebound, context, "HANDOFF_ACTIVE_ISSUE_URL_INVALID",
+        )
+
+        for issue_url in (
+            "HTTPS://github.com/116Lv/sparta-ch6-advanced/issues/10",
+            " https://github.com/116Lv/sparta-ch6-advanced/issues/10",
+            "\x00https://github.com/116Lv/sparta-ch6-advanced/issues/10",
+            "https://git\thub.com/116Lv/sparta-ch6-advanced/issues/10",
+            "https://github.com/\r116Lv/sparta-ch6-advanced/issues/10",
+            "https://github.com/116Lv/\nsparta-ch6-advanced/issues/10",
+            "https://github.com/116Lv/sparta-ch6-advanced/issues/10\n",
+            "https://github.com/116Lv/sparta-ch6-advanced/issues/10 ",
+            "http://github.com/116Lv/sparta-ch6-advanced/issues/10",
+            "https://example.com/116Lv/sparta-ch6-advanced/issues/10",
+            "https://github.com/116Lv/sparta-ch6-advanced/issues/10/",
+            "https://github.com/116Lv/sparta-ch6-advanced/issues/10?view=1",
+            "https://github.com/116Lv/sparta-ch6-advanced/issues/10#issuecomment-1",
+            "https://user@github.com/116Lv/sparta-ch6-advanced/issues/10",
+            "https://github.com:443/116Lv/sparta-ch6-advanced/issues/10",
+        ):
+            invalid = json.loads(json.dumps(handoff))
+            invalid["activeIssue"]["issueUrl"] = json.loads(json.dumps(issue_url))
+            with self.subTest(issue_url=issue_url, validator="schema"):
+                with self.assertRaises(self.helper.InvalidStateError):
+                    self.helper.validate(
+                        REPOSITORY_ROOT, invalid,
+                        "ai/schemas/agent-handoff.schema.json",
+                    )
+            with self.subTest(issue_url=issue_url, validator="helper"):
+                self.assert_handoff_error(
+                    invalid, context, "HANDOFF_ACTIVE_ISSUE_URL_INVALID",
+                )
+
+        missing_url = json.loads(json.dumps(handoff))
+        missing_url["activeIssue"].pop("issueUrl")
+        self.assert_handoff_error(
+            missing_url, context, "HANDOFF_ACTIVE_ISSUE_URL_INVALID",
+        )
 
     def test_catalog_and_handoff_semantics_reject_duplicate_or_missing_skill_ids(self):
         catalog = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/skill-catalog.json")
@@ -8180,7 +10481,7 @@ class Phase2BSkillsHandoffTests(unittest.TestCase):
     def test_phase_2b_repository_artifacts_remain_absent(self):
         bad = []
         for path in REPOSITORY_ROOT.rglob("*"):
-            if ".git" in path.parts:
+            if ".git" in path.parts or ".worktrees" in path.parts:
                 continue
             normalized = str(path.relative_to(REPOSITORY_ROOT)).replace("\\", "/")
             if normalized.startswith("ai/fixtures/"):
@@ -9106,7 +11407,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
         self.assertFalse((REPOSITORY_ROOT / ".ai-runs").exists())
         bad = []
         for path in REPOSITORY_ROOT.rglob("*"):
-            if ".git" in path.parts:
+            if ".git" in path.parts or ".worktrees" in path.parts:
                 continue
             normalized = str(path.relative_to(REPOSITORY_ROOT)).replace("\\", "/")
             if normalized.startswith("ai/fixtures/"):
