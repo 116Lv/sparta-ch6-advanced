@@ -28,7 +28,14 @@ public class OrderPaidAnalyticsService {
         }
         int inserted = processedEventRepository.markProcessed(message.eventId(), consumerGroup);
         if (inserted == 0) return false;
-        analyticsRepository.saveAndFlush(OrderPaidAnalytics.from(consumerGroup, message, LocalDateTime.now(clock)));
+        analyticsRepository.saveAndFlush(OrderPaidAnalytics.create(
+                consumerGroup,
+                message.eventId(),
+                message.aggregateId(),
+                message.userId(),
+                message.menuId(),
+                message.paymentAmount(),
+                LocalDateTime.now(clock)));
         return true;
     }
 }

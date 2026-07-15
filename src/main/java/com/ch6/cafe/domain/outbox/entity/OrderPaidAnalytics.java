@@ -1,6 +1,5 @@
 package com.ch6.cafe.domain.outbox.entity;
 
-import com.ch6.cafe.domain.outbox.service.OrderPaidMessage;
 import jakarta.persistence.Column;
 import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
@@ -20,13 +19,20 @@ public class OrderPaidAnalytics {
     protected OrderPaidAnalytics() {
     }
 
-    public static OrderPaidAnalytics from(String consumerGroup, OrderPaidMessage message, LocalDateTime now) {
+    public static OrderPaidAnalytics create(
+            String consumerGroup,
+            long eventId,
+            long aggregateId,
+            long userId,
+            long menuId,
+            long paymentAmount,
+            LocalDateTime now) {
         OrderPaidAnalytics analytics = new OrderPaidAnalytics();
-        analytics.id = new OrderPaidAnalyticsId(consumerGroup, message.eventId());
-        analytics.aggregateId = message.aggregateId();
-        analytics.userId = message.userId();
-        analytics.menuId = message.menuId();
-        analytics.paymentAmount = message.paymentAmount();
+        analytics.id = new OrderPaidAnalyticsId(consumerGroup, eventId);
+        analytics.aggregateId = aggregateId;
+        analytics.userId = userId;
+        analytics.menuId = menuId;
+        analytics.paymentAmount = paymentAmount;
         analytics.processedAt = now;
         return analytics;
     }

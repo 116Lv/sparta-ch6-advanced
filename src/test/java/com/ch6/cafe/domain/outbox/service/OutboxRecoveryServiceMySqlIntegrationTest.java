@@ -94,6 +94,30 @@ class OutboxRecoveryServiceMySqlIntegrationTest {
         assertThat(eventRepository.findById(ready).orElseThrow().getStatus()).isEqualTo(OutboxStatus.READY);
     }
 
+    @Test void processingPublishedMissingAndBlankReasonAreRejectedWithoutMutationOrAudit() {
+        long eventId = seedEvent("PROCESSING", 2, "in flight");
+
+        assertThatThrownBy(() -> service.requeueFailed(eventId, "operator", "reason"))
+                .isInstanceOf(IllegalStateException.class);
+        assertUnchanged(eventId, OutboxStatus.PROCESSING, 2, "in flight");
+
+        jdbcTemplate.update("UPDATE outbox_events SET status = 'PUBLISHED' WHERE id = ?", eventId);
+        assertThatThrownBy(() -> service.requeueFailed(eventId, "operator", "reason"))
+                .isInstanceOf(IllegalStateException.class);
+        assertUnchanged(eventId, OutboxStatus.PUBLISHED, 2, "in flight");
+
+        assertThatThrownBy(() -> service.requeueFailed(eventId + 999, "operator", "reason"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Outbox event was not found.");
+
+        jdbcTemplate.update("UPDATE outbox_events SET status = 'FAILED' WHERE id = ?", eventId);
+        assertThatThrownBy(() -> service.requeueFailed(eventId, "operator", " "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Reason must not be blank.");
+        assertUnchanged(eventId, OutboxStatus.FAILED, 2, "in flight");
+        assertThat(auditRepository.count()).isZero();
+    }
+
     @Test void recoveryPersistenceFailureRollsBackAuditAndStateTransition() {
         long failed = seedEvent("FAILED", 5, "permanent");
         doThrow(new DataAccessResourceFailureException("forced audit failure")).when(auditRepository).save(any());
@@ -113,5 +137,13 @@ class OutboxRecoveryServiceMySqlIntegrationTest {
         jdbcTemplate.update("INSERT INTO orders (id, user_id, menu_id, order_price, status, ordered_at) VALUES (1, 1, 1, 4500, 'PAID', ?)", now);
         jdbcTemplate.update("INSERT INTO outbox_events (aggregate_type, aggregate_id, event_type, payload, status, retry_count, last_error, created_at, updated_at) VALUES ('ORDER', 1, 'ORDER_PAID', JSON_OBJECT('userId', 1, 'menuId', 1, 'paymentAmount', 4500), ?, ?, ?, ?, ?)", status, retryCount, error, now, now);
         return jdbcTemplate.queryForObject("SELECT id FROM outbox_events", Long.class);
+    }
+
+    private void assertUnchanged(long eventId, OutboxStatus status, int retryCount, String lastError) {
+        OutboxEvent event = eventRepository.findById(eventId).orElseThrow();
+        assertThat(event.getStatus()).isEqualTo(status);
+        assertThat(event.getRetryCount()).isEqualTo(retryCount);
+        assertThat(event.getLastError()).isEqualTo(lastError);
+        assertThat(auditRepository.count()).isZero();
     }
 }

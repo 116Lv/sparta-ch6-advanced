@@ -90,12 +90,22 @@ class OrderPaidConsumerMySqlIntegrationTest {
         assertThat(analyticsRepository.count()).isOne();
     }
 
-    @Test void invalidCompleteEnvelopeCreatesNoDurableState() {
+    @Test void missingNullNonNumericAndOutOfRangeValuesCreateNoDurableState() {
         OrderPaidConsumer consumer = new OrderPaidConsumer(service, objectMapper, "analytics-a");
-        assertThatThrownBy(() -> consumer.consume(message(11, 101, 7, 0, 4_500)))
-                .isInstanceOf(IllegalArgumentException.class).hasMessage("ORDER_PAID event contract is invalid.");
-        assertThat(processedRepository.count()).isZero();
-        assertThat(analyticsRepository.count()).isZero();
+        String[] invalidMessages = {
+                "{\"eventId\":11,\"eventType\":\"ORDER_PAID\",\"aggregateId\":101,\"payload\":{\"userId\":7,\"menuId\":17}}",
+                "{\"eventId\":11,\"eventType\":\"ORDER_PAID\",\"aggregateId\":101,\"payload\":{\"userId\":null,\"menuId\":17,\"paymentAmount\":4500}}",
+                "{\"eventId\":11,\"eventType\":\"ORDER_PAID\",\"aggregateId\":101,\"payload\":{\"userId\":7,\"menuId\":\"17\",\"paymentAmount\":4500}}",
+                "{\"eventId\":9223372036854775808,\"eventType\":\"ORDER_PAID\",\"aggregateId\":101,\"payload\":{\"userId\":7,\"menuId\":17,\"paymentAmount\":4500}}"
+        };
+
+        for (String invalidMessage : invalidMessages) {
+            assertThatThrownBy(() -> consumer.consume(invalidMessage))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("ORDER_PAID event contract is invalid.");
+            assertThat(processedRepository.count()).isZero();
+            assertThat(analyticsRepository.count()).isZero();
+        }
     }
 
     private String message(long eventId, long aggregateId, long userId, long menuId, long amount) {

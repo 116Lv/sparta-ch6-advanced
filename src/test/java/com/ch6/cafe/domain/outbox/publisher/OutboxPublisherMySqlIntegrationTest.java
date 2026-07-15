@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.ch6.cafe.domain.outbox.entity.OutboxEvent;
@@ -19,11 +21,14 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
@@ -32,6 +37,8 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -51,6 +58,7 @@ class OutboxPublisherMySqlIntegrationTest {
     @MockitoBean RedisPopularMenuRepository redisRepository;
     @MockitoBean RedissonClient redissonClient;
     @MockitoBean OrderPaidConsumer consumer;
+    @MockitoBean OutboxPublisher outboxPublisher;
     @MockitoBean KafkaTemplate<String, String> kafkaTemplate;
     @Autowired OutboxEventRepository repository;
     @Autowired TransactionTemplate transactions;
@@ -113,8 +121,45 @@ class OutboxPublisherMySqlIntegrationTest {
                 .hasMessage("Outbox claim token is stale.");
     }
 
+    @Test void acknowledgedSendWithCompletionFailureReturnsToAReclaimableDuplicateBoundary() {
+        seedEvents(1);
+        when(kafkaTemplate.send(anyString(), anyString(), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+        OutboxPublisher publisher = new OutboxPublisher(
+                repository, kafkaTemplate, failFirstCompletionTransaction(), objectMapper,
+                "worker-a", 1, 30, 5);
+
+        publisher.publishBatch();
+
+        OutboxEvent retryable = repository.findAll().getFirst();
+        assertThat(retryable.getStatus()).isEqualTo(OutboxStatus.READY);
+        assertThat(retryable.getRetryCount()).isOne();
+        assertThat(retryable.getClaimToken()).isNull();
+        OutboxPublisher.ClaimedEvent reclaimed = publisher("worker-b", 1).claimNext().orElseThrow();
+        assertThat(reclaimed.id()).isEqualTo(retryable.getId());
+        verify(kafkaTemplate, times(1)).send("coffee.order.paid", "1", org.mockito.ArgumentMatchers.anyString());
+    }
+
     private OutboxPublisher publisher(String owner, int batchSize) {
         return new OutboxPublisher(repository, kafkaTemplate, transactions, objectMapper, owner, batchSize, 30, 5);
+    }
+
+    private TransactionTemplate failFirstCompletionTransaction() {
+        AtomicInteger completionAttempts = new AtomicInteger();
+        return new TransactionTemplate(transactions.getTransactionManager()) {
+            @Override
+            public <T> T execute(TransactionCallback<T> action) {
+                return transactions.execute(action);
+            }
+
+            @Override
+            public void executeWithoutResult(Consumer<TransactionStatus> action) {
+                if (completionAttempts.getAndIncrement() == 0) {
+                    throw new DataAccessResourceFailureException("forced completion failure");
+                }
+                transactions.executeWithoutResult(action);
+            }
+        };
     }
 
     private void seedEvents(int count) {

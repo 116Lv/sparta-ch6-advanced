@@ -55,6 +55,21 @@ are preserved in exactly one audit row. Blank provenance, non-`FAILED` state, mi
 transaction failure must leave both event and audit state unchanged. Direct unaudited SQL requeue
 is prohibited, and no unauthenticated recovery endpoint may expose the service.
 
+### Additive schema rollout and rollback
+
+Deploy migration V2 before any application instance that writes `order_paid_analytics` or
+`outbox_recovery_audits`. The migration is additive, so old application instances may continue
+running while the new tables are created; only after migration success may the new consumer and
+audited recovery code be rolled out. Verify table, constraint, index, and application mapping
+compatibility before enabling Kafka listener traffic or recovery operations.
+
+If the new application must be rolled back, stop or disable the new listener/recovery writers and
+roll application instances back while retaining the additive tables and their audit/analytics
+data. Do not drop the tables as an emergency rollback because that destroys durable effects and
+recovery provenance. Repair incompatible application or migration behavior with a reviewed
+forward-fix migration, then redeploy and resume consumption from Kafka; consumer idempotency
+absorbs replay of already committed events.
+
 ## Performance and Load Test Plan
 
 The scenarios and metrics below are fixed now. Numeric TPS and p95 targets are intentionally not fixed until a reproducible baseline run records the environment, dataset, instance counts, tool configuration, and bottleneck evidence. After that run, record the target values and regression tolerance in the verification evidence owner rather than silently inventing them in README.

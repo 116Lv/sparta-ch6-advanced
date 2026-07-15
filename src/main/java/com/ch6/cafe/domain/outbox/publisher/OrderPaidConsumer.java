@@ -46,7 +46,7 @@ public class OrderPaidConsumer {
     }
 
     private long positiveLong(JsonNode value) {
-        return value.isIntegralNumber() ? value.longValue() : 0;
+        return value.isIntegralNumber() && value.canConvertToLong() ? value.longValue() : 0;
     }
 
 }
