@@ -109,11 +109,18 @@ class DistributedLockManagerRedisIntegrationTest {
     }
 
     @Test
-    void ownedReleaseAllowsLaterAcquisitionOfSameKey() {
+    void ownedReleaseAllowsLaterAcquisitionOfSameKeyFromDifferentThread() throws Exception {
         DistributedLockManager manager = new DistributedLockManager(redissonClient, 500L);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
 
         assertThat(manager.withUserPointLock(3L, () -> "first")).isEqualTo("first");
-        assertThat(manager.withUserPointLock(3L, () -> "second")).isEqualTo("second");
+        try {
+            Future<String> laterOwner = executor.submit(() ->
+                    manager.withUserPointLock(3L, () -> "second"));
+            assertThat(laterOwner.get(5, SECONDS)).isEqualTo("second");
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test

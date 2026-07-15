@@ -10,6 +10,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.ch6.cafe.domain.menu.entity.Menu;
@@ -239,8 +240,8 @@ class OrderPaymentMySqlIntegrationTest {
         try {
             assertThat(firstLocked.await(5, SECONDS)).isTrue();
             second = executor.submit(() -> {
-                secondStarted.countDown();
                 transactionTemplate.executeWithoutResult(status -> {
+                    secondStarted.countDown();
                     UserPoint point = userPointRepository.findByUserIdForUpdate(USER_ID).orElseThrow();
                     point.charge(1_000L);
                     pointHistoryRepository.save(PointHistory.charge(USER_ID, 1_000L, point.getBalance()));
@@ -310,6 +311,7 @@ class OrderPaymentMySqlIntegrationTest {
         assertHistorySequence(new ExpectedHistory(PointHistoryType.USE, 4_000L, 1_000L));
         assertCommittedOrderGraph(1L, 1L);
         verify(redisRepository, times(1)).increment(EXPECTED_DATE, menu.getId());
+        verifyNoMoreInteractions(redisRepository);
     }
 
     private Menu seedUserPointAndMenu(long balance, long menuPrice) {
