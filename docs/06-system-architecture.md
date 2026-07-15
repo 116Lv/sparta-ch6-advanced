@@ -123,11 +123,13 @@ Redisson is an admission-control layer before DB entry, not a replacement for My
 
 ### Outbox publication
 
-Publisher workers claim a bounded batch of `READY` rows in a short transaction, mark the rows `PROCESSING` with a unique claim token, owner, and deadline metadata, and publish after the claim commits. State updates require the current claim token, and expired claims receive a new token when reassigned after an instance failure. Publishing is still at least once: failure after Kafka acknowledgement and before `PUBLISHED` can create a duplicate, so the immutable event ID is the consumer idempotency key.
+Publisher workers claim at most one row in a short transaction immediately before each publish attempt, mark it `PROCESSING` with a unique claim token, owner, and deadline metadata, and publish after the claim commits. A configured cycle may repeat this sequence, but later unstarted rows are not pre-leased. State updates require the current claim token, and expired claims receive a new token when reassigned after an instance failure. Publishing is still at least once: failure after Kafka acknowledgement and before `PUBLISHED` can create a duplicate, so the immutable event ID is the consumer idempotency key.
 
 ### Kafka consumption
 
 Kafka was selected separately from Transactional Outbox for retention and replay, multiple independent consumer groups, partition parallelism, and ordering within a partition. Partition ownership is dynamically reassigned when consumer instances join or fail. A stable partition key preserves only per-key order; there is no global order across partitions. RabbitMQ or another work queue can be a better fit for short-lived task delivery, rich routing, priorities, or single-consumer work where replay and multiple consumer groups are unnecessary. Full trade-offs are in [ADR-002](../adr/ADR-002-transactional-outbox-kafka.md).
+
+The implemented local analytics consumer commits its `(consumer_group, event_id)` marker and `order_paid_analytics` effect in one MySQL transaction. A duplicate in the same group creates neither a second marker nor a second effect; an analytics write failure rolls back the marker for retry.
 
 ### Redis availability
 

@@ -31,11 +31,11 @@ Then stateless Outbox Publisher workers claim and publish events independently f
 
 Claim protocol:
 
-1. In a short MySQL transaction, select a bounded batch of `READY` rows with row locking and skip rows already claimed by another worker.
-2. Change the rows to `PROCESSING` and record a unique claim token, claim owner, `claimed_at`, and `claim_until`, then commit the claim transaction.
-3. Publish outside the claim transaction so a broker delay does not hold DB row locks.
+1. In a short MySQL transaction, select at most one claimable row with row locking and skip rows already claimed by another worker.
+2. Change that row to `PROCESSING`, record a unique claim token, claim owner, `claimed_at`, and `claim_until`, and commit the claim transaction.
+3. Publish outside the claim transaction so a broker delay does not hold DB row locks or pre-lease later unstarted rows.
 4. After Kafka acknowledges the record, mark it `PUBLISHED` only if the current claim token still matches. On a publish failure, use the same token check, increment retry metadata, and return the row to a retryable state according to the retry policy.
-5. A recovery job reclaims `PROCESSING` rows whose claim deadline has expired. This handles a publisher instance that stops after claiming a row.
+5. Repeat claim and publish up to the configured cycle size. An expired `PROCESSING` row is claimable with a new token after an instance failure.
 
 Row claiming prevents two healthy workers from intentionally publishing the same row at the same time. It does not provide exactly-once delivery: a worker can publish successfully and fail before recording `PUBLISHED`. Consumers must use the immutable Outbox event ID as an idempotency key.
 
@@ -106,8 +106,8 @@ Kafka adds broker and partition operations, consumer-lag monitoring, and replay/
   5 failed publication attempts.
 - Claim selection uses a MySQL pessimistic row lock in a short transaction. A new UUID token is
   assigned to each row, and completion/retry takes the row lock again and verifies that token.
-- `FAILED` is the manual-recovery boundary; automatic publication does not claim it.
-- Consumer idempotency is persisted by the composite key `(consumer_group, event_id)`.
+- `FAILED` is the audited-recovery boundary; automatic publication does not claim it. The application-owned recovery service records operator, reason, previous retry/error, and recovery time before atomically requeueing to `READY`. Direct unaudited SQL requeue is prohibited.
+- Consumer idempotency is persisted by the composite key `(consumer_group, event_id)`, and the marker plus local `order_paid_analytics` effect commit atomically. An effect failure rolls back the marker.
 - Add tests for Outbox saved on order success and not saved on order failure.
 - Add tests for publisher success/failure state transitions.
 - Add tests for competing publisher workers, process failure after claim, stale-claim recovery, and publish-acknowledged/status-update-failed duplicate delivery.

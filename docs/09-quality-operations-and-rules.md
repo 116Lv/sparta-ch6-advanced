@@ -40,6 +40,21 @@ Write concurrency tests for:
 
 Required consistency assertions include no negative point balance, no lost point update, no duplicate payment for one order, and no missing Outbox event for a committed paid order.
 
+Required event assertions include one marker plus one analytics effect for the first delivery in a
+consumer group, no additional durable state for a duplicate, independent effects for different
+groups, and rollback of both marker and effect when analytics persistence fails. Invalid payloads
+must produce neither table row.
+
+Publisher verification must cover claim-one-immediately-before-publish, competing workers,
+expired claim reassignment, stale-token rejection, the acknowledgement/status-update duplicate
+boundary, retry 1 through 4 returning to `READY`, and retry 5 becoming `FAILED`.
+
+Permanent-failure recovery verification must prove that only `FAILED` transitions to `READY`,
+that retry/error/claim state is cleared, and that operator, reason, previous retry/error, and time
+are preserved in exactly one audit row. Blank provenance, non-`FAILED` state, missing events, or
+transaction failure must leave both event and audit state unchanged. Direct unaudited SQL requeue
+is prohibited, and no unauthenticated recovery endpoint may expose the service.
+
 ## Performance and Load Test Plan
 
 The scenarios and metrics below are fixed now. Numeric TPS and p95 targets are intentionally not fixed until a reproducible baseline run records the environment, dataset, instance counts, tool configuration, and bottleneck evidence. After that run, record the target values and regression tolerance in the verification evidence owner rather than silently inventing them in README.

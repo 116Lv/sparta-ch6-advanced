@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
@@ -55,23 +55,24 @@ public class OutboxPublisher {
 
     @Scheduled(fixedDelayString = "${outbox.publisher.poll-millis:1000}")
     public void publishBatch() {
-        for (ClaimedEvent event : claimBatch()) {
-            publish(event);
+        for (int processed = 0; processed < batchSize; processed++) {
+            Optional<ClaimedEvent> event = claimNext();
+            if (event.isEmpty()) return;
+            publish(event.get());
         }
     }
 
-    private List<ClaimedEvent> claimBatch() {
-        return transactionTemplate.execute(status -> {
+    public Optional<ClaimedEvent> claimNext() {
+        ClaimedEvent claimed = transactionTemplate.execute(status -> {
             LocalDateTime now = LocalDateTime.now();
-            List<OutboxEvent> events = repository.findClaimable(now, PageRequest.of(0, batchSize));
-            return events.stream().map(event -> {
-                String token = UUID.randomUUID().toString();
-                event.claim(token, owner, now, now.plus(claimDuration));
-                return new ClaimedEvent(
-                        event.getId(), event.getAggregateId(), event.getEventType(), event.getPayload(), token,
-                        event.getRetryCount());
-            }).toList();
+            return repository.findClaimable(now, PageRequest.of(0, 1)).stream().findFirst().map(event -> {
+                    String token = UUID.randomUUID().toString();
+                    event.claim(token, owner, now, now.plus(claimDuration));
+                    return new ClaimedEvent(event.getId(), event.getAggregateId(), event.getEventType(),
+                            event.getPayload(), token, event.getRetryCount());
+                }).orElse(null);
         });
+        return Optional.ofNullable(claimed);
     }
 
     private void publish(ClaimedEvent event) {
@@ -108,7 +109,7 @@ public class OutboxPublisher {
                 .ifPresent(event -> event.markFailed(token, error, maxRetries, LocalDateTime.now())));
     }
 
-    private record ClaimedEvent(
+    public record ClaimedEvent(
             long id, long aggregateId, String eventType, String payload, String token, int retryCount) {
     }
 }

@@ -110,6 +110,16 @@ public class OutboxEvent {
         clearClaim(now);
     }
 
+    public void requeueFailed(LocalDateTime now) {
+        if (status != OutboxStatus.FAILED) {
+            throw new IllegalStateException("Only FAILED events can be requeued.");
+        }
+        this.status = OutboxStatus.READY;
+        this.retryCount = 0;
+        this.lastError = null;
+        clearClaim(now);
+    }
+
     private void requireCurrentClaim(String token) {
         if (status != OutboxStatus.PROCESSING || token == null || !token.equals(claimToken)) {
             throw new IllegalStateException("Outbox claim token is stale.");
@@ -147,6 +157,11 @@ public class OutboxEvent {
     public String getClaimToken() {
         return claimToken;
     }
+
+    public String getClaimOwner() { return claimOwner; }
+    public LocalDateTime getClaimedAt() { return claimedAt; }
+    public LocalDateTime getClaimUntil() { return claimUntil; }
+    public String getLastError() { return lastError; }
 
     public int getRetryCount() {
         return retryCount;

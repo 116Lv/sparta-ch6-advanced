@@ -33,7 +33,6 @@ Ready
 
 - 주문 취소/환불
 - 실제 외부 데이터 플랫폼 API 구현
-- Kafka consumer 구현
 - 재고 관리
 
 ## Requirements
@@ -74,6 +73,20 @@ Acceptance Criteria:
 - `outbox_events`에 `ORDER_PAID` 이벤트가 `READY` 상태로 저장된다.
 - payload에는 `userId`, `menuId`, `paymentAmount`가 포함된다.
 - Kafka 발행 실패가 주문 API 실패로 이어지지 않는다.
+
+### R-004: 주문 결제 이벤트의 내구성 있는 로컬 소비
+
+Description:
+
+`coffee.order.paid`의 `ORDER_PAID` 이벤트를 로컬 분석 입력으로 소비한다. 외부 데이터 플랫폼 API 연동은 여전히 범위 밖이다.
+
+Acceptance Criteria:
+
+- 하나의 consumer group에서 최초 전달은 `processed_events` marker와 `order_paid_analytics` 효과를 하나의 MySQL 트랜잭션으로 저장한다.
+- 같은 consumer group의 동일 event 재전달은 marker와 분석 효과를 모두 중복 생성하지 않는다.
+- 서로 다른 consumer group은 동일 event에 대해 각자의 marker와 분석 효과를 한 번씩 저장할 수 있다.
+- 분석 저장 실패 시 marker도 rollback되어 Kafka 재전달이 전체 효과를 다시 시도할 수 있다.
+- event ID, aggregate/order ID, user ID, menu ID, payment amount는 모두 양수이고 event type은 정확히 `ORDER_PAID`여야 한다.
 
 ## API Contract
 
@@ -138,6 +151,9 @@ Kafka 발행은 API 트랜잭션에서 직접 수행하지 않는다. Outbox 이
 - 주문 실패 시 Outbox 이벤트 미저장
 - 일별 메뉴 집계 증가
 - Redis Sorted Set 증가
+- 동일 consumer group의 동일 이벤트 중복 전달 시 분석 효과 1건 유지
+- 분석 효과 저장 실패 시 processed marker 동시 rollback
+- `FAILED` Outbox 이벤트의 감사된 `READY` 복구
 
 ## Open Questions
 
