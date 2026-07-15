@@ -1,5 +1,10 @@
 # Tasks: Point Charge
 
+## 2026-07-15 Static Audit Tracking
+
+- [x] Point domain, persistence, locking, API, concurrency scenarios, and focused contract tests inspected/authored.
+- [ ] Product tests and real HTTP verification run through a supported VERIFIED command.
+
 ## Phase 1: Design Check
 
 - [ ] `docs/03-domain-model.md`와 `docs/09-quality-operations-and-rules.md`의 lock/검증 정책 확인

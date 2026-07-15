@@ -27,7 +27,8 @@ On successful order:
 
 1. Increment MySQL `daily_menu_sales`.
 2. After commit, take the date-scoped ranking lock, read the durable count, and assign that
-   absolute value to the Redis member. This update does not create a completeness marker.
+   absolute value to the Redis member. The same atomic Redis operation publishes a new generation
+   and a completeness marker containing the current durable total and member count.
 
 For the recent 7-day query:
 

@@ -1,5 +1,10 @@
 # Checklist: Order Payment
 
+## 2026-07-15 Audit Evidence
+
+- [x] Implementation and authored tests cover the durable order graph, publisher, consumer analytics, and recovery path.
+- [ ] Runtime test, Kafka, database, migration, and API evidence is available from a supported VERIFIED command.
+
 ## Spec Quality
 
 - [x] 요구사항이 명확하다.

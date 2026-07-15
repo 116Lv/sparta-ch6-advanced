@@ -9,8 +9,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
-import org.springframework.data.redis.core.DefaultTypedTuple;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -25,14 +23,18 @@ public class RedisPopularMenuRepository {
     private static final Duration DAILY_TTL = Duration.ofDays(14);
     private static final Duration TEMP_TTL = Duration.ofMinutes(1);
     private static final DefaultRedisScript<Long> REPLACE_SCRIPT = new DefaultRedisScript<>("""
+            redis.call('DEL', KEYS[1])
+            for index = 4, #ARGV, 2 do
+                redis.call('ZADD', KEYS[1], ARGV[index], ARGV[index + 1])
+            end
             if redis.call('EXISTS', KEYS[1]) == 1 then
-                redis.call('DEL', KEYS[2])
+                redis.call('EXPIRE', KEYS[1], ARGV[2])
                 redis.call('RENAME', KEYS[1], KEYS[2])
                 redis.call('EXPIRE', KEYS[2], ARGV[1])
             else
                 redis.call('DEL', KEYS[2])
             end
-            redis.call('SET', KEYS[3], ARGV[2], 'EX', ARGV[1])
+            redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[1])
             return 1
             """, Long.class);
     private static final DefaultRedisScript<Long> ABSOLUTE_UPDATE_SCRIPT = new DefaultRedisScript<>("""
@@ -111,21 +113,20 @@ public class RedisPopularMenuRepository {
     public void replaceDate(LocalDate date, Map<Long, Long> counts) {
         String tempKey = TEMP_PREFIX + date + ":" + UUID.randomUUID();
         try {
-            Set<ZSetOperations.TypedTuple<String>> tuples = counts.entrySet().stream()
-                    .map(entry -> new DefaultTypedTuple<>(
-                            Long.toString(entry.getKey()), entry.getValue().doubleValue()))
-                    .collect(Collectors.toSet());
-            if (!tuples.isEmpty()) {
-                redisTemplate.opsForZSet().add(tempKey, tuples);
-                redisTemplate.expire(tempKey, TEMP_TTL);
+            List<String> arguments = new ArrayList<>();
+            arguments.add(Long.toString(DAILY_TTL.toSeconds()));
+            arguments.add(Long.toString(TEMP_TTL.toSeconds()));
+            arguments.add(markerValue(
+                    counts.values().stream().mapToLong(Long::longValue).sum(),
+                    counts.size()));
+            for (Map.Entry<Long, Long> entry : counts.entrySet()) {
+                arguments.add(Long.toString(entry.getValue()));
+                arguments.add(Long.toString(entry.getKey()));
             }
             redisTemplate.execute(
                     REPLACE_SCRIPT,
                     List.of(tempKey, dailyKey(date), completeKey(date)),
-                    Long.toString(DAILY_TTL.toSeconds()),
-                    markerValue(
-                            counts.values().stream().mapToLong(Long::longValue).sum(),
-                            counts.size()));
+                    arguments.toArray());
         } finally {
             redisTemplate.delete(tempKey);
         }

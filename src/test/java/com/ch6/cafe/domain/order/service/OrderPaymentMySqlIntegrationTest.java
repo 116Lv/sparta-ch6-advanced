@@ -300,7 +300,7 @@ class OrderPaymentMySqlIntegrationTest {
     void redisRankingFailureAfterCommitDoesNotChangeCommittedOrderResult() throws Exception {
         Menu menu = seedUserPointAndMenu(5_000L, 4_000L);
         doThrow(new DataAccessResourceFailureException("redis unavailable"))
-                .when(redisRepository).increment(any(), anyLong());
+                .when(redisRepository).setAbsolute(any(), anyLong(), anyLong(), anyLong(), anyLong());
 
         OrderResponse response = orderPaymentService.order(USER_ID, menu.getId());
 
@@ -310,7 +310,7 @@ class OrderPaymentMySqlIntegrationTest {
         assertThat(currentBalance()).isEqualTo(1_000L).isNotNegative();
         assertHistorySequence(new ExpectedHistory(PointHistoryType.USE, 4_000L, 1_000L));
         assertCommittedOrderGraph(1L, 1L);
-        verify(redisRepository, times(1)).increment(EXPECTED_DATE, menu.getId());
+        verify(redisRepository, times(1)).setAbsolute(EXPECTED_DATE, menu.getId(), 1L, 1L, 1L);
         verifyNoMoreInteractions(redisRepository);
     }
 

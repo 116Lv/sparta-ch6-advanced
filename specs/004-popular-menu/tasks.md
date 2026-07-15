@@ -1,5 +1,11 @@
 # Tasks: Popular Menu
 
+## 2026-07-15 Static Audit Tracking
+
+- [x] MySQL authority, seven-day completeness markers, generation checks, fallback rebuild, and absolute updates are tracked and authored.
+- [x] Temporary ZSET population, safety TTL, live replacement, and marker publication are atomic in one Lua script.
+- [ ] Product, Redis, MySQL, Docker, and real HTTP verification run through a supported VERIFIED command.
+
 ## Phase 1: Design Check
 
 - [ ] `docs/03-domain-model.md`와 `docs/09-quality-operations-and-rules.md`의 인기 메뉴 전략 확인
