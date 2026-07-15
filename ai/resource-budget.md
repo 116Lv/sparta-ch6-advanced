@@ -16,6 +16,8 @@ Product commands remain NOT RUN. Phase 2A does not evaluate verification complet
 | Command capability rediscovery | 0 unless intake invalidation applies | Record affected registry IDs |
 | External tool calls for the same fact | 1 | Record why prior evidence was stale or inconclusive |
 
+Budgets apply per selected route phase. Reading a deferred document after its declared trigger is required work, not a budget exception. Expanding into a deferred path requires the matching opt-in trigger; expanding into an excluded path is prohibited rather than budgeted.
+
 ## Phase 2A Boundary
 
 Repository scripts cannot intercept every host file read, search, or external tool call before Phase 3. These budgets are enforced through policy, work logs, cache records, and review gates in Phase 2A.

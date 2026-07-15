@@ -16,6 +16,7 @@
     },
     "entries": {
       "type": "array",
+      "uniqueItems": true,
       "items": { "$ref": "#/$defs/cacheEntry" }
     },
     "handoffNotes": {
@@ -49,6 +50,7 @@
           "properties": {
             "paths": {
               "type": "array",
+              "uniqueItems": true,
               "items": {
                 "type": "object",
                 "additionalProperties": false,

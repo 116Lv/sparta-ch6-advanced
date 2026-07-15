@@ -10,6 +10,8 @@ Product commands remain NOT RUN. Phase 2A does not evaluate verification complet
 
 File-read entries are keyed by normalized repository-relative path and SHA-256 content digest. Command evidence summaries are keyed by command ID, argv hash, working directory, declared input fingerprints, and allowlisted environment fingerprint from the supported command gateway.
 
+Every cache entry ID is globally unique. Within one path-based cache entry, each repository-relative path identity may appear only once even when competing records carry different digests. Different cache entries may legitimately bind the same general input path because their kinds and reuse purposes can differ; the stricter canonical handoff anti-spoof rule below remains the only cross-entry path exclusion.
+
 Verification-decision entries use a distinct closed key containing task key, gate invocation ID, checked-out commit SHA, change type, entry point, verification-policy SHA-256, and the exact ordered check set that `verification_gate` consumes from the selected change type's required checks followed by optional checks. The entry point remains correlation identity and applicability input; it does not filter that consumed set. Each producer/check-indexed binding contains the verified leaf-result reference and SHA-256 plus its evidence path, SHA-256, and canonical schema. The key also binds the relevant environment fingerprint and expiry. Task and gate identifiers are mandatory lookup identity, but repo intake does not claim an external authority for them. A non-null environment fingerprint is `UNCERTAIN` until an authoritative current environment mapping exists.
 
 ## Freshness Rules
@@ -23,6 +25,12 @@ The canonical cache does not materialize a reusable verification PASS decision w
 ## Conservative Invalidation
 
 When dependency mapping is incomplete or ambiguous, the workflow prefers re-verification over unsafe reuse. Phase 2A repo intake may report proposal-only `projectStateRefresh` and `commandDiscoveryUpdates` records, but it does not execute commands, does not create `.ai-runs`, and does not mark a registry command `VERIFIED`.
+
+Route and handoff reuse is phase-sensitive. A cached read from one phase does not make a later phase's required document optional, and a task-phase, owning-feature, activated-trigger, effective-required, or still-deferred-set change invalidates reuse until the handoff is re-routed. Deferred documents remain unread until activation, then become required context and leave the still-deferred set.
+
+Repo intake fails closed when a `READY` or `PARTIAL` handoff's canonical `HANDOFF_CONTEXT` entry binds `ai/agent-handoff.json` but reports `STALE` or `UNCERTAIN`: the top-level result is `BLOCKED`, status 2, with `HANDOFF_CONTEXT_CACHE_STALE` or `HANDOFF_CONTEXT_CACHE_UNCERTAIN`, and the full cache invalidation report remains in `data`. A handoff already marked `BLOCKED` is not dispatch-ready, so its cache result remains advisory and repo intake may still pass structural validation. `STALE` or `UNCERTAIN` entries of other cache kinds remain advisory.
+
+The canonical handoff cache identity is closed: exactly one entry must have ID `phase-2b-handoff-context`, that entry must be `HANDOFF_CONTEXT`, and its key must bind `ai/agent-handoff.json` exactly once. A missing, duplicate, wrong-kind, or wrong-path canonical entry is invalid state. Any other `HANDOFF_CONTEXT` entry that binds the canonical handoff path is ambiguous invalid state and is rejected before freshness evaluation, so a spoof entry cannot force `BLOCKED` or authorize reuse.
 
 ## Evidence Boundary
 

@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:context-map:v1",
-  "schemaVersion": 1,
+  "$id": "urn:sparta-ch6-advanced:ai-workflow:schema:context-map:v2",
+  "schemaVersion": 2,
   "type": "object",
   "additionalProperties": false,
-  "required": ["$schema", "$id", "schemaVersion", "updatedAt", "routes", "surfaces", "generatedPaths", "excludedPaths"],
+  "required": ["$schema", "$id", "schemaVersion", "updatedAt", "routes", "surfaces", "generatedPaths", "deferredPaths", "excludedPaths"],
   "properties": {
     "$schema": { "type": "string" },
     "$id": { "const": "ai/context-map.json" },
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "updatedAt": {
       "type": "string",
       "format": "date-time",
@@ -20,17 +20,92 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "description", "owningFeature", "requiredDocuments"],
+        "required": ["id", "description", "owningFeature", "phases"],
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" },
+          "id": { "enum": ["answer", "light-structure", "feature-work", "repo-wide-ai-workflow"] },
           "description": { "type": "string", "minLength": 1 },
           "owningFeature": { "enum": ["FEATURE_REQUIRED", "NONE_ALLOWED", "DIRECT_DOCUMENT"] },
-          "requiredDocuments": {
+          "phases": {
             "type": "array",
             "minItems": 1,
-            "items": { "$ref": "#/$defs/repositoryPath" }
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/phase" }
           }
-        }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "id": { "const": "answer" },
+              "owningFeature": { "const": "NONE_ALLOWED" },
+              "phases": {
+                "minItems": 1,
+                "maxItems": 1,
+                "items": {
+                  "required": ["id"],
+                  "properties": { "id": { "const": "answer" } }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "id": { "const": "light-structure" },
+              "owningFeature": { "const": "DIRECT_DOCUMENT" },
+              "phases": {
+                "minItems": 1,
+                "maxItems": 1,
+                "items": {
+                  "required": ["id"],
+                  "properties": { "id": { "const": "light-structure" } }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "id": { "const": "feature-work" },
+              "owningFeature": { "const": "FEATURE_REQUIRED" },
+              "phases": {
+                "minItems": 4,
+                "maxItems": 4,
+                "items": {
+                  "required": ["id"],
+                  "properties": {
+                    "id": { "enum": ["feature-requirements", "implementation", "verification", "completion"] }
+                  }
+                },
+                "allOf": [
+                  { "contains": { "required": ["id"], "properties": { "id": { "const": "feature-requirements" } } }, "minContains": 1, "maxContains": 1 },
+                  { "contains": { "required": ["id"], "properties": { "id": { "const": "implementation" } } }, "minContains": 1, "maxContains": 1 },
+                  { "contains": { "required": ["id"], "properties": { "id": { "const": "verification" } } }, "minContains": 1, "maxContains": 1 },
+                  { "contains": { "required": ["id"], "properties": { "id": { "const": "completion" } } }, "minContains": 1, "maxContains": 1 }
+                ]
+              }
+            }
+          },
+          {
+            "properties": {
+              "id": { "const": "repo-wide-ai-workflow" },
+              "owningFeature": { "const": "NONE_ALLOWED" },
+              "phases": {
+                "minItems": 4,
+                "maxItems": 4,
+                "items": {
+                  "required": ["id"],
+                  "properties": {
+                    "id": { "enum": ["implementation", "verification", "completion", "workflow-rediscovery"] }
+                  }
+                },
+                "allOf": [
+                  { "contains": { "required": ["id"], "properties": { "id": { "const": "implementation" } } }, "minContains": 1, "maxContains": 1 },
+                  { "contains": { "required": ["id"], "properties": { "id": { "const": "verification" } } }, "minContains": 1, "maxContains": 1 },
+                  { "contains": { "required": ["id"], "properties": { "id": { "const": "completion" } } }, "minContains": 1, "maxContains": 1 },
+                  { "contains": { "required": ["id"], "properties": { "id": { "const": "workflow-rediscovery" } } }, "minContains": 1, "maxContains": 1 }
+                ]
+              }
+            }
+          }
+        ]
       }
     },
     "surfaces": {
@@ -45,6 +120,7 @@
           "paths": {
             "type": "array",
             "minItems": 1,
+            "uniqueItems": true,
             "items": { "$ref": "#/$defs/repositoryPath" }
           },
           "owner": { "type": "string", "minLength": 1 }
@@ -53,18 +129,188 @@
     },
     "generatedPaths": {
       "type": "array",
+      "uniqueItems": true,
       "items": { "$ref": "#/$defs/repositoryPath" }
+    },
+    "deferredPaths": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/pathScope" }
     },
     "excludedPaths": {
       "type": "array",
-      "items": { "$ref": "#/$defs/repositoryPath" }
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/pathScope" }
     }
   },
   "$defs": {
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "repositoryContextMode", "requiredDocuments", "deferredDocuments", "deferredDocumentTriggers", "activityRequirements", "rediscoverySubjects", "includePaths", "optInPaths", "rerouteTriggers"],
+      "properties": {
+        "id": { "enum": ["answer", "light-structure", "feature-requirements", "implementation", "verification", "completion", "workflow-rediscovery"] },
+        "repositoryContextMode": { "enum": ["OPTIONAL", "REQUIRED"] },
+        "requiredDocuments": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/repositoryPath" }
+        },
+        "deferredDocuments": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/repositoryPath" }
+        },
+        "deferredDocumentTriggers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["trigger", "documents"],
+            "properties": {
+              "trigger": { "type": "string", "minLength": 1 },
+              "documents": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/repositoryPath" }
+              }
+            }
+          }
+        },
+        "activityRequirements": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["activityId", "mandatoryTriggers"],
+            "properties": {
+              "activityId": { "$ref": "#/$defs/activityId" },
+              "mandatoryTriggers": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        },
+        "rediscoverySubjects": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "trigger", "documents"],
+            "properties": {
+              "id": { "$ref": "#/$defs/rediscoverySubjectId" },
+              "trigger": { "type": "string", "minLength": 1 },
+              "documents": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/repositoryPath" }
+              }
+            }
+          }
+        },
+        "includePaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pathScope" }
+        },
+        "optInPaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "trigger"],
+            "properties": {
+              "path": { "$ref": "#/$defs/pathScope" },
+              "trigger": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "rerouteTriggers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "activityId": {
+      "enum": ["ANSWER", "DOCUMENT_EDIT", "REQUIREMENTS", "PLANNING", "EXECUTION", "VERIFICATION_HANDOFF", "INDEPENDENT_AUDIT", "COMPLETION", "REDISCOVERY"]
+    },
+    "rediscoverySubjectId": {
+      "enum": ["ROUTING_POLICY", "CACHE_POLICY", "WORKFLOW_CACHE_STATE", "TOOL_POLICY", "RESOURCE_BUDGET", "PROJECT_STATE", "COMMAND_REGISTRY"]
+    },
     "repositoryPath": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*\\\\).+$"
+      "allOf": [
+        {
+          "pattern": "^(?!/)(?!.*[/]$)(?!.*//)(?!.*:)(?!.*%)(?!.*[?*\\[\\]])(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$"
+        },
+        {
+          "oneOf": [
+            { "pattern": "^[^{}]+$" },
+            { "pattern": "^specs/\\{feature\\}/[^{}]+$" }
+          ]
+        }
+      ]
+    },
+    "scopePath": {
+      "allOf": [
+        { "$ref": "#/$defs/repositoryPath" },
+        { "pattern": "^[^{}]+$" }
+      ]
+    },
+    "pathScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": { "const": "exact" },
+            "path": { "$ref": "#/$defs/repositoryPath" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": { "const": "subtree" },
+            "path": { "$ref": "#/$defs/scopePath" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "suffix"],
+          "properties": {
+            "kind": { "const": "direct-children" },
+            "path": { "$ref": "#/$defs/scopePath" },
+            "suffix": { "type": "string", "pattern": "^\\.[A-Za-z0-9]+$" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "const": "descendant-directory" },
+            "name": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]*$" }
+          }
+        }
+      ]
     }
   }
 }

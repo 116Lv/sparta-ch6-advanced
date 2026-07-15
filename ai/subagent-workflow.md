@@ -44,13 +44,18 @@ Every subagent handoff must include:
 
 - `tracking_status` plus `issue` and `issue_url`, or the complete `pending_issue` fallback metadata;
 - `skill_ids`, `handoff_state_ref`, `reusable_context_refs`, `not_run_project_commands`, and `github_reconciliation_status` when Phase 2B skill or handoff reuse applies;
-- `owning_feature`, routing reason, and route-selected files already read;
+- current route ID, task phase, `owning_feature`, context status, routing reason, and route-selected files already read;
+- unique activated triggers, documents still deferred with the full canonical load-trigger mapping, current include/deferred paths, and re-route triggers;
 - Markdown document links to route-selected files and phase-gated files required for this task;
 - context links to the GitHub Issue when available, the issue summary, and relevant prior role logs or decisions;
 - assigned role, in-scope work, and out-of-scope boundaries;
-- decisions already made and open questions;
+- decisions already made, open questions, remaining work, and remaining verification/completion evidence;
 - work-log path and current workflow `status`; and
 - acceptance criteria and evidence required for handoff and review.
+
+Issue-backed delegation sets `activeIssue` with a self-consistent number, exact repository Issue URL, summary, and role refs, then opts in only to that Issue's `README.md` and role logs needed by the assigned worker using exact typed scopes and the matching canonical trigger in `activatedTriggers`. The URL has no trailing slash, query, fragment, credentials, alternate host, port, or scheme. Non-Issue handoffs use `activeIssue: null` and carry no work-log scope or reusable ref. Canonical eligibility without activation does not authorize the scope. Foreign, unlisted, subtree, direct-children, descendant, and excluded reusable scopes remain invalid for every status, including `BLOCKED`. Historical Issue fields are provenance rather than aliases for the active identity. Confirm prior role-log claims against canonical owner documents.
+
+If the work changes phase or activity, re-route before continuing. READY and PARTIAL handoffs activate every trigger mandatory for the selected closed activity and read base plus activated-trigger documents; only BLOCKED may record those as missing. Workflow rediscovery also selects at least one closed subject and materializes only that subject's exact documents. Every read is in scope, no read remains deferred, and activated document or opt-in selections use exact materialized scopes. READY and PARTIAL read all materialized opt-in paths, including every active Issue ref. BLOCKED still preserves canonical trigger arrays and cannot widen or use a foreign activated scope. A feature-required route with no owning feature must not dispatch. A subagent completion report never replaces verification or completion gates.
 
 ## Phase-Gated Handoffs
 

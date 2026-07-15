@@ -15,7 +15,9 @@ Phase 3A declares the current host `UNSUPPORTED` for native `COMMAND`, `FILE_REA
 ## Limits
 
 - Prefer `rg` or targeted file reads over broad tree scans.
-- Reuse `ai/context-map.md` and `ai/context-map.json` before rediscovering document routes.
+- Reuse the current route and handoff before rediscovering document routes. Load `ai/context-map.json` and its policy only when route selection, phase escalation, cache freshness, or workflow rediscovery is actually in scope.
+- Apply the selected phase's typed `includePaths` scopes to ordinary searches. Every read document must be covered by an include scope and must not remain deferred. Search a `deferredPaths` area only after its matching typed `optInPaths` trigger is recorded in handoff `activatedTriggers`, then materialize only the exact paths actually selected; READY and PARTIAL record those exact paths in `readDocuments`. Work-log access additionally requires a non-null `activeIssue`; narrow it to the exact summary and listed role refs, read those refs for READY or PARTIAL, and do not widen it through reusable, foreign, unlisted, subtree, direct-children, descendant, or excluded scopes.
+- Never search or opt into canonical `excludedPaths`.
 - Reuse `ai/project-state.json` and `ai/command-registry.json` before rediscovering stack, ports, commands, and verification capabilities.
 - Record why rediscovery was necessary when a cache entry is `STALE`, `UNCERTAIN`, missing, or mapped to changed inputs.
 - Do not treat human manual command results as AI workflow verification evidence.

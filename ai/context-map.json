@@ -1,73 +1,257 @@
 {
   "$schema": "./schemas/context-map.schema.json",
   "$id": "ai/context-map.json",
-  "schemaVersion": 1,
-  "updatedAt": "2026-07-12T00:00:00Z",
+  "schemaVersion": 2,
+  "updatedAt": "2026-07-15T00:00:00Z",
   "routes": [
     {
-      "id": "repo-wide-ai-workflow",
-      "description": "Repository-wide AI workflow policy, gates, evidence, context, and cache work.",
+      "id": "answer",
+      "description": "Small questions and explanations with no repository change.",
       "owningFeature": "NONE_ALLOWED",
-      "requiredDocuments": [
-        "AGENTS.md",
-        "ai/document-routing.md",
-        "ai/context-map.md",
-        "ai/cache-policy.md",
-        "ai/tool-call-policy.md",
-        "ai/resource-budget.md",
-        "ai/workflow-cache.md"
+      "phases": [
+        {
+          "id": "answer",
+          "repositoryContextMode": "OPTIONAL",
+          "requiredDocuments": [],
+          "deferredDocuments": [],
+          "deferredDocumentTriggers": [],
+          "activityRequirements": [{ "activityId": "ANSWER", "mandatoryTriggers": [] }],
+          "rediscoverySubjects": [],
+          "includePaths": [],
+          "optInPaths": [],
+          "rerouteTriggers": ["repository change", "normative decision", "verification request", "completion claim"]
+        }
       ]
     },
     {
-      "id": "product-feature",
-      "description": "Feature-owned product behavior and verification work.",
-      "owningFeature": "FEATURE_REQUIRED",
-      "requiredDocuments": [
-        "AGENTS.md",
-        "ai/document-routing.md",
-        "specs"
-      ]
-    },
-    {
-      "id": "documentation-only",
-      "description": "Non-normative documentation wording, index, status, or report updates after ownership routing.",
+      "id": "light-structure",
+      "description": "Narrow structure discovery, first explanation, or non-normative wording maintenance.",
       "owningFeature": "DIRECT_DOCUMENT",
-      "requiredDocuments": [
-        "ai/document-routing.md"
+      "phases": [
+        {
+          "id": "light-structure",
+          "repositoryContextMode": "REQUIRED",
+          "requiredDocuments": [],
+          "deferredDocuments": ["README.md", "docs/00-index.md"],
+          "deferredDocumentTriggers": [
+            {
+              "trigger": "First-time onboarding or broad repository mapping is necessary.",
+              "documents": ["README.md", "docs/00-index.md"]
+            }
+          ],
+          "activityRequirements": [{ "activityId": "DOCUMENT_EDIT", "mandatoryTriggers": [] }],
+          "rediscoverySubjects": [],
+          "includePaths": [],
+          "optInPaths": [],
+          "rerouteTriggers": ["requirements change", "behavior change", "contract change", "architecture change", "verification policy change"]
+        }
+      ]
+    },
+    {
+      "id": "feature-work",
+      "description": "Feature-owned requirements, implementation, verification, and completion work.",
+      "owningFeature": "FEATURE_REQUIRED",
+      "phases": [
+        {
+          "id": "feature-requirements",
+          "repositoryContextMode": "REQUIRED",
+          "requiredDocuments": ["specs/{feature}/spec.md"],
+          "deferredDocuments": ["specs/{feature}/plan.md", "specs/{feature}/tasks.md", "specs/{feature}/decisions.md", "specs/{feature}/checklist.md"],
+          "deferredDocumentTriggers": [
+            { "trigger": "Implementation planning begins.", "documents": ["specs/{feature}/plan.md"] },
+            { "trigger": "Execution or verification handoff begins.", "documents": ["specs/{feature}/tasks.md"] },
+            { "trigger": "An existing decision must be confirmed or a new decision is required.", "documents": ["specs/{feature}/decisions.md"] },
+            { "trigger": "The completion sequence begins.", "documents": ["specs/{feature}/checklist.md"] }
+          ],
+          "activityRequirements": [{ "activityId": "REQUIREMENTS", "mandatoryTriggers": [] }],
+          "rediscoverySubjects": [],
+          "includePaths": [{ "kind": "exact", "path": "specs/{feature}/spec.md" }],
+          "optInPaths": [
+            { "path": { "kind": "subtree", "path": "docs/superpowers" }, "trigger": "A directly relevant historical design decision must be confirmed." }
+          ],
+          "rerouteTriggers": ["implementation planning", "implementation begins", "verification begins", "completion begins"]
+        },
+        {
+          "id": "implementation",
+          "repositoryContextMode": "REQUIRED",
+          "requiredDocuments": ["specs/{feature}/spec.md"],
+          "deferredDocuments": ["specs/{feature}/plan.md", "specs/{feature}/tasks.md", "specs/{feature}/decisions.md", "specs/{feature}/checklist.md", "ai/qa-gate.md", "ai/done-claim-template.md", "ai/issue-completion-checklist.md"],
+          "deferredDocumentTriggers": [
+            { "trigger": "A plan is being created or executed.", "documents": ["specs/{feature}/plan.md"] },
+            { "trigger": "Tasks are being executed or handed to verification.", "documents": ["specs/{feature}/tasks.md"] },
+            { "trigger": "An existing decision must be confirmed or a new decision is required.", "documents": ["specs/{feature}/decisions.md"] },
+            { "trigger": "The completion sequence begins.", "documents": ["specs/{feature}/checklist.md", "ai/qa-gate.md", "ai/done-claim-template.md", "ai/issue-completion-checklist.md"] }
+          ],
+          "activityRequirements": [
+            { "activityId": "PLANNING", "mandatoryTriggers": ["A plan is being created or executed."] },
+            { "activityId": "EXECUTION", "mandatoryTriggers": ["A plan is being created or executed.", "Tasks are being executed or handed to verification."] },
+            { "activityId": "VERIFICATION_HANDOFF", "mandatoryTriggers": ["Tasks are being executed or handed to verification."] }
+          ],
+          "rediscoverySubjects": [],
+          "includePaths": [{ "kind": "exact", "path": "specs/{feature}/spec.md" }, { "kind": "subtree", "path": "src/main" }],
+          "optInPaths": [
+            { "path": { "kind": "subtree", "path": "ai/work-logs" }, "trigger": "Dispatch or active Issue recovery requires only the active Issue summary and current role log." },
+            { "path": { "kind": "subtree", "path": "ai/fixtures" }, "trigger": "A directly related workflow fixture is under implementation." },
+            { "path": { "kind": "subtree", "path": "docs/superpowers" }, "trigger": "A directly relevant historical design decision must be confirmed." }
+          ],
+          "rerouteTriggers": ["requirements change", "verification begins", "completion begins", "owning feature changes"]
+        },
+        {
+          "id": "verification",
+          "repositoryContextMode": "REQUIRED",
+          "requiredDocuments": ["specs/{feature}/spec.md"],
+          "deferredDocuments": ["specs/{feature}/tasks.md", "specs/{feature}/checklist.md", "ai/verification-levels.md", "ai/verification-gates.md", "ai/verification-policy.json", "ai/qa-gate.md", "ai/done-claim-template.md", "ai/issue-completion-checklist.md"],
+          "deferredDocumentTriggers": [
+            { "trigger": "Verification handoff requires the execution task record.", "documents": ["specs/{feature}/tasks.md"] },
+            { "trigger": "The applicable verification level or gate must be determined.", "documents": ["ai/verification-levels.md", "ai/verification-gates.md", "ai/verification-policy.json"] },
+            { "trigger": "The completion sequence begins after verification.", "documents": ["specs/{feature}/checklist.md", "ai/qa-gate.md", "ai/done-claim-template.md", "ai/issue-completion-checklist.md"] }
+          ],
+          "activityRequirements": [
+            { "activityId": "INDEPENDENT_AUDIT", "mandatoryTriggers": ["The applicable verification level or gate must be determined."] },
+            { "activityId": "VERIFICATION_HANDOFF", "mandatoryTriggers": ["Verification handoff requires the execution task record.", "The applicable verification level or gate must be determined."] }
+          ],
+          "rediscoverySubjects": [],
+          "includePaths": [{ "kind": "exact", "path": "specs/{feature}/spec.md" }, { "kind": "subtree", "path": "src/test" }],
+          "optInPaths": [
+            { "path": { "kind": "subtree", "path": "ai/work-logs" }, "trigger": "Only the active Issue summary and verification role log are needed." },
+            { "path": { "kind": "subtree", "path": "ai/fixtures" }, "trigger": "A directly related verification fixture is required." }
+          ],
+          "rerouteTriggers": ["verification scope is ambiguous", "requirements change", "implementation resumes", "completion begins"]
+        },
+        {
+          "id": "completion",
+          "repositoryContextMode": "REQUIRED",
+          "requiredDocuments": ["specs/{feature}/spec.md"],
+          "deferredDocuments": ["specs/{feature}/checklist.md", "ai/qa-gate.md", "ai/done-claim-template.md", "ai/issue-completion-checklist.md"],
+          "deferredDocumentTriggers": [
+            { "trigger": "Feature completion criteria are evaluated.", "documents": ["specs/{feature}/checklist.md"] },
+            { "trigger": "The QA gate is applied.", "documents": ["ai/qa-gate.md"] },
+            { "trigger": "An evidence-based done claim is prepared.", "documents": ["ai/done-claim-template.md"] },
+            { "trigger": "Issue closure readiness is evaluated.", "documents": ["ai/issue-completion-checklist.md"] }
+          ],
+          "activityRequirements": [{ "activityId": "COMPLETION", "mandatoryTriggers": ["Feature completion criteria are evaluated.", "The QA gate is applied.", "An evidence-based done claim is prepared.", "Issue closure readiness is evaluated."] }],
+          "rediscoverySubjects": [],
+          "includePaths": [{ "kind": "exact", "path": "specs/{feature}/spec.md" }],
+          "optInPaths": [
+            { "path": { "kind": "subtree", "path": "ai/work-logs" }, "trigger": "Only the active Issue summary and completion role log are needed." }
+          ],
+          "rerouteTriggers": ["required completion evidence is missing", "verification must resume", "implementation must resume", "owning feature changes"]
+        }
+      ]
+    },
+    {
+      "id": "repo-wide-ai-workflow",
+      "description": "Repository-wide AI workflow policy work with phase-specific reading.",
+      "owningFeature": "NONE_ALLOWED",
+      "phases": [
+        {
+          "id": "implementation",
+          "repositoryContextMode": "REQUIRED",
+          "requiredDocuments": ["AGENTS.md", "ai/document-routing.md"],
+          "deferredDocuments": ["ai/context-map.md", "ai/cache-policy.md", "ai/tool-call-policy.md", "ai/resource-budget.md", "ai/workflow-cache.md", "ai/qa-gate.md", "ai/done-claim-template.md", "ai/issue-completion-checklist.md"],
+          "deferredDocumentTriggers": [
+            { "trigger": "Route, cache, tool, or resource policy is being changed or rediscovered.", "documents": ["ai/context-map.md", "ai/cache-policy.md", "ai/tool-call-policy.md", "ai/resource-budget.md", "ai/workflow-cache.md"] },
+            { "trigger": "The completion sequence begins.", "documents": ["ai/qa-gate.md", "ai/done-claim-template.md", "ai/issue-completion-checklist.md"] }
+          ],
+          "activityRequirements": [
+            { "activityId": "PLANNING", "mandatoryTriggers": ["Route, cache, tool, or resource policy is being changed or rediscovered."] },
+            { "activityId": "EXECUTION", "mandatoryTriggers": ["Route, cache, tool, or resource policy is being changed or rediscovered."] },
+            { "activityId": "VERIFICATION_HANDOFF", "mandatoryTriggers": ["Route, cache, tool, or resource policy is being changed or rediscovered."] }
+          ],
+          "rediscoverySubjects": [],
+          "includePaths": [{ "kind": "exact", "path": "AGENTS.md" }, { "kind": "exact", "path": "ai/document-routing.md" }, { "kind": "exact", "path": "scripts/ai/workflow_helper.py" }, { "kind": "exact", "path": "scripts/ai/tests/test_workflow_helper.py" }],
+          "optInPaths": [
+            { "path": { "kind": "subtree", "path": "ai/schemas" }, "trigger": "A schema contract is being changed." },
+            { "path": { "kind": "subtree", "path": "ai/fixtures" }, "trigger": "A workflow fixture or fixture-backed test is being changed." },
+            { "path": { "kind": "subtree", "path": "docs/superpowers" }, "trigger": "A directly relevant historical design decision must be confirmed." },
+            { "path": { "kind": "subtree", "path": "ai/work-logs" }, "trigger": "Dispatch or active Issue recovery requires only the active Issue summary and current role log." }
+          ],
+          "rerouteTriggers": ["requirements change", "verification begins", "completion begins", "route or cache rediscovery begins"]
+        },
+        {
+          "id": "verification",
+          "repositoryContextMode": "REQUIRED",
+          "requiredDocuments": ["AGENTS.md", "ai/document-routing.md", "ai/verification-gates.md", "ai/verification-policy.json"],
+          "deferredDocuments": ["ai/qa-gate.md", "ai/done-claim-template.md", "ai/issue-completion-checklist.md"],
+          "deferredDocumentTriggers": [
+            { "trigger": "The QA gate is applied.", "documents": ["ai/qa-gate.md"] },
+            { "trigger": "An evidence-based done claim is prepared.", "documents": ["ai/done-claim-template.md"] },
+            { "trigger": "Issue closure readiness is evaluated.", "documents": ["ai/issue-completion-checklist.md"] }
+          ],
+          "activityRequirements": [
+            { "activityId": "INDEPENDENT_AUDIT", "mandatoryTriggers": [] },
+            { "activityId": "VERIFICATION_HANDOFF", "mandatoryTriggers": [] }
+          ],
+          "rediscoverySubjects": [],
+          "includePaths": [{ "kind": "exact", "path": "AGENTS.md" }, { "kind": "exact", "path": "ai/document-routing.md" }, { "kind": "exact", "path": "ai/verification-gates.md" }, { "kind": "exact", "path": "ai/verification-policy.json" }, { "kind": "exact", "path": "scripts/ai/verification-gate.sh" }, { "kind": "exact", "path": "scripts/ai/workflow_helper.py" }, { "kind": "exact", "path": "scripts/ai/tests/test_workflow_helper.py" }],
+          "optInPaths": [
+            { "path": { "kind": "subtree", "path": "ai/fixtures" }, "trigger": "A directly related verification fixture is required." },
+            { "path": { "kind": "subtree", "path": "ai/schemas" }, "trigger": "A directly related verification schema is required." },
+            { "path": { "kind": "subtree", "path": "ai/work-logs" }, "trigger": "Only the active Issue summary and verification role log are needed." }
+          ],
+          "rerouteTriggers": ["verification scope is ambiguous", "implementation resumes", "completion begins", "route or cache rediscovery begins"]
+        },
+        {
+          "id": "completion",
+          "repositoryContextMode": "REQUIRED",
+          "requiredDocuments": ["AGENTS.md", "ai/document-routing.md"],
+          "deferredDocuments": ["ai/qa-gate.md", "ai/done-claim-template.md", "ai/issue-completion-checklist.md"],
+          "deferredDocumentTriggers": [
+            { "trigger": "The QA gate is applied.", "documents": ["ai/qa-gate.md"] },
+            { "trigger": "An evidence-based done claim is prepared.", "documents": ["ai/done-claim-template.md"] },
+            { "trigger": "Issue closure readiness is evaluated.", "documents": ["ai/issue-completion-checklist.md"] }
+          ],
+          "activityRequirements": [{ "activityId": "COMPLETION", "mandatoryTriggers": ["The QA gate is applied.", "An evidence-based done claim is prepared.", "Issue closure readiness is evaluated."] }],
+          "rediscoverySubjects": [],
+          "includePaths": [{ "kind": "exact", "path": "AGENTS.md" }, { "kind": "exact", "path": "ai/document-routing.md" }],
+          "optInPaths": [
+            { "path": { "kind": "subtree", "path": "ai/work-logs" }, "trigger": "Only the active Issue summary and completion role log are needed." }
+          ],
+          "rerouteTriggers": ["required completion evidence is missing", "verification must resume", "implementation must resume"]
+        },
+        {
+          "id": "workflow-rediscovery",
+          "repositoryContextMode": "REQUIRED",
+          "requiredDocuments": ["ai/context-map.json"],
+          "deferredDocuments": ["ai/context-map.md", "ai/cache-policy.md", "ai/workflow-cache.md", "ai/workflow-cache.json", "ai/tool-call-policy.md", "ai/resource-budget.md", "ai/project-state.json", "ai/command-registry.json"],
+          "deferredDocumentTriggers": [
+            { "trigger": "Routing policy is being rediscovered.", "documents": ["ai/context-map.md"] },
+            { "trigger": "Cache policy is being rediscovered.", "documents": ["ai/cache-policy.md"] },
+            { "trigger": "Workflow cache state is being rediscovered.", "documents": ["ai/workflow-cache.md", "ai/workflow-cache.json"] },
+            { "trigger": "Tool-call policy is being rediscovered.", "documents": ["ai/tool-call-policy.md"] },
+            { "trigger": "Resource budget policy is being rediscovered.", "documents": ["ai/resource-budget.md"] },
+            { "trigger": "Project state is being rediscovered.", "documents": ["ai/project-state.json"] },
+            { "trigger": "Command registry state is being rediscovered.", "documents": ["ai/command-registry.json"] }
+          ],
+          "activityRequirements": [{ "activityId": "REDISCOVERY", "mandatoryTriggers": [] }],
+          "rediscoverySubjects": [
+            { "id": "ROUTING_POLICY", "trigger": "Routing policy is being rediscovered.", "documents": ["ai/context-map.md"] },
+            { "id": "CACHE_POLICY", "trigger": "Cache policy is being rediscovered.", "documents": ["ai/cache-policy.md"] },
+            { "id": "WORKFLOW_CACHE_STATE", "trigger": "Workflow cache state is being rediscovered.", "documents": ["ai/workflow-cache.md", "ai/workflow-cache.json"] },
+            { "id": "TOOL_POLICY", "trigger": "Tool-call policy is being rediscovered.", "documents": ["ai/tool-call-policy.md"] },
+            { "id": "RESOURCE_BUDGET", "trigger": "Resource budget policy is being rediscovered.", "documents": ["ai/resource-budget.md"] },
+            { "id": "PROJECT_STATE", "trigger": "Project state is being rediscovered.", "documents": ["ai/project-state.json"] },
+            { "id": "COMMAND_REGISTRY", "trigger": "Command registry state is being rediscovered.", "documents": ["ai/command-registry.json"] }
+          ],
+          "includePaths": [{ "kind": "exact", "path": "ai/context-map.json" }],
+          "optInPaths": [
+            { "path": { "kind": "subtree", "path": "ai/schemas" }, "trigger": "The canonical route or cache schema is being changed." },
+            { "path": { "kind": "subtree", "path": "ai/fixtures" }, "trigger": "A directly related workflow fixture is required." },
+            { "path": { "kind": "subtree", "path": "docs/superpowers" }, "trigger": "A directly relevant historical design decision must be confirmed." }
+          ],
+          "rerouteTriggers": ["implementation begins", "verification begins", "completion begins", "task ownership changes"]
+        }
       ]
     }
   ],
   "surfaces": [
-    {
-      "id": "product-source",
-      "paths": ["src/main"],
-      "owner": "product feature specs"
-    },
-    {
-      "id": "product-tests",
-      "paths": ["src/test"],
-      "owner": "product feature specs"
-    },
-    {
-      "id": "ai-workflow",
-      "paths": ["ai", "scripts/ai"],
-      "owner": "repo-wide AI workflow"
-    },
-    {
-      "id": "project-docs",
-      "paths": ["docs", "README.md"],
-      "owner": "documentation routes"
-    }
+    { "id": "product-source", "paths": ["src/main"], "owner": "product feature specs" },
+    { "id": "product-tests", "paths": ["src/test"], "owner": "product feature specs" },
+    { "id": "feature-specs", "paths": ["specs"], "owner": "owning feature" },
+    { "id": "ai-workflow", "paths": ["ai", "scripts/ai"], "owner": "repo-wide AI workflow" },
+    { "id": "project-docs", "paths": ["docs", "README.md"], "owner": "documentation routes" }
   ],
-  "generatedPaths": [
-    "ai/project-state.md",
-    "ai/command-registry.md",
-    "ai/workflow-cache.md"
-  ],
-  "excludedPaths": [
-    ".ai-runs",
-    ".git",
-    "scripts/ai/__pycache__",
-    "scripts/ai/tests/__pycache__"
-  ]
+  "generatedPaths": ["ai/project-state.md", "ai/command-registry.md", "ai/workflow-cache.md"],
+  "deferredPaths": [{ "kind": "subtree", "path": "ai/work-logs" }, { "kind": "subtree", "path": "ai/fixtures" }, { "kind": "subtree", "path": "ai/schemas" }, { "kind": "subtree", "path": "docs/superpowers" }],
+  "excludedPaths": [{ "kind": "subtree", "path": ".ai-runs" }, { "kind": "subtree", "path": ".git" }, { "kind": "descendant-directory", "name": "__pycache__" }, { "kind": "subtree", "path": "build" }, { "kind": "subtree", "path": ".gradle" }, { "kind": "subtree", "path": ".idea" }, { "kind": "subtree", "path": ".worktrees" }]
 }

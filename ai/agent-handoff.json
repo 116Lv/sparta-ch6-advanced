@@ -1,28 +1,76 @@
 {
   "$schema": "./schemas/agent-handoff.schema.json",
   "$id": "ai/agent-handoff.json",
-  "schemaVersion": 1,
-  "updatedAt": "2026-07-13T12:45:00Z",
+  "schemaVersion": 2,
+  "updatedAt": "2026-07-15T00:00:00Z",
   "routeId": "repo-wide-ai-workflow",
+  "taskPhase": "verification",
   "owningFeature": "none",
-  "startupDocuments": [
+  "contextStatus": "READY",
+  "repositoryContextRequired": true,
+  "activityId": "INDEPENDENT_AUDIT",
+  "rediscoverySubjects": [],
+  "selectedDocuments": [],
+  "activatedTriggers": [
+    "A directly related verification schema is required.",
+    "Only the active Issue summary and verification role log are needed."
+  ],
+  "readDocuments": [
     "AGENTS.md",
     "ai/document-routing.md",
-    "ai/context-map.md",
-    "ai/cache-policy.md",
-    "ai/tool-call-policy.md",
-    "ai/resource-budget.md",
-    "ai/workflow-cache.md",
-    "ai/skills/README.md",
     "ai/verification-gates.md",
-    "ai/native-runtime-adapters.md",
-    "ai/native-runtime-adapters.json",
-    "ai/schemas/native-runtime-snapshot.schema.json"
+    "ai/verification-policy.json",
+    "ai/schemas/native-runtime-snapshot.schema.json",
+    "ai/work-logs/issue-10/README.md",
+    "ai/work-logs/issue-10/implementation-agent.md",
+    "ai/work-logs/issue-10/reviewer.md"
+  ],
+  "deferredDocuments": [
+    "ai/qa-gate.md",
+    "ai/done-claim-template.md",
+    "ai/issue-completion-checklist.md"
+  ],
+  "deferredDocumentTriggers": [
+    { "trigger": "The QA gate is applied.", "documents": ["ai/qa-gate.md"] },
+    { "trigger": "An evidence-based done claim is prepared.", "documents": ["ai/done-claim-template.md"] },
+    { "trigger": "Issue closure readiness is evaluated.", "documents": ["ai/issue-completion-checklist.md"] }
+  ],
+  "includePaths": [
+    { "kind": "exact", "path": "AGENTS.md" },
+    { "kind": "exact", "path": "ai/document-routing.md" },
+    { "kind": "exact", "path": "ai/verification-gates.md" },
+    { "kind": "exact", "path": "ai/verification-policy.json" },
+    { "kind": "exact", "path": "scripts/ai/verification-gate.sh" },
+    { "kind": "exact", "path": "scripts/ai/workflow_helper.py" },
+    { "kind": "exact", "path": "scripts/ai/tests/test_workflow_helper.py" },
+    { "kind": "exact", "path": "ai/schemas/native-runtime-snapshot.schema.json" },
+    { "kind": "exact", "path": "ai/work-logs/issue-10/README.md" },
+    { "kind": "exact", "path": "ai/work-logs/issue-10/implementation-agent.md" },
+    { "kind": "exact", "path": "ai/work-logs/issue-10/reviewer.md" }
+  ],
+  "deferredPaths": [{ "kind": "subtree", "path": "ai/work-logs" }, { "kind": "subtree", "path": "ai/fixtures" }, { "kind": "subtree", "path": "ai/schemas" }, { "kind": "subtree", "path": "docs/superpowers" }],
+  "decisions": [
+    "The current handoff remains repository-wide and feature ownership is none.",
+    "Only the active Issue summary and current implementation/review role logs are opted in.",
+    "Subagent reports do not replace verification or completion gates."
+  ],
+  "openQuestions": [],
+  "remainingWork": [
+    "Re-route before implementation, completion, or Phase 3B work begins."
+  ],
+  "remainingVerificationEvidence": [
+    "The current host remains UNSUPPORTED and repository-only qualification is required.",
+    "Completion evidence remains deferred until the completion phase."
+  ],
+  "rerouteTriggers": [
+    "verification scope is ambiguous",
+    "implementation resumes",
+    "completion begins",
+    "route or cache rediscovery begins",
+    "task phase or owning feature changes"
   ],
   "reusableContextRefs": [
     "ai/context-map.json",
-    "ai/workflow-cache.json",
-    "ai/work-logs/issue-5/README.md",
     "ai/verification-policy.json",
     "ai/native-runtime-adapters.json",
     "ai/native-runtime-adapters.md",
@@ -38,15 +86,15 @@
     "docs-sync",
     "review-gate"
   ],
-  "workLogRefs": [
-    "ai/work-logs/issue-6/README.md",
-    "ai/work-logs/issue-6/implementation-agent.md",
-    "ai/work-logs/issue-6/plan-reviewer.md",
-    "ai/work-logs/issue-7/README.md",
-    "ai/work-logs/issue-10/README.md",
-    "ai/work-logs/issue-10/implementation-agent.md",
-    "ai/work-logs/issue-10/reviewer.md"
-  ],
+  "activeIssue": {
+    "number": 10,
+    "issueUrl": "https://github.com/116Lv/sparta-ch6-advanced/issues/10",
+    "summaryRef": "ai/work-logs/issue-10/README.md",
+    "roleLogRefs": [
+      "ai/work-logs/issue-10/implementation-agent.md",
+      "ai/work-logs/issue-10/reviewer.md"
+    ]
+  },
   "githubIssue": {
     "issueNumber": 7,
     "issueUrl": "https://github.com/116Lv/sparta-ch6-advanced/issues/7",
@@ -75,14 +123,7 @@
   "laterPhaseBoundaries": [
     "Verification completeness remains Phase 2C or later.",
     "Registry VERIFIED promotion remains unsupported without durable command-runner evidence.",
-    "GitHub Issue #7 preserves the approved Phase 2C reconciliation record; GitHub Issue #10 backs the current Phase 3A work.",
-    "Issue-backed tracking does not by itself close either Issue or authorize an unqualified overall DONE claim.",
-    "Phase 2C static/helper gates define verification completeness and task/change applicability mapping but do not execute product commands.",
-    "Phase 3A requires the internal native-runtime-adapter leaf for every change type; the current host version is null/UNPROBED, so the host is UNSUPPORTED and maps to repository-qualified NOT_APPLICABLE with HOST_UNSUPPORTED.",
-    "Supported-host matching requires a PROBED version; only a fresh task-and-gate-bound one-use Ed25519 snapshot with signed callback proof and an exact digest of the complete bypass event set can promote trusted surfaces to ENFORCED, and valid later-gate resolutions also require exact signed resolutionEventIds binding.",
-    "Runtime keys, signatures, challenge state, bypass attempts, and native evidence remain ephemeral in Phase 3A and are not reusable cache evidence.",
-    "scripts/ai/command-runner.sh remains the only supported product-command path; native adapters do not execute product commands.",
-    "Phase 1B-3 remains INTEGRITY_ONLY and does not establish verification completeness, registry VERIFIED promotion, closure, or unqualified overall DONE.",
-    "Phase 3B owns CI adapter installation, remote-runner guarantees, durable CI evidence, cross-process challenge and bypass-event durability, and cross-host parity."
+    "Issue-backed tracking does not authorize an unqualified overall DONE claim.",
+    "Phase 3B owns CI adapter installation, remote-runner guarantees, durable CI evidence, and cross-host parity."
   ]
 }
