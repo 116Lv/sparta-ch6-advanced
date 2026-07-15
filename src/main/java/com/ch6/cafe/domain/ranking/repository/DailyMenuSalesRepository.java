@@ -9,7 +9,8 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface DailyMenuSalesRepository extends JpaRepository<DailyMenuSale, Long> {
+public interface DailyMenuSalesRepository
+        extends JpaRepository<DailyMenuSale, Long>, DailyMenuSalesQueryRepository {
 
     @Modifying
     @Query(value = """
@@ -22,26 +23,7 @@ public interface DailyMenuSalesRepository extends JpaRepository<DailyMenuSale, L
             """, nativeQuery = true)
     int increment(@Param("salesDate") LocalDate salesDate, @Param("menuId") Long menuId);
 
-    @Query("""
-            select sale.menuId as menuId, sum(sale.orderCount) as orderCount
-            from DailyMenuSale sale
-            where sale.salesDate between :from and :to
-            group by sale.menuId
-            """)
-    List<MenuSalesAggregate> aggregateBetween(@Param("from") LocalDate from, @Param("to") LocalDate to);
-
     List<DailyMenuSale> findAllBySalesDateBetween(LocalDate from, LocalDate to);
 
     Optional<DailyMenuSale> findBySalesDateAndMenuId(LocalDate salesDate, Long menuId);
-
-    @Query("""
-            select sale.salesDate as salesDate,
-                   sum(sale.orderCount) as totalOrderCount,
-                   count(sale) as menuCount
-            from DailyMenuSale sale
-            where sale.salesDate between :from and :to
-            group by sale.salesDate
-            """)
-    List<DailySalesMetadataProjection> summarizeBetween(
-            @Param("from") LocalDate from, @Param("to") LocalDate to);
 }

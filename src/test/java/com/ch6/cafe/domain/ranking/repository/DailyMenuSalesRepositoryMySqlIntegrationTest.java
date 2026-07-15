@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.ch6.cafe.domain.outbox.publisher.OutboxPublisher;
 import com.ch6.cafe.domain.ranking.entity.PopularMenu;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,6 +13,7 @@ import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -77,15 +79,23 @@ class DailyMenuSalesRepositoryMySqlIntegrationTest {
         assertThat(ranking).extracting(PopularMenu::menuId).containsExactly(1L, 2L, 3L);
         assertThat(ranking).extracting(PopularMenu::orderCount).containsExactly(7L, 7L, 6L);
         assertThat(ranking).extracting(PopularMenu::menuId).doesNotContain(4L);
-        assertThat(metadata).anySatisfy(day -> {
-            assertThat(day.getSalesDate()).isEqualTo(LocalDate.of(2026, 7, 10));
-            assertThat(day.getTotalOrderCount()).isEqualTo(4L);
-            assertThat(day.getMenuCount()).isEqualTo(1L);
-        }).anySatisfy(day -> {
-            assertThat(day.getSalesDate()).isEqualTo(LocalDate.of(2026, 7, 16));
-            assertThat(day.getTotalOrderCount()).isEqualTo(16L);
-            assertThat(day.getMenuCount()).isEqualTo(3L);
-        });
+        assertThat(metadata)
+                .extracting(
+                        DailySalesMetadataProjection::getSalesDate,
+                        DailySalesMetadataProjection::getTotalOrderCount,
+                        DailySalesMetadataProjection::getMenuCount)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(LocalDate.of(2026, 7, 10), 4L, 1L),
+                        org.assertj.core.groups.Tuple.tuple(LocalDate.of(2026, 7, 16), 16L, 3L));
+    }
+
+    @Test
+    void aggregateReadsAreImplementedByQueryDslFragmentRatherThanJpqlQueries() {
+        assertThat(Arrays.stream(DailyMenuSalesRepository.class.getDeclaredMethods())
+                .filter(method -> method.isAnnotationPresent(Query.class))
+                .map(method -> method.getName())
+                .toList())
+                .containsExactly("increment");
     }
 
     private void insert(LocalDate date, long menuId, long count) {

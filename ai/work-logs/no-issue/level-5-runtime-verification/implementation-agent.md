@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T03:51:25+09:00
+last_updated: 2026-07-16T04:30:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
@@ -24,6 +24,9 @@ changed_files:
 commands_run:
   - "verify.build: run verify-20260716-level5-task1-build-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.unit: run verify-20260716-level5-task1-unit-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
+  - "verify.integration RED: run verify-20260716-level5-task2-red-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
+  - "verify.integration GREEN: run verify-20260716-level5-task2-green-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
+  - "verify.integration final GREEN: run verify-20260716-level5-task2-green-02; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
 tests_run:
   - "RED canonical contract: 1 failure with 19 violations"
   - "RED E2E allowlist: 2 failures"
@@ -61,10 +64,12 @@ Implement Tasks 1-5 sequentially under TDD and the official command-runner polic
 - Discovered that schemaVersion 1 rejected the approved E2E script. Scope was explicitly expanded to permit only command `verify.e2e` with exact argv `["./scripts/e2e/verify-e2e.sh"]`; arbitrary scripts and added arguments remain rejected.
 - Preserved every command as `CONFIGURED_UNVERIFIED` with static evidence only and `lastVerifiedAt: null`.
 - Addressed the Task 1 Important review finding: common working-directory validation now applies to every configured executable, while only Gradle argv enters wrapper-specific validation.
+- Task 2 RED assertions now cover exact grouped projection values and require aggregate reads to leave JPQL `@Query` methods.
+- Task 2 production aggregation now uses a custom Spring Data repository fragment backed by `JPAQueryFactory`; the native MySQL increment UPSERT remains unchanged.
 
 # Current State
 
-Task 1 implementation and focused static verification are complete. Official build/unit launches are blocked on this Windows host before attempt reservation because the workflow supports product execution only on POSIX.
+Task 2 QueryDSL implementation is in progress. Its official RED launch is blocked on this Windows host before attempt reservation because the workflow supports product execution only on POSIX; static review and a fresh official GREEN attempt remain.
 
 # Decisions
 
@@ -81,10 +86,14 @@ Task 1 implementation and focused static verification are complete. Official bui
 - Final whole helper suite: 544 tests in 461.835 seconds, 14 failures, 44 errors, 20 skips; NOT PASS. The Task 1-related wrapper-resolution failure was isolated and is GREEN in the final focused set. Remaining failures are repository-root `.ai-runs` absence assumptions; errors are sandbox `PermissionError` failures creating Phase 3B provenance fixture directories.
 - Review-fix RED: `RegistrySemanticValidationTests.test_verify_e2e_requires_a_contained_directory_working_directory` failed all three subtests because E2E bypassed common validation.
 - Review-fix GREEN: 6 focused Task 1 tests passed in 1.727 seconds, covering the three E2E working-directory errors plus prior allowlist, schema, canonical, and resolver boundaries.
+- Task 2 RED run `verify-20260716-level5-task2-red-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, artifact, or test count.
+- Task 2 GREEN run `verify-20260716-level5-task2-green-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, artifact, or test count.
+- Task 2 final GREEN run `verify-20260716-level5-task2-green-02`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, artifact, or test count.
 
 # Blockers
 
 - Supported POSIX product execution is unavailable on this Windows host, so Task 1 cannot produce build/unit runtime evidence or promote registry status.
+- Supported POSIX product execution is unavailable on this Windows host, so Task 2 cannot produce compile/MySQL integration evidence.
 - The review's Minor structural task-block matcher wording was not present in the available local review artifact; it is deferred for final review rather than implemented by inference.
 
 # Next Handoff
