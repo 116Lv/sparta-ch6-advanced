@@ -60,4 +60,25 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    exclude '**/*IntegrationTest.class', '**/*ApiSmokeTest.class'
+}
+
+tasks.register('integrationTest', Test) {
+    description = 'Runs real-infrastructure Testcontainers integration tests.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/*IntegrationTest.class'
+    shouldRunAfter tasks.named('test')
+}
+
+tasks.register('apiSmokeTest', Test) {
+    description = 'Runs random-port real HTTP API smoke tests.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/*ApiSmokeTest.class'
+    shouldRunAfter tasks.named('integrationTest')
 }

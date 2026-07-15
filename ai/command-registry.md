@@ -10,7 +10,7 @@
 - A command is executable only through the Phase 1B gateway after that gateway exists. Phase 1A defines state contracts only.
 - `VERIFIED` requires successful execution of the exact registered argv plus recorded Phase 1B runtime evidence. Human manual command output does not satisfy this rule.
 - Native `gradlew.bat` execution is future scope and remains `NOT_CONFIGURED`.
-- schemaVersion 1 executable argv is allowlisted to begin with `./gradlew`. A future non-Gradle executable profile requires an approved schema contract or version expansion; Phase 1B must reject a non-allowlisted executable as `INVALID_STATE` before execution.
+- schemaVersion 1 executable argv is allowlisted to begin with `./gradlew`, except that `verify.e2e` may use only the exact no-argument argv `["./scripts/e2e/verify-e2e.sh"]`. Phase 1B rejects every other executable or E2E argument as `INVALID_STATE` before execution.
 - Token-level safeguards remain defense in depth: backslashes, shell control operators, pipelines, redirection, separators, newlines, dollar expressions, and `eval` expressions are invalid.
 - Enabled parameters use a bounded, closed object schema with named string properties and required string patterns; arbitrary embedded schemas are invalid.
 - Repository paths are relative, forward-slash-only paths without URI schemes or `..` segments. The canonical registry uses `./schemas/command-registry.schema.json`; static fixtures may use `ai/schemas/command-registry.schema.json`.
@@ -28,7 +28,7 @@ This section cannot be changed independently of its canonical JSON source.
 - Canonical source: `ai/command-registry.json`
 - Schema: `./schemas/command-registry.schema.json`
 - Schema version: `1`
-- Updated at: `2026-07-10T12:11:47Z`
+- Updated at: `2026-07-15T18:21:19Z`
 - Registered capability records: `10`
 - Verified command records: `0`
 
@@ -36,20 +36,20 @@ This section cannot be changed independently of its canonical JSON source.
 |---|---|---|---|---|---|---|
 | `dependencies.install` | Install or resolve project dependencies | `UNKNOWN` | `UNAVAILABLE` | `UNKNOWN` | NONE | NONE |
 | `server.dev` | Start the development server | `UNKNOWN` | `UNAVAILABLE` | `UNKNOWN` | NONE | NONE |
-| `verify.build` | Compile or build the project | `UNKNOWN` | `UNAVAILABLE` | `UNKNOWN` | NONE | NONE |
+| `verify.build` | Compile or build the project | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./gradlew", "assemble"]` | `build.gradle`; `gradlew` | NONE |
 | `verify.unit` | Run the configured Gradle test task | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./gradlew", "test"]` | `build.gradle`; `gradlew` | NONE |
 | `verify.lint` | Run lint checks | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `build.gradle` | NONE |
-| `verify.integration` | Run a dedicated integration-test command | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `build.gradle` | NONE |
-| `verify.e2e` | Run end-to-end tests | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `build.gradle` | NONE |
-| `verify.api-smoke` | Run real HTTP API smoke verification | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `src/main/java/com/ch6/cafe/CafeApplication.java`; `docs/superpowers/specs/2026-07-10-ai-workflow-phase-1a-spec.md` | NONE |
+| `verify.integration` | Run a dedicated integration-test command | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./gradlew", "integrationTest"]` | `build.gradle`; `gradlew` | NONE |
+| `verify.e2e` | Run end-to-end tests | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./scripts/e2e/verify-e2e.sh"]` | `docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md` | NONE |
+| `verify.api-smoke` | Run real HTTP API smoke verification | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./gradlew", "apiSmokeTest"]` | `build.gradle`; `gradlew` | NONE |
 | `db.migration` | Apply database migrations | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `build.gradle` | NONE |
 | `db.seed` | Seed development or test data | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `src/main/resources/application.yml`; `docs/superpowers/specs/2026-07-10-ai-workflow-phase-1a-spec.md` | NONE |
 
 ### Bootstrap Constraints
 
-- `verify.unit` is configured but unverified and uses only the POSIX argv `["./gradlew", "test"]`.
-- Lint, dedicated integration test, E2E, API smoke, migration, and seed are not configured.
-- Dependency installation, development server, and build argv remain unknown and unavailable.
+- Build, unit, integration, API smoke, and E2E are configured but unverified with the exact POSIX argv shown above.
+- The E2E executable is planned and registered but is not created until Task 5.
+- Lint, migration, and seed are not configured; dependency installation and the development server remain unknown and unavailable.
 - Every recorded evidence item is `STATIC_FILE`; no runtime evidence exists.
 - Every `lastVerifiedAt` value is `null`.
 <!-- GENERATED:END source=ai/command-registry.json -->

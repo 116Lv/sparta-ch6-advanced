@@ -1529,6 +1529,53 @@ class RegistrySemanticValidationTests(unittest.TestCase):
                 self.command(registry)["argv"][0] = executable
                 self.assert_semantic_invalid(root, registry, "UNSUPPORTED_EXECUTABLE", "/commands/0/argv/0")
 
+    def test_verify_e2e_allows_only_the_exact_no_argument_script(self):
+        root = self.temporary_repository()
+        registry = self.registry()
+        command = self.command(registry)
+        command["id"] = "verify.e2e"
+        command["argv"] = ["./scripts/e2e/verify-e2e.sh"]
+        command["parameters"] = {"allowed": False, "schema": None}
+        try:
+            semantic_order = self.helper.validate_registry_semantics(root, registry)
+        except self.helper.InvalidStateError as error:
+            self.fail(f"exact verify.e2e argv must be accepted: {error}")
+        self.assertEqual(semantic_order["verify.e2e"], [])
+
+        (root / "gradlew").unlink()
+        self.assertEqual(self.helper.validate_registry_semantics(root, registry)["verify.e2e"], [])
+
+        cases = (
+            ("wrong-command", "verify.other", ["./scripts/e2e/verify-e2e.sh"], "/commands/0/argv/0"),
+            ("argument", "verify.e2e", ["./scripts/e2e/verify-e2e.sh", "--unsafe"], "/commands/0/argv/1"),
+            ("other-script", "verify.e2e", ["./scripts/e2e/other.sh"], "/commands/0/argv/0"),
+        )
+        for label, command_id, argv, expected_path in cases:
+            with self.subTest(case=label):
+                root = self.temporary_repository()
+                registry = self.registry()
+                command = self.command(registry)
+                command["id"] = command_id
+                command["argv"] = argv
+                command["parameters"] = {"allowed": False, "schema": None}
+                self.assert_semantic_invalid(
+                    root, registry, "UNSUPPORTED_EXECUTABLE", expected_path,
+                )
+
+    def test_command_registry_schema_allows_exact_verify_e2e_argv(self):
+        registry = self.registry()
+        command = self.command(registry)
+        command["id"] = "verify.e2e"
+        command["argv"] = ["./scripts/e2e/verify-e2e.sh"]
+        command["parameters"] = {"allowed": False, "schema": None}
+        schema = json.loads(
+            (REPOSITORY_ROOT / "ai" / "schemas" / "command-registry.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        errors = sorted(Draft202012Validator(schema).iter_errors(registry), key=str)
+        self.assertEqual(errors, [])
+
     def test_prerequisites_reject_unknown_self_and_cycles_and_have_a_stable_topological_order(self):
         cases = (
             ("unknown", ["verify.missing"], "UNKNOWN_PREREQUISITE", "/commands/0/prerequisites/0"),
@@ -14999,6 +15046,75 @@ print(json.dumps({"result": result, "status": status}))
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Level5CanonicalVerificationCommandTests(unittest.TestCase):
+    def test_canonical_verification_commands_and_gradle_test_boundaries(self):
+        self.maxDiff = None
+        registry = json.loads(
+            (REPOSITORY_ROOT / "ai" / "command-registry.json").read_text(encoding="utf-8")
+        )
+        commands = {command["id"]: command for command in registry["commands"]}
+        expected_argv = {
+            "verify.build": ["./gradlew", "assemble"],
+            "verify.unit": ["./gradlew", "test"],
+            "verify.integration": ["./gradlew", "integrationTest"],
+            "verify.api-smoke": ["./gradlew", "apiSmokeTest"],
+            "verify.e2e": ["./scripts/e2e/verify-e2e.sh"],
+        }
+
+        violations = []
+        for command_id, argv in expected_argv.items():
+            command = commands.get(command_id)
+            if command is None:
+                violations.append(f"{command_id}: command is missing")
+                continue
+            if command["argv"] != argv:
+                violations.append(f"{command_id}: expected argv {argv!r}, got {command['argv']!r}")
+            if command["configurationStatus"] != "CONFIGURED_UNVERIFIED":
+                violations.append(
+                    f"{command_id}: expected CONFIGURED_UNVERIFIED, "
+                    f"got {command['configurationStatus']}"
+                )
+            if command["classification"] != "SAFE":
+                violations.append(f"{command_id}: expected SAFE, got {command['classification']}")
+            if command["parameters"] != {"allowed": False, "schema": None}:
+                violations.append(f"{command_id}: parameters must be disabled")
+            if command["lastVerifiedAt"] is not None:
+                violations.append(f"{command_id}: lastVerifiedAt must remain null")
+            non_static_evidence = [
+                evidence for evidence in command["evidence"]
+                if evidence["kind"] != "STATIC_FILE"
+            ]
+            if non_static_evidence:
+                violations.append(f"{command_id}: runtime/VERIFIED evidence is not allowed")
+            if argv[0] == "./gradlew" and not any(
+                evidence["kind"] == "STATIC_FILE" and evidence["path"] == "gradlew"
+                for evidence in command["evidence"]
+            ):
+                violations.append(f"{command_id}: Gradle command must evidence gradlew")
+
+        build_text = (REPOSITORY_ROOT / "build.gradle").read_text(encoding="utf-8")
+        gradle_contracts = (
+            "exclude '**/*IntegrationTest.class', '**/*ApiSmokeTest.class'",
+            "tasks.register('integrationTest', Test)",
+            "include '**/*IntegrationTest.class'",
+            "shouldRunAfter tasks.named('test')",
+            "tasks.register('apiSmokeTest', Test)",
+            "include '**/*ApiSmokeTest.class'",
+            "shouldRunAfter tasks.named('integrationTest')",
+        )
+        for contract in gradle_contracts:
+            if contract not in build_text:
+                violations.append(f"build.gradle: missing {contract}")
+
+        helper = load_helper()
+        try:
+            helper.validate_registry_semantics(REPOSITORY_ROOT, registry)
+        except helper.InvalidStateError as error:
+            violations.append(f"canonical registry semantic validation failed: {error}")
+
+        self.assertEqual(violations, [])
 
 
 class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):

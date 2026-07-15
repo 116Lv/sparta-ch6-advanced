@@ -2,7 +2,7 @@
   "$schema": "./schemas/command-registry.schema.json",
   "$id": "ai/command-registry.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-10T12:11:47Z",
+  "updatedAt": "2026-07-15T18:21:19Z",
   "commands": [
     {
       "id": "dependencies.install",
@@ -35,16 +35,27 @@
     {
       "id": "verify.build",
       "purpose": "Compile or build the project",
-      "configurationStatus": "UNKNOWN",
-      "classification": "UNAVAILABLE",
-      "argv": null,
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "assemble"],
       "workingDirectory": ".",
       "parameters": { "allowed": false, "schema": null },
       "prerequisites": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "build.gradle",
+          "claim": "The Java and Spring Boot plugins provide the assemble lifecycle task."
+        },
+        {
+          "kind": "STATIC_FILE",
+          "path": "gradlew",
+          "claim": "The POSIX Gradle wrapper entry point exists."
+        }
+      ],
       "inputPaths": ["build.gradle", "settings.gradle", "gradle/**", "src/main/**", "src/test/**"],
       "lastVerifiedAt": null,
-      "notes": ["No exact build argv is selected or executed in Phase 1A."]
+      "notes": ["Static configuration evidence exists; the command has not been executed."]
     },
     {
       "id": "verify.unit",
@@ -97,9 +108,9 @@
     {
       "id": "verify.integration",
       "purpose": "Run a dedicated integration-test command",
-      "configurationStatus": "NOT_CONFIGURED",
-      "classification": "UNAVAILABLE",
-      "argv": null,
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "integrationTest"],
       "workingDirectory": ".",
       "parameters": { "allowed": false, "schema": null },
       "prerequisites": [],
@@ -107,19 +118,47 @@
         {
           "kind": "STATIC_FILE",
           "path": "build.gradle",
-          "claim": "No dedicated integration-test task is declared."
+          "claim": "The integrationTest task runs classes named *IntegrationTest on JUnit Platform."
+        },
+        {
+          "kind": "STATIC_FILE",
+          "path": "gradlew",
+          "claim": "The POSIX Gradle wrapper entry point exists."
         }
       ],
       "inputPaths": ["build.gradle", "src/test/**"],
       "lastVerifiedAt": null,
-      "notes": []
+      "notes": ["Static configuration evidence exists; the command has not been executed."]
     },
     {
       "id": "verify.e2e",
       "purpose": "Run end-to-end tests",
-      "configurationStatus": "NOT_CONFIGURED",
-      "classification": "UNAVAILABLE",
-      "argv": null,
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./scripts/e2e/verify-e2e.sh"],
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md",
+          "claim": "The approved design assigns black-box Docker Compose verification to the no-argument E2E POSIX script."
+        }
+      ],
+      "inputPaths": ["scripts/e2e/verify-e2e.sh", "compose*.yml", "Dockerfile", "src/main/**", "src/test/**"],
+      "lastVerifiedAt": null,
+      "notes": [
+        "The planned executable is registered before Task 5 creates it.",
+        "Static configuration evidence exists; the command has not been executed."
+      ]
+    },
+    {
+      "id": "verify.api-smoke",
+      "purpose": "Run real HTTP API smoke verification",
+      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "apiSmokeTest"],
       "workingDirectory": ".",
       "parameters": { "allowed": false, "schema": null },
       "prerequisites": [],
@@ -127,37 +166,17 @@
         {
           "kind": "STATIC_FILE",
           "path": "build.gradle",
-          "claim": "No E2E task or framework is declared."
-        }
-      ],
-      "inputPaths": ["build.gradle"],
-      "lastVerifiedAt": null,
-      "notes": []
-    },
-    {
-      "id": "verify.api-smoke",
-      "purpose": "Run real HTTP API smoke verification",
-      "configurationStatus": "NOT_CONFIGURED",
-      "classification": "UNAVAILABLE",
-      "argv": null,
-      "workingDirectory": ".",
-      "parameters": { "allowed": false, "schema": null },
-      "prerequisites": ["server.dev"],
-      "evidence": [
-        {
-          "kind": "STATIC_FILE",
-          "path": "src/main/java/com/ch6/cafe/CafeApplication.java",
-          "claim": "This file defines the Spring Boot application entry point and does not register an API smoke runner."
+          "claim": "The apiSmokeTest task runs classes named *ApiSmokeTest on JUnit Platform."
         },
         {
           "kind": "STATIC_FILE",
-          "path": "docs/superpowers/specs/2026-07-10-ai-workflow-phase-1a-spec.md",
-          "claim": "The approved Phase 1A intake classifies verify.api-smoke as NOT_CONFIGURED."
+          "path": "gradlew",
+          "claim": "The POSIX Gradle wrapper entry point exists."
         }
       ],
       "inputPaths": ["src/main/**", "src/test/**", "docs/07-data-and-api-contracts.md"],
       "lastVerifiedAt": null,
-      "notes": []
+      "notes": ["Static configuration evidence exists; the command has not been executed."]
     },
     {
       "id": "db.migration",

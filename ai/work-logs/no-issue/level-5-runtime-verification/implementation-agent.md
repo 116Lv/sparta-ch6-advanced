@@ -8,19 +8,38 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T00:00:00+09:00
+last_updated: 2026-07-16T03:35:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
-changed_files: []
-commands_run: []
-tests_run: []
+changed_files:
+  - build.gradle
+  - ai/command-registry.json
+  - ai/command-registry.md
+  - ai/schemas/command-registry.schema.json
+  - scripts/ai/workflow_helper.py
+  - scripts/ai/tests/test_workflow_helper.py
+  - ai/work-logs/no-issue/level-5-runtime-verification/README.md
+  - ai/work-logs/no-issue/level-5-runtime-verification/implementation-agent.md
+commands_run:
+  - "verify.build: run verify-20260716-level5-task1-build-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
+  - "verify.unit: run verify-20260716-level5-task1-unit-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
+tests_run:
+  - "RED canonical contract: 1 failure with 19 violations"
+  - "RED E2E allowlist: 2 failures"
+  - "GREEN focused contracts: 4 tests passed"
+  - "Full helper suite before stale-ID fix: 544 tests, 36 failures, 44 errors, 20 skipped"
+  - "Final full helper suite: 544 tests, 14 failures, 44 errors, 20 skipped; NOT PASS"
+  - "Final focused Task 1 contracts: 5 tests passed"
 blockers: []
 skill_ids:
   - superpowers:test-driven-development
 handoff_state_ref: ai/work-logs/no-issue/level-5-runtime-verification/README.md
 reusable_context_refs: []
-not_run_project_commands: []
+not_run_project_commands:
+  - verify.integration
+  - verify.api-smoke
+  - verify.e2e
 github_reconciliation_status: pending_external_authorization
 reconciliation_required: true
 issue_creation_attempted_at: 2026-07-16T00:00:00+09:00
@@ -36,10 +55,13 @@ Implement Tasks 1-5 sequentially under TDD and the official command-runner polic
 # Work Done
 
 - Design and plan committed at `97926ba`.
+- Task 1 configured isolated Gradle unit, integration, and API-smoke suites plus the five canonical verification commands.
+- Discovered that schemaVersion 1 rejected the approved E2E script. Scope was explicitly expanded to permit only command `verify.e2e` with exact argv `["./scripts/e2e/verify-e2e.sh"]`; arbitrary scripts and added arguments remain rejected.
+- Preserved every command as `CONFIGURED_UNVERIFIED` with static evidence only and `lastVerifiedAt: null`.
 
 # Current State
 
-Task 1 ready for dispatch.
+Task 1 implementation and focused static verification are complete. Official build/unit launches are blocked on this Windows host before attempt reservation because the workflow supports product execution only on POSIX.
 
 # Decisions
 
@@ -47,12 +69,17 @@ Task 1 ready for dispatch.
 
 # Verification Evidence
 
-- Command: `not run`
-- Result: NOT RUN
+- RED: canonical focused test failed with 19 expected registry/Gradle boundary violations.
+- RED: E2E schema/semantic focused tests failed twice because the exact script was not yet allowlisted.
+- GREEN: final canonical, E2E schema/semantic, wrapper-evidence, and affected resolver focused tests passed, 5 tests in 1.517 seconds.
+- Official build run: `verify-20260716-level5-task1-build-01`; RUN_START PASS; PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, artifact, build count, or test count.
+- Official unit run: `verify-20260716-level5-task1-unit-01`; RUN_START PASS; PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, artifact, or test count.
+- Initial whole helper suite after implementation exposed a stale loop-scoped `command_id`: 544 tests, 36 failures, 44 errors, 20 skips. A canonical multi-command regression test reproduced the cause and the focused GREEN passed after the one-line scope fix.
+- Final whole helper suite: 544 tests in 461.835 seconds, 14 failures, 44 errors, 20 skips; NOT PASS. The Task 1-related wrapper-resolution failure was isolated and is GREEN in the final focused set. Remaining failures are repository-root `.ai-runs` absence assumptions; errors are sandbox `PermissionError` failures creating Phase 3B provenance fixture directories.
 
 # Blockers
 
-- None for local implementation.
+- Supported POSIX product execution is unavailable on this Windows host, so Task 1 cannot produce build/unit runtime evidence or promote registry status.
 
 # Next Handoff
 

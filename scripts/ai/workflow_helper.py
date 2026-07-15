@@ -1297,16 +1297,30 @@ def validate_registry_semantics(root, registry):
             command_indexes[command_id] = index
 
     for index, command in enumerate(commands):
+        command_id = command.get("id")
         argv = command.get("argv")
         parameters = command.get("parameters", {})
         placeholders = []
 
         if argv is not None:
-            if not argv or argv[0] != "./gradlew":
+            is_gradle_command = bool(argv) and argv[0] == "./gradlew"
+            is_e2e_command = (
+                command_id == "verify.e2e"
+                and argv == ["./scripts/e2e/verify-e2e.sh"]
+            )
+            if not is_gradle_command and not is_e2e_command:
+                error_argument_index = (
+                    1
+                    if command_id == "verify.e2e"
+                    and argv
+                    and argv[0] == "./scripts/e2e/verify-e2e.sh"
+                    and len(argv) > 1
+                    else 0
+                )
                 errors.append(registry_error(
                     "UNSUPPORTED_EXECUTABLE",
-                    f"/commands/{index}/argv/0",
-                    "schemaVersion 1 only supports ./gradlew",
+                    f"/commands/{index}/argv/{error_argument_index}",
+                    "schemaVersion 1 supports ./gradlew or the exact no-argument verify.e2e script",
                 ))
             for argument_index, token in enumerate(argv):
                 if "{" not in token and "}" not in token:
@@ -1413,7 +1427,8 @@ def validate_registry_semantics(root, registry):
         raise InvalidStateError([registry_error("REPOSITORY_ROOT_INVALID", "", "repository root is unavailable")]) from error
 
     for index, command in enumerate(commands):
-        if command.get("argv") is None:
+        argv = command.get("argv")
+        if argv is None or argv[0] != "./gradlew":
             continue
         working_directory_path = f"/commands/{index}/workingDirectory"
         working_directory = repository_root / command.get("workingDirectory", "")

@@ -7,7 +7,7 @@ owning_feature: "none"
 current_owner: orchestrator
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T00:00:00+09:00
+last_updated: 2026-07-16T03:35:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md
@@ -74,7 +74,10 @@ Design and plan are complete. Task 1 command/test-boundary implementation is nex
 ## Verification Evidence
 
 - Existing historical evidence: `verify.unit` run `verify-20260716-wsl-11`, exit 0, 69 tests, 0 failures/errors/skips.
-- New task commands: not run yet.
+- Task 1 focused contracts: GREEN, 5 tests passed after RED evidence for the missing command/test boundaries, E2E allowlist, and wrapper-validation boundary.
+- Task 1 final whole helper suite: NOT PASS; 544 tests, 14 failures, 44 errors, 20 skips. Remaining failures/errors are repository-root `.ai-runs` assumptions and sandbox-denied Phase 3B provenance fixture writes; the isolated Task 1 resolver regression passes in the focused set.
+- Task 1 build run `verify-20260716-level5-task1-build-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt reserved and no build/test counts produced.
+- Task 1 unit run `verify-20260716-level5-task1-unit-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt reserved and no test counts produced.
 
 ## Blockers
 
