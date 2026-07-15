@@ -9,7 +9,7 @@ import com.ch6.cafe.domain.outbox.service.OrderPaidAnalyticsService;
 import com.ch6.cafe.domain.outbox.service.OrderPaidMessage;
 import com.ch6.cafe.domain.ranking.repository.RedisPopularMenuRepository;
 import com.ch6.cafe.global.lock.DistributedLockManager;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RedissonClient;

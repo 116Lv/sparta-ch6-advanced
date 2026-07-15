@@ -2,9 +2,9 @@ package com.ch6.cafe.domain.outbox.publisher;
 
 import com.ch6.cafe.domain.outbox.entity.OutboxEvent;
 import com.ch6.cafe.domain.outbox.repository.OutboxEventRepository;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Optional;

@@ -13,6 +13,7 @@ import com.ch6.cafe.domain.outbox.repository.OutboxRecoveryAuditRepository;
 import com.ch6.cafe.domain.ranking.repository.RedisPopularMenuRepository;
 import com.ch6.cafe.global.lock.DistributedLockManager;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.RedissonClient;
@@ -26,6 +27,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -49,6 +51,7 @@ class OutboxRecoveryServiceMySqlIntegrationTest {
     @Autowired OutboxEventRepository eventRepository;
     @MockitoSpyBean OutboxRecoveryAuditRepository auditRepository;
     @Autowired JdbcTemplate jdbcTemplate;
+    @Autowired TransactionTemplate transactions;
 
     @BeforeEach void clean() {
         jdbcTemplate.update("DELETE FROM outbox_recovery_audits");
@@ -74,7 +77,9 @@ class OutboxRecoveryServiceMySqlIntegrationTest {
         assertThat(event.getRetryCount()).isZero();
         assertThat(event.getLastError()).isNull();
         assertThat(event.getClaimToken()).isNull();
-        assertThat(eventRepository.findClaimable(LocalDateTime.now(), PageRequest.of(0, 1)))
+        List<OutboxEvent> claimable = transactions.execute(status ->
+                eventRepository.findClaimable(LocalDateTime.now(), PageRequest.of(0, 1)));
+        assertThat(claimable)
                 .extracting(OutboxEvent::getId).containsExactly(eventId);
         assertThat(auditRepository.findAll()).singleElement().satisfies(audit -> {
             assertThat(audit.getEventId()).isEqualTo(eventId);

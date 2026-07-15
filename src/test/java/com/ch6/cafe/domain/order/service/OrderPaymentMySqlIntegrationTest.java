@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -38,10 +39,11 @@ import com.ch6.cafe.domain.point.service.PointChargeService;
 import com.ch6.cafe.domain.ranking.repository.DailyMenuSalesRepository;
 import com.ch6.cafe.domain.ranking.repository.RedisPopularMenuRepository;
 import com.ch6.cafe.domain.ranking.service.MenuSalesRecorder;
+import com.ch6.cafe.domain.ranking.service.RankingDateLock;
 import com.ch6.cafe.global.lock.DistributedLockManager;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -112,6 +114,9 @@ class OrderPaymentMySqlIntegrationTest {
     private RedissonClient redissonClient;
 
     @MockitoBean
+    private RankingDateLock rankingDateLock;
+
+    @MockitoBean
     private OutboxPublisher outboxPublisher;
 
     @MockitoBean
@@ -177,6 +182,10 @@ class OrderPaymentMySqlIntegrationTest {
                         lock.unlock();
                     }
                 });
+        doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(1).run();
+            return null;
+        }).when(rankingDateLock).execute(any(), any());
     }
 
     @Test
@@ -269,7 +278,7 @@ class OrderPaymentMySqlIntegrationTest {
     void lateSerializationFailureRollsBackEveryDurableOrderMutation() throws Exception {
         Menu menu = seedUserPointAndMenu(5_000L, 4_000L);
         ObjectMapper failingObjectMapper = mock(ObjectMapper.class);
-        when(failingObjectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("forced") {
+        when(failingObjectMapper.writeValueAsString(any())).thenThrow(new JacksonException("forced") {
         });
         OrderPaymentService failingService = new OrderPaymentService(
                 lockManager,
@@ -362,7 +371,7 @@ class OrderPaymentMySqlIntegrationTest {
         return pointHistoryRepository.findAll(org.springframework.data.domain.Sort.by("id"));
     }
 
-    private void assertCommittedOrderGraph(long expectedOrders, long expectedDailyCount) throws JsonProcessingException {
+    private void assertCommittedOrderGraph(long expectedOrders, long expectedDailyCount) throws JacksonException {
         List<Order> orders = orderRepository.findAll();
         List<Payment> payments = paymentRepository.findAll();
         List<OutboxEvent> events = outboxEventRepository.findAll();

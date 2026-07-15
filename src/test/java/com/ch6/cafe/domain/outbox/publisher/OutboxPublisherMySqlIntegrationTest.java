@@ -4,6 +4,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -14,7 +15,7 @@ import com.ch6.cafe.domain.outbox.entity.OutboxStatus;
 import com.ch6.cafe.domain.outbox.repository.OutboxEventRepository;
 import com.ch6.cafe.domain.ranking.repository.RedisPopularMenuRepository;
 import com.ch6.cafe.global.lock.DistributedLockManager;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -137,7 +138,8 @@ class OutboxPublisherMySqlIntegrationTest {
         assertThat(retryable.getClaimToken()).isNull();
         OutboxPublisher.ClaimedEvent reclaimed = publisher("worker-b", 1).claimNext().orElseThrow();
         assertThat(reclaimed.id()).isEqualTo(retryable.getId());
-        verify(kafkaTemplate, times(1)).send("coffee.order.paid", "1", org.mockito.ArgumentMatchers.anyString());
+        verify(kafkaTemplate, times(1)).send(
+                eq("coffee.order.paid"), eq("1"), org.mockito.ArgumentMatchers.anyString());
     }
 
     private OutboxPublisher publisher(String owner, int batchSize) {

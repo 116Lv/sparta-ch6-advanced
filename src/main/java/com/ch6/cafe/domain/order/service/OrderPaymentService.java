@@ -18,8 +18,8 @@ import com.ch6.cafe.domain.point.repository.PointHistoryRepository;
 import com.ch6.cafe.domain.point.repository.UserPointRepository;
 import com.ch6.cafe.domain.ranking.service.MenuSalesRecorder;
 import com.ch6.cafe.global.lock.DistributedLockManager;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -111,7 +111,7 @@ public class OrderPaymentService {
                     "userId", userId,
                     "menuId", menuId,
                     "paymentAmount", paymentAmount));
-        } catch (JsonProcessingException exception) {
+        } catch (JacksonException exception) {
             throw new IllegalStateException("ORDER_PAID payload serialization failed.", exception);
         }
     }

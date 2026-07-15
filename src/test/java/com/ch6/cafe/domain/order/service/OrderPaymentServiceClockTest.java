@@ -21,7 +21,7 @@ import com.ch6.cafe.domain.point.repository.PointHistoryRepository;
 import com.ch6.cafe.domain.point.repository.UserPointRepository;
 import com.ch6.cafe.domain.ranking.service.MenuSalesRecorder;
 import com.ch6.cafe.global.lock.DistributedLockManager;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -63,7 +64,11 @@ class OrderPaymentServiceClockTest {
         MenuSalesRecorder salesRecorder = mock(MenuSalesRecorder.class);
         when(menuRepository.findById(10L)).thenReturn(Optional.of(new Menu("Latte", 4_000L, MenuStatus.ON_SALE)));
         when(userPointRepository.findByUserIdForUpdate(1L)).thenReturn(Optional.of(new UserPoint(1L, 5_000L)));
-        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
+            Order order = invocation.getArgument(0);
+            ReflectionTestUtils.setField(order, "id", 100L);
+            return order;
+        });
 
         OrderPaymentService service = new OrderPaymentService(
                 lockManager, transactionTemplate, menuRepository, userPointRepository,
