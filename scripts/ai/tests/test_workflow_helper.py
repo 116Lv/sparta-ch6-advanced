@@ -1576,6 +1576,30 @@ class RegistrySemanticValidationTests(unittest.TestCase):
         errors = sorted(Draft202012Validator(schema).iter_errors(registry), key=str)
         self.assertEqual(errors, [])
 
+    def test_verify_e2e_requires_a_contained_directory_working_directory(self):
+        cases = (
+            ("missing", "missing", "WORKING_DIRECTORY_MISSING"),
+            ("not-directory", "not-directory", "WORKING_DIRECTORY_NOT_DIRECTORY"),
+            ("outside", "..", "WORKING_DIRECTORY_OUTSIDE_REPOSITORY"),
+        )
+        for label, working_directory, expected_code in cases:
+            with self.subTest(case=label):
+                root = self.temporary_repository()
+                if label == "not-directory":
+                    (root / working_directory).write_text("fixture file\n", encoding="utf-8")
+                registry = self.registry()
+                command = self.command(registry)
+                command["id"] = "verify.e2e"
+                command["argv"] = ["./scripts/e2e/verify-e2e.sh"]
+                command["workingDirectory"] = working_directory
+                command["parameters"] = {"allowed": False, "schema": None}
+                self.assert_semantic_invalid(
+                    root,
+                    registry,
+                    expected_code,
+                    "/commands/0/workingDirectory",
+                )
+
     def test_prerequisites_reject_unknown_self_and_cycles_and_have_a_stable_topological_order(self):
         cases = (
             ("unknown", ["verify.missing"], "UNKNOWN_PREREQUISITE", "/commands/0/prerequisites/0"),

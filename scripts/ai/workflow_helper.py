@@ -1428,7 +1428,7 @@ def validate_registry_semantics(root, registry):
 
     for index, command in enumerate(commands):
         argv = command.get("argv")
-        if argv is None or argv[0] != "./gradlew":
+        if argv is None:
             continue
         working_directory_path = f"/commands/{index}/workingDirectory"
         working_directory = repository_root / command.get("workingDirectory", "")
@@ -1456,6 +1456,9 @@ def validate_registry_semantics(root, registry):
                 working_directory_path,
                 "configured working directory is not a directory",
             ))
+            continue
+
+        if not argv or argv[0] != "./gradlew":
             continue
 
         wrapper_path = resolved_working_directory / "gradlew"

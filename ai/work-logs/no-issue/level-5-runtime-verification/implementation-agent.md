@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T03:35:00+09:00
+last_updated: 2026-07-16T03:51:25+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
@@ -31,6 +31,8 @@ tests_run:
   - "Full helper suite before stale-ID fix: 544 tests, 36 failures, 44 errors, 20 skipped"
   - "Final full helper suite: 544 tests, 14 failures, 44 errors, 20 skipped; NOT PASS"
   - "Final focused Task 1 contracts: 5 tests passed"
+  - "Task 1 review fix RED: 1 test failed in 3 subtests for missing, non-directory, and escaping E2E working directories"
+  - "Task 1 review fix GREEN: 6 focused tests passed"
 blockers: []
 skill_ids:
   - superpowers:test-driven-development
@@ -58,6 +60,7 @@ Implement Tasks 1-5 sequentially under TDD and the official command-runner polic
 - Task 1 configured isolated Gradle unit, integration, and API-smoke suites plus the five canonical verification commands.
 - Discovered that schemaVersion 1 rejected the approved E2E script. Scope was explicitly expanded to permit only command `verify.e2e` with exact argv `["./scripts/e2e/verify-e2e.sh"]`; arbitrary scripts and added arguments remain rejected.
 - Preserved every command as `CONFIGURED_UNVERIFIED` with static evidence only and `lastVerifiedAt: null`.
+- Addressed the Task 1 Important review finding: common working-directory validation now applies to every configured executable, while only Gradle argv enters wrapper-specific validation.
 
 # Current State
 
@@ -76,10 +79,13 @@ Task 1 implementation and focused static verification are complete. Official bui
 - Official unit run: `verify-20260716-level5-task1-unit-01`; RUN_START PASS; PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, artifact, or test count.
 - Initial whole helper suite after implementation exposed a stale loop-scoped `command_id`: 544 tests, 36 failures, 44 errors, 20 skips. A canonical multi-command regression test reproduced the cause and the focused GREEN passed after the one-line scope fix.
 - Final whole helper suite: 544 tests in 461.835 seconds, 14 failures, 44 errors, 20 skips; NOT PASS. The Task 1-related wrapper-resolution failure was isolated and is GREEN in the final focused set. Remaining failures are repository-root `.ai-runs` absence assumptions; errors are sandbox `PermissionError` failures creating Phase 3B provenance fixture directories.
+- Review-fix RED: `RegistrySemanticValidationTests.test_verify_e2e_requires_a_contained_directory_working_directory` failed all three subtests because E2E bypassed common validation.
+- Review-fix GREEN: 6 focused Task 1 tests passed in 1.727 seconds, covering the three E2E working-directory errors plus prior allowlist, schema, canonical, and resolver boundaries.
 
 # Blockers
 
 - Supported POSIX product execution is unavailable on this Windows host, so Task 1 cannot produce build/unit runtime evidence or promote registry status.
+- The review's Minor structural task-block matcher wording was not present in the available local review artifact; it is deferred for final review rather than implemented by inference.
 
 # Next Handoff
 
