@@ -124,7 +124,7 @@ wait_for_sql() {
 }
 
 consumer_offset() {
-    description=$(bounded_compose "$OPERATION_TIMEOUT" exec -T kafka kafka-consumer-groups.sh \
+    description=$(bounded_compose "$OPERATION_TIMEOUT" exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh \
         --bootstrap-server kafka:9092 --group coffee-order-analytics --describe) \
         || fail 'Kafka consumer-group describe failed'
     printf '%s\n' "$description" | awk '
@@ -329,7 +329,7 @@ MARKERS_AFTER_CACHE_HIT=$(snapshot_seven_markers)
 
 MESSAGE="{\"eventId\":$EVENT_ID,\"eventType\":\"ORDER_PAID\",\"aggregateId\":$ORDER_ID,\"payload\":{\"userId\":$USER_ID,\"menuId\":$MENU_ID,\"paymentAmount\":3000}}"
 EXPECTED_OFFSET=$((OFFSET_BASELINE + 1))
-printf '%s\n' "$MESSAGE" | bounded_compose "$OPERATION_TIMEOUT" exec -T kafka kafka-console-producer.sh \
+printf '%s\n' "$MESSAGE" | bounded_compose "$OPERATION_TIMEOUT" exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
     --bootstrap-server kafka:9092 --topic coffee.order.paid
 wait_for_exact_offset "$EXPECTED_OFFSET"
 [ "$(mysql_query "SELECT COUNT(*) FROM processed_events WHERE consumer_group='coffee-order-analytics' AND event_id=$EVENT_ID;")" = 1 ] || fail 'duplicate changed processed marker count'

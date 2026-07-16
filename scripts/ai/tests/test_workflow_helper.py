@@ -91,6 +91,24 @@ class PosixEntryPointPackagingTests(unittest.TestCase):
         except helper.InvalidStateError as error:
             self.fail(f"verify.e2e input paths must be executable by the official runner: {error}")
 
+    def test_compose_uses_the_fixed_official_kafka_image_contract(self):
+        required = (
+            "image: apache/kafka:3.8.0",
+            "KAFKA_NODE_ID:",
+            "KAFKA_PROCESS_ROLES:",
+            "KAFKA_CONTROLLER_QUORUM_VOTERS:",
+            "KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1",
+            "KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1",
+            "KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1",
+        )
+        for relative in ("docker-compose.yml", "docker-compose.e2e.yml"):
+            text = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(compose=relative):
+                for contract in required:
+                    self.assertIn(contract, text)
+                self.assertNotIn("KAFKA_CFG_", text)
+                self.assertNotIn("ALLOW_PLAINTEXT_LISTENER", text)
+
 
 def load_helper():
     specification = importlib.util.spec_from_file_location("workflow_helper_under_test", HELPER_PATH)
