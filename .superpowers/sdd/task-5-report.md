@@ -40,13 +40,25 @@ reported as PASS and the registry remains `CONFIGURED_UNVERIFIED`.
 
 ### Task 5 Review RED/GREEN
 
-- Focused RED against commit `825ec53`: 8/8 expected findings reproduced—consumer observation
+- Focused RED against commit `825ec53`: 8/8 expected findings reproduced; consumer observation
   errors could be hidden/coerced to zero, advancement was only `> baseline`, response JSON used
   regex/sed, the registry summary timestamp drifted, and the implementation log retained stale state.
 - Focused GREEN after correction: 8/8 contracts passed for fatal describe/missing/invalid offset
   handling, stable positive baseline, exact `baseline + 1`, structural response JSON, registry
   timestamp alignment, and current Task 5 blocker/handoff text.
 - Registry JSON parse: PASS. `git diff --check`: exit 0. These remain static-only results.
+
+### Final Python Portability RED/GREEN
+
+- Focused source RED: 4/4 expected findings reproduced—the script hard-coded `python`, had no
+  `python3`-first absolute resolver, all three parsers bypassed a shared command, and the report
+  wording required normalization.
+- Focused source GREEN: 7/7 contracts passed. The script resolves one absolute executable path once,
+  tries `python3` before `python`, verifies executability and stdlib `json` usability, fails clearly
+  when neither candidate works, and uses `"$PYTHON"` for all three structural parsers.
+- A further official E2E request was not repeated because the immediately preceding review-fix
+  request already proved this unchanged host cannot start the POSIX runner. Runtime remains
+  NOT RUN/BLOCKED; no result is inferred from the source correction.
 
 ## Fresh Official Requests
 

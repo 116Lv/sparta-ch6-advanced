@@ -108,9 +108,24 @@ http_json() {
     fi
 }
 
+resolve_python() {
+    for candidate in python3 python; do
+        path=$(command -v "$candidate" 2>/dev/null || true)
+        case "$path" in
+            /*)
+                if [ -x "$path" ] && "$path" -c 'import json' >/dev/null 2>&1; then
+                    printf '%s\n' "$path"
+                    return 0
+                fi
+                ;;
+        esac
+    done
+    fail 'python3 or python with the stdlib json module is required'
+}
+
 verify_charge_response() {
     expected_user_id=$1
-    python -c '
+    "$PYTHON" -c '
 import json, sys
 body = json.load(sys.stdin)
 expected = {"userId": int(sys.argv[1]), "chargedAmount": 10000, "balance": 10000}
@@ -122,7 +137,7 @@ if not isinstance(body, dict) or body != expected:
 verify_order_response() {
     expected_user_id=$1
     expected_menu_id=$2
-    python -c '
+    "$PYTHON" -c '
 import json, sys
 body = json.load(sys.stdin)
 if not isinstance(body, dict):
@@ -146,7 +161,7 @@ print(order_id)
 
 verify_popular_response() {
     expected_menu_id=$1
-    python -c '
+    "$PYTHON" -c '
 import json, sys
 body = json.load(sys.stdin)
 expected = {
@@ -165,7 +180,7 @@ if not isinstance(body, dict) or body != expected:
 
 command -v docker >/dev/null 2>&1 || fail 'docker is required'
 command -v curl >/dev/null 2>&1 || fail 'curl is required'
-command -v python >/dev/null 2>&1 || fail 'python is required'
+PYTHON=$(resolve_python)
 
 compose up --build -d --wait --wait-timeout 240
 APP_PORT=$(compose port app 8080 | awk -F: 'END { print $NF }')
