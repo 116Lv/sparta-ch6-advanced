@@ -4,14 +4,14 @@
 
 QueryDSL production reads, Testcontainers integration, real HTTP smoke, Docker Compose E2E, and
 DB-time Outbox lease handling are implemented and Level 5 verified. Work status is
-`DONE_WITH_CONCERNS` because GitHub Issue reconciliation remains pending.
+`DONE_WITH_CONCERNS` because PR #19 review/merge and Issue #20 closure remain pending.
 
 ## 2. Files Changed
 
 - Production/tests/Compose/runner files: implementation and runtime corrections recorded in Git history.
 - `ai/command-registry.json` and `.md`: five finalized commands promoted to VERIFIED.
 - `specs/003-order-payment` and `specs/004-popular-menu`: actual runtime completion evidence recorded.
-- `ai/work-logs/no-issue/level-5-runtime-verification/`: role, gate, QA, and completion evidence.
+- `ai/work-logs/issue-20/`: role, gate, QA, and completion evidence.
 
 ## 3. Routing And Requirements Covered
 
@@ -21,12 +21,13 @@ DB-time Outbox lease handling are implemented and Level 5 verified. Work status 
 ## 4. Delegated-Work Tracking
 
 - Subagents dispatched: yes.
-- `tracking_status`: `pending_issue`; workflow `status`: `done`.
-- GitHub Issue: N/A - creation failed due external-disclosure authorization gate; state `not_created`.
-- Work log: `ai/work-logs/no-issue/level-5-runtime-verification/README.md` and all linked role logs.
-- Current owner: repository owner; recovery state: implementation complete, Issue migration pending.
-- Reconciliation: pending; create one Issue, move the full fallback directory, update metadata/index,
-  post the migration summary, then evaluate Issue closure.
+- `tracking_status`: `issue_backed`; workflow `status`: `done`.
+- GitHub Issue: [#20](https://github.com/116Lv/sparta-ch6-advanced/issues/20); state `open`.
+- Work log: `ai/work-logs/issue-20/README.md` and all linked role logs.
+- Current owner: repository owner; recovery state: implementation and fallback migration complete,
+  with PR #19 review/merge and Issue closure pending.
+- Reconciliation: complete; the full fallback directory moved to `ai/work-logs/issue-20/`, all
+  metadata and index references were updated, and the migration summary was posted to Issue #20.
 
 ## 5. Commands Executed
 
@@ -69,12 +70,12 @@ records are synchronized. No new ADR was required.
 ## 10. Blockers And Remaining Risks
 
 - Implementation blockers: none.
-- Remaining concern: `pending_issue` migration and GitHub Issue closure.
+- Remaining concern: PR #19 review/merge and GitHub Issue #20 closure.
 - Deferred deployment scope remains real load balancing, multiple app instances, and Redis Sentinel.
 
 ## 11. Completion Decision
 
 - `implementation_status: PASS`
-- `tracking_status: pending_issue`
-- `github_issue_closure_status: pending_issue_reconciliation`
+- `tracking_status: issue_backed`
+- `github_issue_closure_status: not_ready`
 - `overall_decision: DONE_WITH_CONCERNS`

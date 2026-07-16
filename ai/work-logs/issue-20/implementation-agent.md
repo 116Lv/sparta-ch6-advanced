@@ -1,14 +1,14 @@
 ---
-issue: pending
-issue_url:
+issue: 20
+issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20
 agent: implementation-agent
-tracking_status: pending_issue
+tracking_status: issue_backed
 status: done
 owning_feature: "none"
 current_owner: repository-owner
 started_at: 2026-07-16T00:00:00+09:00
 ended_at: 2026-07-16T19:25:00+09:00
-last_updated: 2026-07-16T19:25:00+09:00
+last_updated: 2026-07-16T19:36:30+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
@@ -19,8 +19,8 @@ changed_files:
   - ai/schemas/command-registry.schema.json
   - scripts/ai/workflow_helper.py
   - scripts/ai/tests/test_workflow_helper.py
-  - ai/work-logs/no-issue/level-5-runtime-verification/README.md
-  - ai/work-logs/no-issue/level-5-runtime-verification/implementation-agent.md
+  - ai/work-logs/issue-20/README.md
+  - ai/work-logs/issue-20/implementation-agent.md
   - src/test/java/com/ch6/cafe/domain/outbox/publisher/OrderPaidKafkaIntegrationTest.java
   - src/test/resources/application-test.yml
   - .superpowers/sdd/task-3-report.md
@@ -41,7 +41,7 @@ changed_files:
   - src/main/java/com/ch6/cafe/domain/outbox/publisher/OutboxPublisher.java
   - src/main/java/com/ch6/cafe/domain/outbox/repository/OutboxEventRepository.java
   - src/test/java/com/ch6/cafe/domain/outbox/publisher/OutboxPublisherMySqlIntegrationTest.java
-  - ai/work-logs/no-issue/level-5-runtime-verification/reviewer.md
+  - ai/work-logs/issue-20/reviewer.md
   - ai/work-logs/index.md
 commands_run:
   - "verify.build: run verify-20260716-level5-task1-build-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
@@ -93,12 +93,10 @@ tests_run:
   - "Second final review source GREEN: 9/9 post-rebuild snapshot, active PID cleanup, DATETIME precision, and JDBC durable-value contracts passed"
   - "Remaining final review source RED: 2/2 embedded shell helper and hard-coded Outbox ID findings reproduced"
   - "Remaining final review source GREEN: 5/5 top-level helper and actual claimed-ID binding contracts; exact Git Bash bash -n exited 0"
-blockers:
-  - "Supported POSIX/WSL product execution is unavailable on the current Windows host."
-  - "GitHub Issue reconciliation remains pending external authorization."
+blockers: []
 skill_ids:
   - superpowers:test-driven-development
-handoff_state_ref: ai/work-logs/no-issue/level-5-runtime-verification/README.md
+handoff_state_ref: ai/work-logs/issue-20/README.md
 reusable_context_refs: []
 not_run_project_commands:
   - verify.build
@@ -106,12 +104,16 @@ not_run_project_commands:
   - verify.integration
   - verify.api-smoke
   - verify.e2e
-github_reconciliation_status: pending_external_authorization
-reconciliation_required: true
+github_reconciliation_status: complete
+reconciliation_required: false
 issue_creation_attempted_at: 2026-07-16T00:00:00+09:00
 issue_creation_failure_reason: GitHub connector rejected external disclosure because explicit authorization to publish repository planning content was not established.
 expected_issue_scope: Apply and independently review the approved Level 5 QueryDSL, real-infrastructure verification, canonical commands, and evidence reconciliation as one cohesive completion unit.
-migration_history: []
+migration_history:
+  - moved_at: 2026-07-16T19:36:30+09:00
+    from: ai/work-logs/no-issue/level-5-runtime-verification
+    to: ai/work-logs/issue-20
+    comment_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20#issuecomment-4990893221
 ---
 
 # Summary
@@ -206,23 +208,9 @@ evidence, final re-review, and completion gates remain BLOCKED/pending on this h
 - Task 4 second review-fix GREEN source contract exited 0 with `GREEN: 6 focused fixed-clock/cache-hit contracts passed`, covering the local imported primary Clock, exact instant/zone, injected-clock date expectation, and marker snapshots bracketing the second HTTP request.
 - Task 4 second review-fix official request `verify-20260716-level5-task4-review2-green-01` stopped before `command-runner.sh` startup because Windows `bash.exe` again found no installed WSL/POSIX runtime. No runtime result or counts exist; PASS is not inferred.
 
-# Blockers
+# Reconciliation Addendum
 
-- Supported POSIX product execution is unavailable on this Windows host, so build, unit,
-  integration, API-smoke, and Compose E2E runtime evidence cannot be produced or finalized.
-- Registry promotion, implementation QA PASS, and an overall DONE claim remain blocked until a
-  supported runner executes all required commands and final review reconciles their artifacts.
-- GitHub Issue reconciliation remains pending external authorization.
-
-# Next Handoff
-
-- Next role: final reviewer on a supported POSIX/Docker runner
-- Required reading:
-  - [Task 5 report](../../../../.superpowers/sdd/task-5-report.md)
-  - [Implementation plan](../../../../docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md)
-- Context links:
-  - [Issue summary](README.md)
-- Remaining work: execute and finalize all five official commands, reconcile the registry from
-  artifacts, rerun pre-QA/QA, and complete independent whole-branch review.
-- Evidence required: finalized build/unit/integration/API-smoke/E2E artifacts, runtime logs and
-  counts, registry reconciliation, and an independent review verdict.
+The historical POSIX/runtime blockers above were resolved by the later runtime and failure-fixer
+roles. All five official commands were finalized, registry and QA evidence were reconciled, and the
+fallback directory was migrated in full to Issue #20. This implementation role has no remaining
+blocker; PR #19 review/merge and Issue closure are repository-owner actions.

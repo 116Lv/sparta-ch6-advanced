@@ -6,14 +6,14 @@ completion checks in `specs/003-order-payment` and `specs/004-popular-menu`.
 ## Before Implementation
 
 - [x] Routing, ownership, owner documents, acceptance criteria, and Level 5 requirements were recorded.
-- [x] One cohesive `pending_issue` fallback records the failed Issue creation attempt and migration plan.
+- [x] One cohesive fallback recorded the failed Issue creation attempt and was later reconciled to Issue #20.
 - [x] Open questions are resolved or retained as explicit deployment follow-up scope.
 
 ## During Implementation
 
 - [x] Layering, architecture, transaction, API, and event decisions remain consistent with owner docs.
 - [x] No unapproved temporary code, hidden error, TODO, or debug logging remains.
-- [x] Every dispatched role has a linked role log with complete pending-Issue metadata.
+- [x] Every dispatched role has a linked role log with complete Issue-backed metadata and migration history.
 
 ## Pre-QA Readiness
 

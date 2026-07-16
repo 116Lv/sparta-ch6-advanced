@@ -1,14 +1,14 @@
 ---
-issue: pending
-issue_url:
+issue: 20
+issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20
 agent: final-verifier
-tracking_status: pending_issue
+tracking_status: issue_backed
 status: done
 owning_feature: "none"
 current_owner: repository-owner
 started_at: 2026-07-16T18:30:00+09:00
 ended_at: 2026-07-16T19:25:00+09:00
-last_updated: 2026-07-16T19:25:00+09:00
+last_updated: 2026-07-16T19:36:30+09:00
 branch: codex/implement-cafe-features
 related_files:
   - ai/verification-gates.md
@@ -22,7 +22,7 @@ changed_files:
   - specs/003-order-payment/tasks.md
   - specs/004-popular-menu/checklist.md
   - specs/004-popular-menu/tasks.md
-  - ai/work-logs/no-issue/level-5-runtime-verification/final-verifier.md
+  - ai/work-logs/issue-20/final-verifier.md
 commands_run:
   - verify.build
   - verify.unit
@@ -34,22 +34,25 @@ tests_run:
   - "verify.integration: 35 tests, 0 failures, 0 errors, 0 skips"
   - "verify.api-smoke: 2 tests, 0 failures, 0 errors, 0 skips"
   - "verify.e2e: 1 black-box scenario, 0 failures"
-blockers:
-  - "GitHub Issue reconciliation remains pending external authorization."
+blockers: []
 skill_ids:
   - superpowers:verification-before-completion
-handoff_state_ref: ai/work-logs/no-issue/level-5-runtime-verification/README.md
+handoff_state_ref: ai/work-logs/issue-20/README.md
 reusable_context_refs:
-  - ai/work-logs/no-issue/level-5-runtime-verification/runtime-verifier.md
-  - ai/work-logs/no-issue/level-5-runtime-verification/failure-fixer.md
-  - ai/work-logs/no-issue/level-5-runtime-verification/independent-reviewer.md
+  - ai/work-logs/issue-20/runtime-verifier.md
+  - ai/work-logs/issue-20/failure-fixer.md
+  - ai/work-logs/issue-20/independent-reviewer.md
 not_run_project_commands: []
-github_reconciliation_status: pending_external_authorization
-reconciliation_required: true
+github_reconciliation_status: complete
+reconciliation_required: false
 issue_creation_attempted_at: 2026-07-16T00:00:00+09:00
 issue_creation_failure_reason: GitHub connector rejected external disclosure because explicit authorization to publish repository planning content was not established.
 expected_issue_scope: Apply and independently review the approved Level 5 QueryDSL, real-infrastructure verification, canonical commands, and evidence reconciliation as one cohesive completion unit.
-migration_history: []
+migration_history:
+  - moved_at: 2026-07-16T19:36:30+09:00
+    from: ai/work-logs/no-issue/level-5-runtime-verification
+    to: ai/work-logs/issue-20
+    comment_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20#issuecomment-4990893221
 ---
 
 # Summary
@@ -57,8 +60,8 @@ migration_history: []
 Final verification uses a fresh LF/executable-preserving Ubuntu-native clone at clean HEAD
 `dabdd3ed1426daa345b37a0878d2bb47d4e74cce`. All five official commands passed through the
 repository runner and were finalized through the supported Phase 1B-3 path. Completion and
-tracking gates are committed with implementation QA PASS and `DONE_WITH_CONCERNS`; no GitHub push
-or pull request was performed.
+tracking gates are committed with implementation QA PASS and `DONE_WITH_CONCERNS`. The branch was
+later pushed as PR #19 and its fallback tracking was reconciled to Issue #20.
 
 # Work Done
 
@@ -88,12 +91,14 @@ not directly contain a Git commit field.
 # Current State
 
 Runtime finalization, registry reconciliation, all four Phase 2C entry points, QA, and completion
-records are committed. The repository owner now owns only pending GitHub reconciliation.
+records are committed. The fallback migration to Issue #20 is complete; the repository owner now
+owns PR #19 review/merge and final Issue closure.
 
 # Decisions
 
 - Selected completion change type: `critical-data`; `user-flow` has the same Level 5 required product leaves.
-- GitHub tracking remains `pending_issue`; completion may be `DONE_WITH_CONCERNS` only.
+- GitHub tracking is `issue_backed`; completion remains `DONE_WITH_CONCERNS` until PR #19 is merged
+  and Issue #20 is ready to close.
 
 # Verification Evidence
 
@@ -102,15 +107,8 @@ records are committed. The repository owner now owns only pending GitHub reconci
 - Unit XML: 39/0/0/0; integration XML: 35/0/0/0; API smoke XML: 2/0/0/0.
 - E2E log: one complete HTTP/MySQL/Redis/Kafka Compose scenario with cleanup.
 
-# Blockers
-
-- GitHub Issue creation/migration/closure remains pending external authorization.
-
 # Next Handoff
 
-- Next role: repository-owner after external disclosure authorization.
-- Remaining work: create the one intended GitHub Issue, move the full fallback directory to
-  `ai/work-logs/issue-{number}/`, update migration metadata/index, post the migration summary, and
-  evaluate Issue closure.
-- Evidence required: implementation evidence is complete; only Issue creation, full-directory
-  migration, and closure evidence remain pending.
+- Next role: repository-owner.
+- Remaining work: review and merge PR #19, then evaluate and close Issue #20.
+- Evidence required: implementation, runtime, QA, review, and migration evidence is complete.

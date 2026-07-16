@@ -1,20 +1,20 @@
 ---
-issue: pending
-issue_url:
+issue: 20
+issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20
 agent: runtime-verifier
-tracking_status: pending_issue
+tracking_status: issue_backed
 status: done
 owning_feature: "none"
 current_owner: final-verifier
 started_at: 2026-07-16T00:00:00+09:00
 ended_at: 2026-07-16T18:16:57+09:00
-last_updated: 2026-07-16T18:16:57+09:00
+last_updated: 2026-07-16T19:36:30+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
 changed_files:
-  - ai/work-logs/no-issue/level-5-runtime-verification/runtime-verifier.md
+  - ai/work-logs/issue-20/runtime-verifier.md
 commands_run:
   - verify.build
   - verify.unit
@@ -22,20 +22,23 @@ commands_run:
   - verify.api-smoke
   - verify.e2e
 tests_run: []
-blockers:
-  - GitHub Issue reconciliation remains pending external authorization; the original executable-mode blockers were corrected in later local commits.
+blockers: []
 skill_ids:
   - superpowers:subagent-driven-development
   - superpowers:systematic-debugging
-handoff_state_ref: ai/work-logs/no-issue/level-5-runtime-verification/README.md
+handoff_state_ref: ai/work-logs/issue-20/README.md
 reusable_context_refs: []
 not_run_project_commands: []
-reconciliation_required: true
-github_reconciliation_status: pending_external_authorization
+reconciliation_required: false
+github_reconciliation_status: complete
 issue_creation_attempted_at: 2026-07-16T00:00:00+09:00
 issue_creation_failure_reason: GitHub connector rejected external disclosure because explicit authorization to publish repository planning content was not established.
 expected_issue_scope: Apply and independently review the approved Level 5 QueryDSL, real-infrastructure verification, canonical commands, and evidence reconciliation as one cohesive completion unit.
-migration_history: []
+migration_history:
+  - moved_at: 2026-07-16T19:36:30+09:00
+    from: ai/work-logs/no-issue/level-5-runtime-verification
+    to: ai/work-logs/issue-20
+    comment_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20#issuecomment-4990893221
 ---
 
 # Runtime Verifier
@@ -151,3 +154,10 @@ application, produced test counts, or created a finalized artifact.
 - After the fix, repeat Ubuntu `runtime-preflight.sh --record` only when canonical helper evidence is
   stale, then create each RUN_START session and execute all five commands with fresh run IDs.
 - Preserve all failures and do not promote registry/QA/completion state from these non-runs.
+
+## Reconciliation Addendum
+
+The executable-mode failures in this role remain preserved as historical evidence. Later
+failure-fixer and final-verifier roles corrected them, finalized five replacement PASS runs, and
+reconciled the fallback directory to Issue #20. No current runtime or tracking blocker remains in
+this role.
