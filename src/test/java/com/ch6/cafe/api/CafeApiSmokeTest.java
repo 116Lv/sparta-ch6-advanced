@@ -7,8 +7,13 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +46,8 @@ class CafeApiSmokeTest {
 
     private static final long USER_ID = 101L;
     private static final long MENU_ID = 201L;
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
+    private static final String POPULAR_MENU_PATH = "/api/v1/menus/popular?days=7&limit=3";
 
     @Container
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4.0");
@@ -65,6 +72,7 @@ class CafeApiSmokeTest {
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private StringRedisTemplate redisTemplate;
+    @Autowired private Clock clock;
 
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
@@ -119,11 +127,20 @@ class CafeApiSmokeTest {
         assertThat(queryLong("SELECT order_count FROM daily_menu_sales WHERE menu_id = ?", MENU_ID)).isOne();
         assertThat(queryLong("SELECT COUNT(*) FROM outbox_events WHERE aggregate_id = ? AND event_type = 'ORDER_PAID' AND status = 'READY'", orderId)).isOne();
 
-        HttpResult popular = get("/api/v1/menus/popular?days=7&limit=3");
+        LocalDate today = LocalDate.now(clock);
+        assertRecordedDailyRanking(today);
+
+        HttpResult popular = get(POPULAR_MENU_PATH);
         assertStatus(popular, 200);
-        assertJson(popular, """
+        String expectedPopular = """
                 {"periodDays":7,"menus":[{"menuId":201,"name":"Latte","price":4000,"orderCount":1}]}
-                """);
+                """;
+        assertJson(popular, expectedPopular);
+        assertCompleteSevenDayRanking(today);
+
+        HttpResult cachedPopular = get(POPULAR_MENU_PATH);
+        assertStatus(cachedPopular, 200);
+        assertJson(cachedPopular, expectedPopular);
     }
 
     @Test
@@ -153,11 +170,15 @@ class CafeApiSmokeTest {
     }
 
     private HttpResult get(String path) throws Exception {
-        return send(HttpRequest.newBuilder(uri(path)).GET().build());
+        return send(HttpRequest.newBuilder(uri(path))
+                .timeout(REQUEST_TIMEOUT)
+                .GET()
+                .build());
     }
 
     private HttpResult post(String path, String body) throws Exception {
         return send(HttpRequest.newBuilder(uri(path))
+                .timeout(REQUEST_TIMEOUT)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build());
@@ -190,6 +211,43 @@ class CafeApiSmokeTest {
         Long result = jdbcTemplate.queryForObject(sql, Long.class, arguments);
         assertThat(result).isNotNull();
         return result;
+    }
+
+    private void assertRecordedDailyRanking(LocalDate today) {
+        String dataKey = "popular-menu:" + today;
+        assertThat(redisTemplate.opsForZSet().score(dataKey, Long.toString(MENU_ID))).isEqualTo(1D);
+        assertThat(redisTemplate.opsForZSet().zCard(dataKey)).isOne();
+        assertMarker(redisTemplate.opsForValue().get("popular-menu:complete:" + today), 1L, 1L);
+    }
+
+    private void assertCompleteSevenDayRanking(LocalDate today) {
+        Set<String> expectedMarkers = IntStream.range(0, 7)
+                .mapToObj(offset -> "popular-menu:complete:" + today.minusDays(offset))
+                .collect(Collectors.toSet());
+        assertThat(redisTemplate.keys("popular-menu:complete:*")).isEqualTo(expectedMarkers);
+
+        for (int offset = 0; offset < 7; offset++) {
+            LocalDate date = today.minusDays(offset);
+            assertMarker(
+                    redisTemplate.opsForValue().get("popular-menu:complete:" + date),
+                    offset == 0 ? 1L : 0L,
+                    offset == 0 ? 1L : 0L);
+        }
+
+        Set<String> dataKeys = redisTemplate.keys("popular-menu:*").stream()
+                .filter(key -> key.matches("popular-menu:\\d{4}-\\d{2}-\\d{2}"))
+                .collect(Collectors.toSet());
+        assertThat(dataKeys).containsExactly("popular-menu:" + today);
+        assertRecordedDailyRanking(today);
+    }
+
+    private void assertMarker(String encoded, long expectedTotalCount, long expectedMenuCount) {
+        assertThat(encoded).isNotBlank();
+        String[] parts = encoded.split("\\|", -1);
+        assertThat(parts).hasSize(3);
+        assertThat(UUID.fromString(parts[0])).isNotNull();
+        assertThat(Long.parseLong(parts[1])).isEqualTo(expectedTotalCount);
+        assertThat(Long.parseLong(parts[2])).isEqualTo(expectedMenuCount);
     }
 
     private void cleanDatabase() {

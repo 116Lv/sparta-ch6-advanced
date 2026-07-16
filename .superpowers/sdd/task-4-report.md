@@ -68,3 +68,44 @@ Static checks do not prove compilation, application startup, container startup, 
 - The suite has not compiled or executed on this host. API status/body claims and durable-state assertions remain intended contracts, not observed runtime evidence.
 - Server logs could not be reviewed because no application process started.
 - A supported POSIX runner with Docker must run `verify.api-smoke` before registry promotion or any completion claim.
+
+## Review Fix Evidence
+
+### Focused source RED
+
+The focused PowerShell source contract exited 1 before the review fix with these five expected violations:
+
+```text
+RED: missing second real popular-menu request
+RED: missing bounded HttpRequest timeout
+RED: missing seven-day completion-marker assertions
+RED: missing Redis daily ranking assertion
+RED: shared test profile disables Outbox scheduling
+```
+
+### Implemented review corrections
+
+- Immediately after the paid order, the test asserts the production daily ZSET score and `generation|totalOrderCount|menuCount` marker for today. This fails if order-side Redis recording is swallowed.
+- After the first popular-menu request, the test asserts exactly seven `popular-menu:complete:{date}` markers, validates each production marker encoding and counts, asserts that today is the sole non-empty daily ranking key with menu 201 scored at 1, then sends a second real HTTP request and asserts the same exact response.
+- Shared `application-test.yml` no longer sets `outbox.publisher.enabled=false`; the inline smoke property remains, preserving Task 3 scheduling/listener behavior.
+- Both GET and POST request builders set a ten-second `HttpRequest` timeout.
+
+### Focused source GREEN
+
+The revised focused source contract exited 0:
+
+```text
+GREEN: 7 focused Task 4 source contracts passed
+```
+
+This is static source evidence only, not compile or runtime evidence.
+
+### Fresh official runner request
+
+Command:
+
+```text
+bash scripts/ai/command-runner.sh run verify.api-smoke --run-id verify-20260716-level5-task4-review-green-01
+```
+
+Result: exit 1 before `command-runner.sh` started because Windows `bash.exe` reported no installed WSL distribution/POSIX runtime. No `RUN_START`, `PRE_COMMAND`, attempt ID, process, container, artifact, HTTP evidence, server log, or test/failure/error/skip count exists. PASS is not claimed.

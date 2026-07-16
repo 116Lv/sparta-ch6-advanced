@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T10:44:41+09:00
+last_updated: 2026-07-16T10:56:18+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
@@ -39,6 +39,7 @@ commands_run:
   - "verify.integration Task 3 review fix: run verify-20260716-level5-task3-review-green-01; RUN_START PASS; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.api-smoke Task 4 RED: requested run verify-20260716-level5-task4-red-01; command-runner POSIX entry point could not start because Windows bash resolved to WSL with no installed distribution; no RUN_START, PRE_COMMAND, attempt, process, artifact, or test count"
   - "verify.api-smoke Task 4 GREEN: requested run verify-20260716-level5-task4-green-01; same POSIX_EXECUTION_NOT_CONFIGURED host boundary; no RUN_START, PRE_COMMAND, attempt, process, artifact, or test count"
+  - "verify.api-smoke Task 4 review fix: requested run verify-20260716-level5-task4-review-green-01; same unavailable WSL/POSIX entry-point boundary; no RUN_START, PRE_COMMAND, attempt, process, artifact, or test count"
 tests_run:
   - "RED canonical contract: 1 failure with 19 violations"
   - "RED E2E allowlist: 2 failures"
@@ -55,6 +56,8 @@ tests_run:
   - "Task 3 review fix source GREEN: all canonical payload/durable effect assertions and ephemeral bound non-Kafka endpoint cleanup contracts present"
   - "Task 4 API smoke: NOT RUN; official RED/GREEN requests could not start the POSIX command runner on this Windows host"
   - "Task 4 static review: git diff --check exit 0; random-port/HttpClient/Testcontainers/status/error/durable-state source contracts present; not compile or runtime evidence"
+  - "Task 4 review fix source RED: 5 expected violations for missing second popular request, bounded timeout, seven completion markers, Redis daily score assertion, and shared-profile Outbox disable"
+  - "Task 4 review fix source GREEN: 7 focused contracts passed; runtime API smoke remains NOT RUN"
 blockers: []
 skill_ids:
   - superpowers:test-driven-development
@@ -91,7 +94,8 @@ Implement Tasks 1-5 sequentially under TDD and the official command-runner polic
 - Task 3 review fix asserts every canonical payload field and the persisted analytics aggregate/user/menu/payment values after real listener processing.
 - Task 3 review fix replaces the host-state assumption at `127.0.0.1:1` with a loopback `ServerSocket` bound to an ephemeral port and closed deterministically.
 - Task 4 adds a random-port real-server smoke suite using only `java.net.http.HttpClient`, real MySQL and Redis Testcontainers, exact JSON/status assertions, and JDBC durable-state checks across menu query, point charge, paid order, popular menu, request validation, and insufficient-point rollback.
-- Task 4 makes Outbox scheduling conditional on `outbox.publisher.enabled`; the test profile disables scheduled publishing while the smoke class independently disables Kafka listener startup. No controller or business-rule change was made.
+- Task 4 makes Outbox scheduling conditional on `outbox.publisher.enabled`; the smoke class inline properties disable scheduled publishing and Kafka listener startup. No controller or business-rule change was made.
+- Task 4 review fix confines scheduler disable to the smoke class, verifies order-side Redis recording before fallback, verifies the rebuilt seven-day production marker/data contracts, repeats the popular-menu request against the complete cache, and bounds every HTTP request to ten seconds.
 
 # Current State
 
@@ -127,6 +131,9 @@ Task 3 broker integration coverage is implemented and static-reviewed. Official 
 - Task 4 RED request `verify-20260716-level5-task4-red-01`: `bash scripts/ai/command-runner.sh run verify.api-smoke --run-id verify-20260716-level5-task4-red-01` exited 1 before the script started because Windows `bash.exe` reported that no WSL distribution/POSIX runtime was installed. No RED result, attempt ID, process, container, artifact, or test count exists.
 - Task 4 GREEN request `verify-20260716-level5-task4-green-01`: `bash scripts/ai/command-runner.sh run verify.api-smoke --run-id verify-20260716-level5-task4-green-01` stopped at the same host boundary. No GREEN result, attempt ID, process, container, artifact, or test count exists; PASS is not inferred.
 - Task 4 static review: `git diff --check` exited 0. Source inspection confirms `RANDOM_PORT`, `HttpClient`, real MySQL/Redis containers, no MockMvc/TestRestTemplate, explicit non-500 plus exact status checks, exact success/error JSON, and post-request MySQL state assertions. Static inspection is not compilation or runtime API evidence.
+- Task 4 review-fix RED source contract exited 1 with five intended violations: no second popular request, no request timeout, no seven-day marker assertion, no Redis ZSET score assertion, and shared `application-test.yml` Outbox scheduling suppression.
+- Task 4 review-fix GREEN source contract exited 0 with `GREEN: 7 focused Task 4 source contracts passed`, covering the canonical popular path, two real requests, both builder timeouts, seven markers, the daily score, pre-fallback recording assertion, and shared-profile preservation.
+- Task 4 review-fix official request `verify-20260716-level5-task4-review-green-01` stopped before `command-runner.sh` startup because Windows `bash.exe` again found no installed WSL/POSIX runtime. No runtime result or counts exist; PASS is not inferred.
 
 # Blockers
 
