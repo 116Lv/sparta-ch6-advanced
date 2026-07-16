@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T10:31:42+09:00
+last_updated: 2026-07-16T10:44:41+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
@@ -24,6 +24,9 @@ changed_files:
   - src/test/java/com/ch6/cafe/domain/outbox/publisher/OrderPaidKafkaIntegrationTest.java
   - src/test/resources/application-test.yml
   - .superpowers/sdd/task-3-report.md
+  - src/test/java/com/ch6/cafe/api/CafeApiSmokeTest.java
+  - src/main/java/com/ch6/cafe/global/config/SchedulingConfig.java
+  - .superpowers/sdd/task-4-report.md
 commands_run:
   - "verify.build: run verify-20260716-level5-task1-build-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.unit: run verify-20260716-level5-task1-unit-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
@@ -34,6 +37,8 @@ commands_run:
   - "verify.integration Task 3 RED: run verify-20260716-level5-task3-red-01; RUN_START PASS; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.integration Task 3 GREEN: run verify-20260716-level5-task3-green-01; RUN_START PASS; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.integration Task 3 review fix: run verify-20260716-level5-task3-review-green-01; RUN_START PASS; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
+  - "verify.api-smoke Task 4 RED: requested run verify-20260716-level5-task4-red-01; command-runner POSIX entry point could not start because Windows bash resolved to WSL with no installed distribution; no RUN_START, PRE_COMMAND, attempt, process, artifact, or test count"
+  - "verify.api-smoke Task 4 GREEN: requested run verify-20260716-level5-task4-green-01; same POSIX_EXECUTION_NOT_CONFIGURED host boundary; no RUN_START, PRE_COMMAND, attempt, process, artifact, or test count"
 tests_run:
   - "RED canonical contract: 1 failure with 19 violations"
   - "RED E2E allowlist: 2 failures"
@@ -48,6 +53,8 @@ tests_run:
   - "Task 3 broker integration: NOT RUN; official RED/GREEN attempts both stopped before execution with POSIX_EXECUTION_NOT_CONFIGURED"
   - "Task 3 review fix source RED: missing payload userId/menuId, exact durable analytics field assertions, and deterministic non-Kafka endpoint contracts"
   - "Task 3 review fix source GREEN: all canonical payload/durable effect assertions and ephemeral bound non-Kafka endpoint cleanup contracts present"
+  - "Task 4 API smoke: NOT RUN; official RED/GREEN requests could not start the POSIX command runner on this Windows host"
+  - "Task 4 static review: git diff --check exit 0; random-port/HttpClient/Testcontainers/status/error/durable-state source contracts present; not compile or runtime evidence"
 blockers: []
 skill_ids:
   - superpowers:test-driven-development
@@ -83,6 +90,8 @@ Implement Tasks 1-5 sequentially under TDD and the official command-runner polic
 - Task 3 retains existing service-level MySQL tests for different-group independence and transactional rollback, avoiding duplicate direct-consumer evidence in the broker test.
 - Task 3 review fix asserts every canonical payload field and the persisted analytics aggregate/user/menu/payment values after real listener processing.
 - Task 3 review fix replaces the host-state assumption at `127.0.0.1:1` with a loopback `ServerSocket` bound to an ephemeral port and closed deterministically.
+- Task 4 adds a random-port real-server smoke suite using only `java.net.http.HttpClient`, real MySQL and Redis Testcontainers, exact JSON/status assertions, and JDBC durable-state checks across menu query, point charge, paid order, popular menu, request validation, and insufficient-point rollback.
+- Task 4 makes Outbox scheduling conditional on `outbox.publisher.enabled`; the test profile disables scheduled publishing while the smoke class independently disables Kafka listener startup. No controller or business-rule change was made.
 
 # Current State
 
@@ -115,12 +124,16 @@ Task 3 broker integration coverage is implemented and static-reviewed. Official 
 - Task 3 review-fix source RED exited 1 with four expected violations: missing payload user/menu assertions, missing exact durable analytics assertions, and the hard-coded assumed-closed endpoint.
 - Task 3 review-fix source GREEN exited 0 after all six canonical/durable field assertions and the ephemeral `ServerSocket` lifecycle contracts were present.
 - Task 3 review-fix official run `verify-20260716-level5-task3-review-green-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, container, artifact, or test count.
+- Task 4 RED request `verify-20260716-level5-task4-red-01`: `bash scripts/ai/command-runner.sh run verify.api-smoke --run-id verify-20260716-level5-task4-red-01` exited 1 before the script started because Windows `bash.exe` reported that no WSL distribution/POSIX runtime was installed. No RED result, attempt ID, process, container, artifact, or test count exists.
+- Task 4 GREEN request `verify-20260716-level5-task4-green-01`: `bash scripts/ai/command-runner.sh run verify.api-smoke --run-id verify-20260716-level5-task4-green-01` stopped at the same host boundary. No GREEN result, attempt ID, process, container, artifact, or test count exists; PASS is not inferred.
+- Task 4 static review: `git diff --check` exited 0. Source inspection confirms `RANDOM_PORT`, `HttpClient`, real MySQL/Redis containers, no MockMvc/TestRestTemplate, explicit non-500 plus exact status checks, exact success/error JSON, and post-request MySQL state assertions. Static inspection is not compilation or runtime API evidence.
 
 # Blockers
 
 - Supported POSIX product execution is unavailable on this Windows host, so Task 1 cannot produce build/unit runtime evidence or promote registry status.
 - Supported POSIX product execution is unavailable on this Windows host, so Task 2 cannot produce compile/MySQL integration evidence.
 - Supported POSIX product execution is unavailable on this Windows host, so Task 3 cannot produce compile/Kafka/MySQL integration evidence.
+- Supported POSIX product execution is unavailable on this Windows host, so Task 4 cannot produce compile/random-port HTTP/MySQL/Redis evidence.
 - The review's Minor structural task-block matcher wording was not present in the available local review artifact; it is deferred for final review rather than implemented by inference.
 
 # Next Handoff

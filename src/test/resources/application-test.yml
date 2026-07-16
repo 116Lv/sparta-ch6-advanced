@@ -20,3 +20,7 @@ spring:
 redisson:
   address: redis://localhost:6379
 
+outbox:
+  publisher:
+    enabled: false
+
