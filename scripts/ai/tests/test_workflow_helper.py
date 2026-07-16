@@ -52,6 +52,24 @@ EXECUTION_FIXTURES_PATH = REPOSITORY_ROOT / "ai" / "fixtures" / "phase-1b" / "ex
 PHASE_1A_SEMANTIC_INVALID_FIXTURES_PATH = REPOSITORY_ROOT / "ai" / "fixtures" / "phase-1a" / "semantic-invalid"
 
 
+class PosixEntryPointPackagingTests(unittest.TestCase):
+    def test_directly_executed_workflow_gate_has_git_executable_mode(self):
+        tracked = subprocess.run(
+            ["git", "ls-files", "--stage", "--", "scripts/ai/workflow-gate.sh"],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+
+        self.assertTrue(tracked, "workflow-gate.sh must be tracked by Git")
+        self.assertEqual(
+            tracked[0],
+            "100755",
+            "command-runner.sh directly execs workflow-gate.sh, so its Git mode must be executable",
+        )
+
+
 def load_helper():
     specification = importlib.util.spec_from_file_location("workflow_helper_under_test", HELPER_PATH)
     module = importlib.util.module_from_spec(specification)
