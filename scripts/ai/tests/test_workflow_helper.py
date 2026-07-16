@@ -79,6 +79,18 @@ class PosixEntryPointPackagingTests(unittest.TestCase):
             "registered Gradle commands launch ./gradlew directly, so its Git mode must be executable",
         )
 
+    def test_e2e_command_inputs_use_the_supported_closed_path_grammar(self):
+        registry = json.loads(
+            (REPOSITORY_ROOT / "ai" / "command-registry.json").read_text(encoding="utf-8")
+        )
+        command = next(item for item in registry["commands"] if item["id"] == "verify.e2e")
+
+        helper = load_helper()
+        try:
+            helper.input_fingerprint(REPOSITORY_ROOT, command)
+        except helper.InvalidStateError as error:
+            self.fail(f"verify.e2e input paths must be executable by the official runner: {error}")
+
 
 def load_helper():
     specification = importlib.util.spec_from_file_location("workflow_helper_under_test", HELPER_PATH)

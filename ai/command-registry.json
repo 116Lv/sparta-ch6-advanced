@@ -151,7 +151,7 @@
           "claim": "The no-argument script defines bounded black-box assertions and unconditional isolated Compose cleanup."
         }
       ],
-      "inputPaths": ["scripts/e2e/verify-e2e.sh", "docker-compose*.yml", "Dockerfile", "src/main/**", "src/test/**"],
+      "inputPaths": ["scripts/e2e/verify-e2e.sh", "docker-compose.yml", "docker-compose.e2e.yml", "Dockerfile", "src/main/**", "src/test/**"],
       "lastVerifiedAt": null,
       "notes": [
         "The executable and isolated Compose topology are authored.",
