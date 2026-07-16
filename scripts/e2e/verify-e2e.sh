@@ -10,7 +10,32 @@ LOG_TIMEOUT=20
 CLEANUP_TIMEOUT=30
 WATCHDOG_SEQUENCE=0
 WATCHDOG_ROOT="${TMPDIR:-/tmp}/$PROJECT_NAME-watchdog"
+ACTIVE_TARGET_PID=
+ACTIVE_WATCHDOG_PID=
+ACTIVE_TARGET_FILE="$WATCHDOG_ROOT/active-target"
+ACTIVE_WATCHDOG_FILE="$WATCHDOG_ROOT/active-watchdog"
 mkdir -p "$WATCHDOG_ROOT"
+
+clear_active_processes() {
+    ACTIVE_TARGET_PID=
+    ACTIVE_WATCHDOG_PID=
+    rm -f "$ACTIVE_TARGET_FILE" "$ACTIVE_WATCHDOG_FILE"
+}
+
+terminate_active_processes() {
+    target_pid=${ACTIVE_TARGET_PID:-}
+    watchdog_pid=${ACTIVE_WATCHDOG_PID:-}
+    [ -s "$ACTIVE_TARGET_FILE" ] && IFS= read -r target_pid < "$ACTIVE_TARGET_FILE"
+    [ -s "$ACTIVE_WATCHDOG_FILE" ] && IFS= read -r watchdog_pid < "$ACTIVE_WATCHDOG_FILE"
+    [ -n "$target_pid" ] && kill -TERM "$target_pid" 2>/dev/null || true
+    [ -n "$watchdog_pid" ] && kill -TERM "$watchdog_pid" 2>/dev/null || true
+    sleep 1
+    [ -n "$target_pid" ] && kill -KILL "$target_pid" 2>/dev/null || true
+    [ -n "$watchdog_pid" ] && kill -KILL "$watchdog_pid" 2>/dev/null || true
+    [ -n "$target_pid" ] && wait "$target_pid" 2>/dev/null || true
+    [ -n "$watchdog_pid" ] && wait "$watchdog_pid" 2>/dev/null || true
+    clear_active_processes
+}
 
 run_with_watchdog() {
     timeout_seconds=$1
@@ -20,6 +45,8 @@ run_with_watchdog() {
     rm -f "$marker"
     "$@" <&0 &
     target_pid=$!
+    ACTIVE_TARGET_PID=$target_pid
+    printf '%s\n' "$target_pid" > "$ACTIVE_TARGET_FILE"
     (
         sleep "$timeout_seconds"
         if kill -0 "$target_pid" 2>/dev/null; then
@@ -30,10 +57,13 @@ run_with_watchdog() {
         fi
     ) &
     watchdog_pid=$!
+    ACTIVE_WATCHDOG_PID=$watchdog_pid
+    printf '%s\n' "$watchdog_pid" > "$ACTIVE_WATCHDOG_FILE"
     command_status=0
     wait "$target_pid" || command_status=$?
     kill "$watchdog_pid" 2>/dev/null || true
     wait "$watchdog_pid" 2>/dev/null || true
+    clear_active_processes
     if [ -f "$marker" ]; then
         rm -f "$marker"
         printf 'Command timed out after %s seconds: %s\n' "$timeout_seconds" "$*" >&2
@@ -52,6 +82,7 @@ bounded_compose() {
 cleanup() {
     status=$?
     trap - 0 HUP INT TERM
+    terminate_active_processes
     if [ "$status" -eq 0 ] && [ "$FAILED" -ne 0 ]; then
         status=1
     fi
@@ -219,6 +250,25 @@ expected = {
     "orderCount": 1,
     }],
 }
+
+snapshot_seven_markers() {
+    for marker_date in $SEVEN_DATES; do
+        marker_value=$(bounded_compose "$OPERATION_TIMEOUT" exec -T redis \
+            redis-cli --raw GET "popular-menu:complete:$marker_date" | tr -d '\r')
+        expected_total=0
+        expected_members=0
+        if [ "$marker_date" = "$TODAY" ]; then
+            expected_total=1
+            expected_members=1
+        fi
+        printf '%s\n' "$marker_value" | awk -F'|' \
+            -v total="$expected_total" -v members="$expected_members" \
+            'NF == 3 && length($1) > 0 && $2 == total && $3 == members { valid = 1 }
+             END { exit valid ? 0 : 1 }' \
+            || fail "Redis completion marker metadata mismatch for $marker_date"
+        printf '%s=%s\n' "$marker_date" "$marker_value"
+    done
+}
 if not isinstance(body, dict) or body != expected:
     raise SystemExit("popular-menu response contract mismatch")
 ' "$expected_menu_id"
@@ -263,18 +313,19 @@ OFFSET_BASELINE=$(wait_for_stable_positive_offset)
 REDIS_SCORE=$(bounded_compose "$OPERATION_TIMEOUT" exec -T redis \
     redis-cli --raw ZSCORE "popular-menu:$TODAY" "$MENU_ID" | tr -d '\r')
 [ "$REDIS_SCORE" = 1 ] || fail "Redis ranking score (expected 1, got '$REDIS_SCORE')"
-MARKER_BEFORE=$(bounded_compose "$OPERATION_TIMEOUT" exec -T redis \
-    redis-cli --raw GET "popular-menu:complete:$TODAY" | tr -d '\r')
-printf '%s\n' "$MARKER_BEFORE" | awk -F'|' \
-    'NF == 3 && length($1) > 0 && $2 == "1" && $3 == "1" { valid = 1 } END { exit valid ? 0 : 1 }' \
-    || fail 'Redis completion marker metadata must be generation|1|1'
 popular=$(http_json GET "$BASE_URL/api/v1/menus/popular?days=7&limit=3")
 printf '%s' "$popular" | verify_popular_response "$MENU_ID"
+SEVEN_DATES=$("$PYTHON" -c '
+from datetime import date, timedelta
+today = date.fromisoformat(__import__("sys").argv[1])
+print(" ".join(str(today - timedelta(days=offset)) for offset in range(7)))
+' "$TODAY")
+MARKERS_AFTER_REBUILD=$(snapshot_seven_markers)
 popular_cached=$(http_json GET "$BASE_URL/api/v1/menus/popular?days=7&limit=3")
 printf '%s' "$popular_cached" | verify_popular_response "$MENU_ID"
-MARKER_AFTER=$(bounded_compose "$OPERATION_TIMEOUT" exec -T redis \
-    redis-cli --raw GET "popular-menu:complete:$TODAY" | tr -d '\r')
-[ "$MARKER_AFTER" = "$MARKER_BEFORE" ] || fail 'popular-menu cache-hit request changed marker generation'
+MARKERS_AFTER_CACHE_HIT=$(snapshot_seven_markers)
+[ "$MARKERS_AFTER_CACHE_HIT" = "$MARKERS_AFTER_REBUILD" ] \
+    || fail 'popular-menu cache-hit request changed seven-day marker generations'
 
 MESSAGE="{\"eventId\":$EVENT_ID,\"eventType\":\"ORDER_PAID\",\"aggregateId\":$ORDER_ID,\"payload\":{\"userId\":$USER_ID,\"menuId\":$MENU_ID,\"paymentAmount\":3000}}"
 EXPECTED_OFFSET=$((OFFSET_BASELINE + 1))

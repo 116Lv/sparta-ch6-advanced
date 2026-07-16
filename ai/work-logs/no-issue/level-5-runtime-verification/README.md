@@ -7,7 +7,7 @@ owning_feature: "none"
 current_owner: final-reviewer
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T14:35:00+09:00
+last_updated: 2026-07-16T15:05:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md
@@ -98,6 +98,10 @@ evidence, pre-QA, and QA remain BLOCKED.
   contracts. Fresh `verify.integration` (`verify-20260716-level5-final-review-integration-01`) and
   `verify.e2e` (`verify-20260716-level5-final-review-e2e-01`) requests each exited 1 before runner
   startup; no attempt, infrastructure, counts, or artifacts exist. Final re-review remains pending.
+- Second final-review correction reproduced source RED 4/4 and GREEN 9/9 for post-rebuild seven-marker
+  snapshots, active process termination/reaping before cleanup, DATETIME-aligned DB time, and JDBC
+  durable lease reads. Fresh second-final integration/E2E requests exited 1 before runner startup;
+  no runtime evidence exists.
 
 ## Blockers
 

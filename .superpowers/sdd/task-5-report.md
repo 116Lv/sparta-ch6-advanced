@@ -101,7 +101,7 @@ All findings were addressed in one source/document wave:
   preserves the original failure status. A forced-hang runtime helper check was NOT RUN because this
   host has no usable POSIX shell; static watchdog coverage is not reported as runtime proof.
 - Outbox claimability, `claimed_at`, `claim_until`, publication completion, and failure timestamps
-  now use repository-provided MySQL `CURRENT_TIMESTAMP(6)` inside their transactions. The authored
+  now use repository-provided MySQL `CURRENT_TIMESTAMP` aligned with DATETIME column precision inside their transactions. The authored
   MySQL integration case pins the session DB clock to 2030 and asserts claimed time equals DB time,
   lease expiry equals DB time plus 30 seconds, and the value is separated from JVM wall time.
 - The development Compose topology is explicitly local-only, binds MySQL/Redis/Kafka to loopback,
@@ -124,3 +124,25 @@ Fresh official requests:
 Both requests stopped at the Windows WSL launcher before RUN_START/PRE_COMMAND. No attempt ID,
 process, infrastructure, test count, or finalized artifact exists. Integration/E2E, QA, registry
 promotion, and overall completion remain NOT RUN/BLOCKED pending supported execution and re-review.
+
+## Second Final-Review Fix Wave
+
+- Focused source RED reproduced 4/4 findings: marker snapshot preceded the rebuilding request,
+  cleanup did not explicitly terminate tracked active processes, the repository requested
+  microseconds beyond DATETIME precision, and the lease test read managed entity state.
+- Focused source GREEN passed 9/9 contracts. The first popular request now rebuilds the seven-day
+  state, all seven marker values/generations are validated and snapshotted afterward, the second
+  request is verified structurally, and its post-request seven-marker snapshot must be identical.
+- The watchdog records active Compose target/watchdog PIDs in shared state. Cleanup disables traps,
+  terminates and reaps both before failure logs/down, then uses new independently bounded watchdogs.
+  Normal completion kills/reaps the watchdog and clears PID state. A helper-only forced-signal test
+  was NOT RUN because this host has no usable POSIX shell; static inspection is not signal-runtime proof.
+- Repository time now uses second-precision MySQL `CURRENT_TIMESTAMP`, aligned with schema DATETIME.
+  The integration test flushes the claim and reads `claimed_at`/`claim_until` directly via JDBC,
+  proving the authored assertions target durable values rather than managed entity fields.
+- Registry JSON parsing and `git diff --check` passed as static checks.
+
+Fresh official requests `verify-20260716-level5-second-final-integration-01` and
+`verify-20260716-level5-second-final-e2e-01` each exited 1 at the Windows launcher before runner
+startup. No RUN_START, PRE_COMMAND, attempt, process, infrastructure, count, or artifact exists;
+runtime status remains NOT RUN/BLOCKED.

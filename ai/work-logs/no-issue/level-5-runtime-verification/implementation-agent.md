@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: final-reviewer
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T14:35:00+09:00
+last_updated: 2026-07-16T15:05:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
@@ -61,6 +61,8 @@ commands_run:
   - "verify.e2e Task 5 review fix: requested run verify-20260716-level5-task5-review-fix-e2e-01; Windows bash/WSL launcher exited 1 before command-runner startup; no RUN_START, PRE_COMMAND, attempt, process, infrastructure, artifact, or test count"
   - "verify.integration final review: requested run verify-20260716-level5-final-review-integration-01; Windows launcher exited 1 before runner startup; no attempt, infrastructure, count, or artifact"
   - "verify.e2e final review: requested run verify-20260716-level5-final-review-e2e-01; Windows launcher exited 1 before runner startup; no attempt, infrastructure, count, or artifact"
+  - "verify.integration second final review: requested verify-20260716-level5-second-final-integration-01; launcher exited 1 before runner startup; no attempt/count/artifact"
+  - "verify.e2e second final review: requested verify-20260716-level5-second-final-e2e-01; launcher exited 1 before runner startup; no attempt/count/artifact"
 tests_run:
   - "RED canonical contract: 1 failure with 19 violations"
   - "RED E2E allowlist: 2 failures"
@@ -87,6 +89,8 @@ tests_run:
   - "Task 5 final Python portability source GREEN: 7/7 contracts passed for python3-first absolute usable resolution and all three parser calls"
   - "Final whole-branch review fix source RED: 8/8 watchdog, DB-time, exposure, image, E2E, and evidence findings reproduced"
   - "Final whole-branch review fix source GREEN: 9/9 focused source contracts passed; runtime integration/E2E remain NOT RUN"
+  - "Second final review source RED: 4/4 cache ordering, signal cleanup, precision, and durable-read findings reproduced"
+  - "Second final review source GREEN: 9/9 post-rebuild snapshot, active PID cleanup, DATETIME precision, and JDBC durable-value contracts passed"
 blockers:
   - "Supported POSIX/WSL product execution is unavailable on the current Windows host."
   - "GitHub Issue reconciliation remains pending external authorization."
@@ -160,7 +164,8 @@ Tasks 1-5 and the Task 5 review corrections are authored. The corrected E2E sour
 successful Kafka consumer-group description, a stable positive original committed offset, and an
 exact one-record offset advance after duplicate injection before proving durable counts remain one.
 The complete final-review finding wave is authored and focused source contracts are GREEN. Required
-runtime evidence, final re-review, and completion gates remain BLOCKED/pending on this host.
+second-review corrections are also authored and focused source contracts are GREEN. Required runtime
+evidence, final re-review, and completion gates remain BLOCKED/pending on this host.
 
 # Decisions
 

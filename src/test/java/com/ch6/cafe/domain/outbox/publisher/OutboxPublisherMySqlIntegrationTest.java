@@ -94,13 +94,17 @@ class OutboxPublisherMySqlIntegrationTest {
                 observed[0] = repository.currentDatabaseTime();
                 publisher("database-clock-worker", 1).claimNext().orElseThrow();
                 repository.flush();
-                OutboxEvent claimed = repository.findAll().getFirst();
-                observed[1] = claimed.getClaimedAt();
-                observed[2] = claimed.getClaimUntil();
             } finally {
                 jdbcTemplate.execute("SET timestamp = 0");
             }
         });
+        jdbcTemplate.queryForObject(
+                "SELECT claimed_at, claim_until FROM outbox_events WHERE id = 1",
+                (resultSet, rowNumber) -> {
+                    observed[1] = resultSet.getTimestamp("claimed_at").toLocalDateTime();
+                    observed[2] = resultSet.getTimestamp("claim_until").toLocalDateTime();
+                    return null;
+                });
 
         assertThat(observed[1]).isEqualTo(observed[0]);
         assertThat(observed[2]).isEqualTo(observed[0].plusSeconds(30));

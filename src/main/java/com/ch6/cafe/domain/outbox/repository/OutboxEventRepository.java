@@ -15,7 +15,7 @@ import org.springframework.data.jpa.repository.QueryHints;
 
 public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> {
 
-    @Query(value = "select CURRENT_TIMESTAMP(6)", nativeQuery = true)
+    @Query(value = "select CURRENT_TIMESTAMP", nativeQuery = true)
     LocalDateTime currentDatabaseTime();
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
