@@ -111,8 +111,10 @@ class OutboxPublisherMySqlIntegrationTest {
 
         assertThat(observed[1]).isEqualTo(observed[0]);
         assertThat(observed[2]).isEqualTo(observed[0].plusSeconds(30));
-        assertThat(observed[0]).isNotBetween(
-                LocalDateTime.now().minusMinutes(1), LocalDateTime.now().plusMinutes(1));
+        LocalDateTime hostClockLowerBound = LocalDateTime.now().minusMinutes(1);
+        LocalDateTime hostClockUpperBound = LocalDateTime.now().plusMinutes(1);
+        assertThat(observed[0].isBefore(hostClockLowerBound)
+                || observed[0].isAfter(hostClockUpperBound)).isTrue();
     }
 
     @Test void slowSendDoesNotPreleaseLaterRowAndUsesCanonicalTopicAndAggregateKey() throws Exception {
