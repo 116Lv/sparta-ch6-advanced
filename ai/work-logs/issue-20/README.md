@@ -2,12 +2,12 @@
 issue: 20
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20
 tracking_status: issue_backed
-status: done
+status: in_review
 owning_feature: "none"
-current_owner: repository-owner
+current_owner: final-verifier
 started_at: 2026-07-16T00:00:00+09:00
 ended_at: 2026-07-16T19:25:00+09:00
-last_updated: 2026-07-16T19:36:30+09:00
+last_updated: 2026-07-16T20:10:58+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md
@@ -43,7 +43,8 @@ Tasks 1-5 are implemented and independently reviewed with Critical 0, Important 
 fresh Ubuntu-native checkout produced and finalized all five official runner artifacts. Canonical
 registry and feature evidence are reconciled, Phase 2C gates pass, and implementation QA is PASS.
 GitHub Issue #20 now backs the work and the complete fallback directory has been migrated without
-discarding history. PR #19 review, merge, and final Issue closure remain pending.
+discarding history. PR #19 CI exposed stale workflow-helper expectations after the registry was
+legitimately promoted to `VERIFIED`; failure triage and regression correction are in progress.
 
 ## Routing Outcome
 
@@ -64,16 +65,17 @@ discarding history. PR #19 review, merge, and final Issue closure remain pending
 - [Implementation Agent](implementation-agent.md): done; implementation and runtime handoff complete
 - [Review Agent](reviewer.md): done; final source/static review clean
 - [Runtime Verifier](runtime-verifier.md): done; environment diagnosis and preserved failed/successful execution history
-- [Failure Fixer](failure-fixer.md): done; E2E runtime defects corrected with regression evidence
-- [Independent Reviewer](independent-reviewer.md): done; full diff Critical 0, Important 0, Minor 0
+- [Failure Fixer](failure-fixer.md): handoff_needed; stale CI contracts corrected with RED/GREEN evidence
+- [Independent Reviewer](independent-reviewer.md): done; CI-fix diff Critical 0, Important 0, Minor 0
 - [Final Verifier](final-verifier.md): done; five finalized runs, registry reconciliation, Phase 2C and QA evidence
 
 ## Current State
 
 Implementation, independent review, fresh finalized Level 5 runtime verification, registry
-reconciliation, Phase 2C, and implementation QA are complete. Tracking is now `issue_backed` and
-the fallback migration is complete. The overall decision remains `DONE_WITH_CONCERNS` until PR #19
-is reviewed and merged and Issue #20 is ready to close.
+reconciliation, Phase 2C, and implementation QA were completed. Tracking is `issue_backed` and the
+fallback migration is complete. The stale helper-test assumptions and migrated evidence pointers
+are corrected, focused tests pass, and the full 551-test Ubuntu helper suite is green. The issue is
+now `in_review` pending an independent diff and evidence check.
 
 ## Decisions
 
@@ -83,6 +85,12 @@ is reviewed and merged and Issue #20 is ready to close.
 
 ## Verification Evidence
 
+- CI regression focused RED: 3 repository-helper methods reproduced 6 failures matching GitHub
+  Actions run `29492190039`, job `87600721409`.
+- CI regression final focused GREEN: 3 repository-helper methods passed.
+- CI regression full helper suite: 551 tests passed in Ubuntu, 0 failures.
+- Post-correction official `verify.unit`: run `verify-20260716-ci-regression-unit-green-01`, attempt
+  `2f5d5e62-f89b-461a-b8c8-f54382cd62ea`, exit 0, 39 tests, 0 failures/errors/skips.
 - Existing historical evidence: `verify.unit` run `verify-20260716-wsl-11`, exit 0, 69 tests, 0 failures/errors/skips.
 - Task 1 focused contracts: GREEN, 5 tests passed after RED evidence for the missing command/test boundaries, E2E allowlist, and wrapper-validation boundary.
 - Task 1 final whole helper suite: NOT PASS; 544 tests, 14 failures, 44 errors, 20 skips. Remaining failures/errors are repository-root `.ai-runs` assumptions and sandbox-denied Phase 3B provenance fixture writes; the isolated Task 1 resolver regression passes in the focused set.
@@ -116,8 +124,8 @@ is reviewed and merged and Issue #20 is ready to close.
 
 ## Blockers
 
-- Implementation, runtime, review, QA, and fallback migration blockers: none.
-- PR #19 review/merge and Issue #20 closure remain repository-owner workflow steps.
+- Implementation blockers: none.
+- PR merge and Issue #20 closure remain blocked until independent review and refreshed GitHub CI.
 
 ## Next Handoff
 

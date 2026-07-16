@@ -2,7 +2,7 @@
   "$schema": "./schemas/command-registry.schema.json",
   "$id": "ai/command-registry.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-16T10:05:00Z",
+  "updatedAt": "2026-07-16T11:06:24Z",
   "commands": [
     {
       "id": "dependencies.install",
@@ -59,7 +59,7 @@
         },
         {
           "kind": "RUNTIME_COMMAND",
-          "path": "ai/work-logs/no-issue/level-5-runtime-verification/final-verifier.md",
+          "path": "ai/work-logs/issue-20/final-verifier.md",
           "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
         }
       ],
@@ -94,7 +94,7 @@
         },
         {
           "kind": "RUNTIME_COMMAND",
-          "path": "ai/work-logs/no-issue/level-5-runtime-verification/final-verifier.md",
+          "path": "ai/work-logs/issue-20/final-verifier.md",
           "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
         }
       ],
@@ -152,7 +152,7 @@
         },
         {
           "kind": "RUNTIME_COMMAND",
-          "path": "ai/work-logs/no-issue/level-5-runtime-verification/final-verifier.md",
+          "path": "ai/work-logs/issue-20/final-verifier.md",
           "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
         }
       ],
@@ -187,7 +187,7 @@
         },
         {
           "kind": "RUNTIME_COMMAND",
-          "path": "ai/work-logs/no-issue/level-5-runtime-verification/final-verifier.md",
+          "path": "ai/work-logs/issue-20/final-verifier.md",
           "claim": "Durable reconciliation records the finalized run identity, manifest, scenario result, and clean Ubuntu checkout HEAD."
         }
       ],
@@ -225,7 +225,7 @@
         },
         {
           "kind": "RUNTIME_COMMAND",
-          "path": "ai/work-logs/no-issue/level-5-runtime-verification/final-verifier.md",
+          "path": "ai/work-logs/issue-20/final-verifier.md",
           "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
         }
       ],

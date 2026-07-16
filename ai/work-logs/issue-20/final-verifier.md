@@ -7,8 +7,8 @@ status: done
 owning_feature: "none"
 current_owner: repository-owner
 started_at: 2026-07-16T18:30:00+09:00
-ended_at: 2026-07-16T19:25:00+09:00
-last_updated: 2026-07-16T19:36:30+09:00
+ended_at: 2026-07-16T20:20:00+09:00
+last_updated: 2026-07-16T20:20:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - ai/verification-gates.md
@@ -22,6 +22,10 @@ changed_files:
   - specs/003-order-payment/tasks.md
   - specs/004-popular-menu/checklist.md
   - specs/004-popular-menu/tasks.md
+  - scripts/ai/tests/test_workflow_helper.py
+  - ai/work-logs/issue-20/README.md
+  - ai/work-logs/issue-20/failure-fixer.md
+  - ai/work-logs/issue-20/independent-reviewer.md
   - ai/work-logs/issue-20/final-verifier.md
 commands_run:
   - verify.build
@@ -91,8 +95,9 @@ not directly contain a Git commit field.
 # Current State
 
 Runtime finalization, registry reconciliation, all four Phase 2C entry points, QA, and completion
-records are committed. The fallback migration to Issue #20 is complete; the repository owner now
-owns PR #19 review/merge and final Issue closure.
+records are committed. The fallback migration to Issue #20 is complete, and the CI regression
+correction is independently verified locally. The repository owner now owns refreshed GitHub CI,
+PR #19 review/merge, and final Issue closure.
 
 # Decisions
 
@@ -110,5 +115,53 @@ owns PR #19 review/merge and final Issue closure.
 # Next Handoff
 
 - Next role: repository-owner.
-- Remaining work: review and merge PR #19, then evaluate and close Issue #20.
+- Remaining work: push the reviewed correction, require refreshed GitHub CI, review and merge PR
+  #19 only after CI passes, then evaluate and close Issue #20.
 - Evidence required: implementation, runtime, QA, review, and migration evidence is complete.
+
+## Issue #20 CI Regression Final Verification
+
+### Scope And Method
+
+- Work Route; owning feature `none`; reviewed the uncommitted diff against
+  `7de630fed69c4e1f1f3db0465747baa52cfa004c`.
+- Did not run product commands, commit, push, or alter any file outside this final-verifier log.
+- Independently inspected the helper-test correction, canonical registry JSON and Markdown,
+  migrated evidence paths, Issue #20 role metadata, recorded RED/GREEN evidence, and the retained
+  official unit artifact.
+
+### Findings
+
+- Critical 0.
+- Important 0.
+- Minor 0.
+
+The resolver fixture now clears `lastVerifiedAt` whenever it constructs schema-valid non-VERIFIED
+states. The Phase 2C test continues to reject committed run artifacts without freezing the current
+registry at a historical pre-runtime status. The Level 5 canonical test now requires the actual
+five-command VERIFIED state, timestamps, runtime evidence, exact argv, SAFE classification,
+disabled parameters, wrapper evidence, and the migrated Issue #20 final-verifier pointer. No
+production code, helper/runtime behavior, schema, Gradle boundary, or public contract changed.
+
+### Evidence Reconciliation
+
+- Focused RED: 3 helper methods reproduced 6 failures matching the CI regression.
+- Focused GREEN: the same 3 helper methods completed `OK`.
+- Evidence-path RED: five migrated-away `no-issue` pointer violations were reproduced before the
+  canonical registry was corrected.
+- Full Ubuntu-native helper suite: 551 tests, 0 failures, 189.384 seconds, `OK`.
+- Official unit artifact: run `verify-20260716-ci-regression-unit-green-01`, attempt
+  `2f5d5e62-f89b-461a-b8c8-f54382cd62ea`, `PASS`, exit 0. Fresh XML contained 39 tests, 0
+  failures, 0 errors, and 0 skips.
+- `git diff --check`: PASS.
+- Registry schema, semantic validation, generated Markdown summary, five VERIFIED statuses,
+  finalized-manifest references, and Issue #20 final-verifier references: PASS.
+- Stale live fallback references: none. The only retained former-path values are required
+  `migration_history.from` records.
+- Issue #20 summary/failure-fixer/independent-reviewer/final-verifier metadata: PASS.
+
+### Decision
+
+Local final verification: PASS. The correction is ready for the repository-owner workflow. The
+remaining external merge gate is refreshed GitHub CI after the reviewed diff is pushed; this log
+does not claim that future CI run has passed.

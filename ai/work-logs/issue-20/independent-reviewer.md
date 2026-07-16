@@ -7,8 +7,8 @@ status: done
 owning_feature: "none"
 current_owner: final-verifier
 started_at: 2026-07-16T18:17:00+09:00
-ended_at: 2026-07-16T18:30:00+09:00
-last_updated: 2026-07-16T19:36:30+09:00
+ended_at: 2026-07-16T20:16:36+09:00
+last_updated: 2026-07-16T20:16:36+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
@@ -18,6 +18,7 @@ changed_files:
 commands_run: []
 tests_run:
   - "Independent full merge-base..85e55ef review: Critical 0, Important 0, Minor 0"
+  - "Independent Issue #20 CI regression review: Critical 0, Important 0, Minor 0"
 blockers: []
 skill_ids:
   - superpowers:requesting-code-review
@@ -76,3 +77,56 @@ final verifier, which subsequently produced a new finalized run for every offici
 The deferred completion evidence identified by this review was subsequently produced: five fresh
 runs were finalized, registry/QA records were reconciled, and the fallback migrated to Issue #20.
 The independent result remains Critical 0, Important 0, Minor 0 with no current blocker.
+
+## CI Regression Follow-up Review
+
+### Scope
+
+- Reviewed the uncommitted Issue #20 CI-fix diff against
+  `7de630fed69c4e1f1f3db0465747baa52cfa004c`.
+- Reviewed `ai/command-registry.json` and its generated Markdown summary, the PureResolution and
+  Phase 2C fixture changes, the Level 5 canonical command contract, and the Issue #20 recovery
+  records.
+- Did not run product commands or alter existing runtime evidence.
+
+### Strengths
+
+- The PureResolution correction clears the stale `lastVerifiedAt` field while constructing each
+  non-`VERIFIED` fixture. This restores schema coherence without changing resolver behavior.
+- The Phase 2C test still proves that the static gate creates no repository `.ai-runs` and that no
+  non-fixture `artifact-manifest.json` or `run.json` is committed. Removing the assertion against
+  the current registry correctly avoids freezing the repository at Phase 2C's historical
+  pre-runtime state; the shell-entrypoint test continues to cover the gate's no-artifact boundary.
+- The Level 5 canonical contract preserves all five exact argv values, `SAFE` classification,
+  disabled parameters, Gradle wrapper evidence, Gradle task boundaries, and semantic registry
+  validation while now requiring `VERIFIED`, a runtime timestamp, runtime evidence, and the exact
+  migrated Issue #20 final-verifier pointer.
+- All five registry records retain their finalized artifact-manifest references. Only the durable
+  log pointer changed from the migrated-away fallback path to the existing
+  `ai/work-logs/issue-20/final-verifier.md` path.
+- Canonical JSON and the generated Markdown summary agree on `updatedAt`, five `VERIFIED` commands,
+  argv, evidence labels, and verification timestamps. `git diff --check` reported no errors.
+- The recorded focused RED/GREEN sequence explains all six CI failures and the evidence-path RED;
+  the failure-fixer log records the final Ubuntu-native helper result as 551 tests in 189.384
+  seconds, `OK`.
+
+### Issues
+
+#### Critical
+
+Critical 0.
+
+#### Important
+
+Important 0.
+
+#### Minor
+
+Minor 0.
+
+### Verdict
+
+Ready. The diff is limited to stale test-fixture expectations, migrated evidence pointers, the
+generated registry summary, and recovery logs. It preserves the finalized runtime evidence and
+does not change production code, runner/helper behavior, schemas, Gradle boundaries, or public
+contracts. Refreshed GitHub CI remains the external merge gate.

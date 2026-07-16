@@ -3,12 +3,12 @@ issue: 20
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20
 agent: failure-fixer
 tracking_status: issue_backed
-status: done
+status: handoff_needed
 owning_feature: "none"
-current_owner: repository-owner
+current_owner: independent-reviewer
 started_at: 2026-07-16T17:33:16+09:00
-ended_at: 2026-07-16T18:16:57+09:00
-last_updated: 2026-07-16T19:36:30+09:00
+ended_at: 2026-07-16T20:10:58+09:00
+last_updated: 2026-07-16T20:10:58+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md
@@ -120,3 +120,93 @@ layers, exercised the HTTP/MySQL/Redis/Kafka scenario, printed
 
 The failure-fixer scope is complete. Registry, QA/completion reconciliation, independent whole-diff
 review, and the final verification-before-completion decision remain with the later assigned roles.
+
+## CI Regression Follow-up
+
+PR #19 reported six repository-helper test failures after the five canonical verification commands
+were promoted from `CONFIGURED_UNVERIFIED` to `VERIFIED`. This role is resumed to identify the root
+cause, reproduce the failure through the supported runner, add a regression-first correction, and
+hand the focused diff to independent review. The existing finalized runtime evidence must not be
+discarded or downgraded to satisfy stale historical assertions.
+
+### Independent CI Diagnosis
+
+GitHub Actions run `29492190039`, job `87600721409`
+(`phase-3b-repository-contract`) ran 551 helper tests and reported exactly six failures. They are
+one canonical Level 5 assertion, one Phase 2C current-repository assertion, and four subtests of one
+PureResolution status-mapping test. No production, runtime-evidence, registry, schema, or helper
+change is indicated by the failure evidence.
+
+The four PureResolution failures are:
+
+- `test_command_id_and_configuration_status_mapping[NOT_CONFIGURED]`
+- `test_command_id_and_configuration_status_mapping[UNKNOWN]`
+- `test_command_id_and_configuration_status_mapping[STALE]`
+- `test_command_id_and_configuration_status_mapping[UNCERTAIN]`
+
+`PureResolutionTests.setUp` copies the current canonical `verify.unit` command, which is now a valid
+`VERIFIED` command with a timestamped `lastVerifiedAt`. The loop at
+`scripts/ai/tests/test_workflow_helper.py:2205-2209` changes the status, classification, and argv,
+but leaves that timestamp in place. The command-registry schema requires `lastVerifiedAt: null` for
+all four target statuses (`ai/schemas/command-registry.schema.json:236-250`). Repository-instance
+validation runs before command lookup and status mapping
+(`scripts/ai/workflow_helper.py:2146-2163`), so the malformed fixture correctly becomes
+`INVALID_STATE/5` before the intended `NOT_CONFIGURED/3` or `BLOCKED/2` branch can execute.
+
+Minimal TDD correction: add `command["lastVerifiedAt"] = None` beside the three existing coherent
+fixture mutations at `scripts/ai/tests/test_workflow_helper.py:2206-2208`. Keep the four expected
+resolver outcomes unchanged. This fixes the fixture, not the registry or resolver, and directly
+proves that each schema-valid non-VERIFIED state reaches its existing mapping.
+
+The remaining historical assertions are stale:
+
+1. `Phase2CVerificationGateTests.test_phase_2c_repository_artifacts_and_registry_verified_remain_absent`
+   at `scripts/ai/tests/test_workflow_helper.py:11589-11602` still treats the current repository as
+   permanently frozen at the Phase 2C pre-runtime state. Keep the checks that no `.ai-runs`,
+   `artifact-manifest.json`, or `run.json` files are committed, but rename the test accordingly and
+   remove the line 11602 assertion that no command may be `VERIFIED`. If Phase 2C's historical
+   no-promotion rule still needs direct coverage, express it against a Phase 2C fixture/output, not
+   against the later reconciled canonical registry.
+2. `Level5CanonicalVerificationCommandTests.test_canonical_verification_commands_and_gradle_test_boundaries`
+   at `scripts/ai/tests/test_workflow_helper.py:15210-15226` was authored before runtime
+   reconciliation. Its three assertions per command require `CONFIGURED_UNVERIFIED`, null
+   `lastVerifiedAt`, and static-only evidence, producing fifteen violation strings inside one test.
+   Replace those expectations with `VERIFIED`, a non-null schema-valid verification timestamp, and
+   at least one `RUNTIME_COMMAND` evidence entry for each of the five canonical commands. Preserve
+   the exact argv, SAFE classification, disabled parameters, Gradle wrapper evidence, Gradle test
+   boundaries, and semantic-validation assertions.
+
+The registry promotion in `d5ed386` satisfies the existing VERIFIED schema contract: executable
+argv, SAFE classification, runtime evidence, and a timestamp are all present. Downgrading commands,
+removing runtime evidence, or weakening schema/helper validation would conceal the stale tests and
+is not a valid fix.
+
+### TDD Correction And Verification
+
+The attached GitHub Actions output and a fresh Ubuntu-native checkout reproduced the exact six
+failures across three helper test methods. The resolver fixture now clears `lastVerifiedAt` when it
+constructs a non-VERIFIED command. The Phase 2C historical test continues to reject committed run
+artifacts but no longer prohibits a later, evidence-backed registry promotion. The Level 5 canonical
+test now requires all five commands to be `VERIFIED`, timestamped, and backed by
+`RUNTIME_COMMAND` evidence while retaining the exact argv, SAFE classification, disabled parameters,
+wrapper evidence, Gradle boundaries, and registry semantic validation.
+
+The new canonical evidence-path assertion then failed RED for all five commands because the registry
+still referenced the migrated-away `no-issue` final-verifier log. The registry and generated summary
+now point to `ai/work-logs/issue-20/final-verifier.md` and retain the finalized artifact references.
+
+- Official product-unit check before helper correction: run
+  `verify-20260716-ci-regression-unit-red-03`, attempt
+  `448b328a-a70e-4810-89ca-3b4a146901d6`, exit `0`, 39 tests, 0 failures.
+- Focused helper RED: 3 methods, 6 failures matching the attached CI output.
+- Initial focused GREEN: 3 methods, `OK`.
+- Evidence-path RED: 1 method, five missing Issue #20 evidence violations.
+- Final focused GREEN: 3 methods, `OK`.
+- Full Ubuntu-native helper suite: 551 tests in 189.384 seconds, `OK`.
+- Official product-unit GREEN after registry correction: run
+  `verify-20260716-ci-regression-unit-green-01`, attempt
+  `2f5d5e62-f89b-461a-b8c8-f54382cd62ea`, exit `0`, 39 tests, 0 failures,
+  0 errors, 0 skips.
+
+No production code, command runner, schema, Gradle task, API behavior, or runtime evidence was
+downgraded. The focused diff is ready for independent review.

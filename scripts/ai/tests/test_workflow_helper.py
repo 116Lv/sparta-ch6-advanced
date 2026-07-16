@@ -2206,6 +2206,7 @@ class PureResolutionTests(unittest.TestCase):
                 command["configurationStatus"] = configuration_status
                 command["classification"] = "UNAVAILABLE"
                 command["argv"] = None
+                command["lastVerifiedAt"] = None
                 self.save_registry()
                 result, status = self.resolve()
                 self.assertEqual((result["result"], status), (expected_result, expected_status))
@@ -11586,7 +11587,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
                     "--output", "-",
                 ])
 
-    def test_phase_2c_repository_artifacts_and_registry_verified_remain_absent(self):
+    def test_phase_2c_repository_artifacts_remain_absent(self):
         self.assertFalse((REPOSITORY_ROOT / ".ai-runs").exists())
         bad = []
         for path in REPOSITORY_ROOT.rglob("*"):
@@ -11598,8 +11599,6 @@ class Phase2CVerificationGateTests(unittest.TestCase):
             if normalized.startswith(".ai-runs/") or path.name in {"artifact-manifest.json", "run.json"}:
                 bad.append(normalized)
         self.assertEqual(bad, [])
-        registry = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/command-registry.json")
-        self.assertFalse(any(command["configurationStatus"] == "VERIFIED" for command in registry["commands"]))
         summary = self.read_repository_text("ai/work-logs/issue-7/README.md")
         self.assertIn("authorization failure: GitHub API 403 Resource not accessible by integration", summary)
 
@@ -15207,23 +15206,28 @@ class Level5CanonicalVerificationCommandTests(unittest.TestCase):
                 continue
             if command["argv"] != argv:
                 violations.append(f"{command_id}: expected argv {argv!r}, got {command['argv']!r}")
-            if command["configurationStatus"] != "CONFIGURED_UNVERIFIED":
+            if command["configurationStatus"] != "VERIFIED":
                 violations.append(
-                    f"{command_id}: expected CONFIGURED_UNVERIFIED, "
+                    f"{command_id}: expected VERIFIED, "
                     f"got {command['configurationStatus']}"
                 )
             if command["classification"] != "SAFE":
                 violations.append(f"{command_id}: expected SAFE, got {command['classification']}")
             if command["parameters"] != {"allowed": False, "schema": None}:
                 violations.append(f"{command_id}: parameters must be disabled")
-            if command["lastVerifiedAt"] is not None:
-                violations.append(f"{command_id}: lastVerifiedAt must remain null")
-            non_static_evidence = [
+            if command["lastVerifiedAt"] is None:
+                violations.append(f"{command_id}: lastVerifiedAt must record runtime verification")
+            runtime_evidence = [
                 evidence for evidence in command["evidence"]
-                if evidence["kind"] != "STATIC_FILE"
+                if evidence["kind"] == "RUNTIME_COMMAND"
             ]
-            if non_static_evidence:
-                violations.append(f"{command_id}: runtime/VERIFIED evidence is not allowed")
+            if not runtime_evidence:
+                violations.append(f"{command_id}: runtime verification evidence is required")
+            if not any(
+                evidence["path"] == "ai/work-logs/issue-20/final-verifier.md"
+                for evidence in runtime_evidence
+            ):
+                violations.append(f"{command_id}: Issue #20 verification evidence is required")
             if argv[0] == "./gradlew" and not any(
                 evidence["kind"] == "STATIC_FILE" and evidence["path"] == "gradlew"
                 for evidence in command["evidence"]
