@@ -2,12 +2,12 @@
 issue: pending
 issue_url:
 tracking_status: pending_issue
-status: blocked
+status: in_review
 owning_feature: "none"
-current_owner: repository-owner
+current_owner: final-verifier
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T16:20:00+09:00
+last_updated: 2026-07-16T18:30:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md
@@ -63,11 +63,14 @@ remains blocked by the external-disclosure gate.
 
 - [Implementation Agent](implementation-agent.md): handoff_needed; runtime remains unavailable
 - [Review Agent](reviewer.md): done; final source/static review clean
+- [Runtime Verifier](runtime-verifier.md): done; environment diagnosis and preserved failed/successful execution history
+- [Failure Fixer](failure-fixer.md): done; E2E runtime defects corrected with regression evidence
+- [Independent Reviewer](independent-reviewer.md): done; full diff Critical 0, Important 0, Minor 0
 
 ## Current State
 
-Tasks 1-5 and all final-review correction waves are authored and source/static review is clean.
-Required runtime evidence, pre-QA, and QA remain BLOCKED.
+Tasks 1-5 and all correction waves are authored and source/static review is clean. Fresh finalized
+runtime evidence, registry reconciliation, pre-QA, and QA are now assigned to the final verifier.
 
 ## Decisions
 
