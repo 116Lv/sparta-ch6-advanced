@@ -127,6 +127,42 @@ class PosixEntryPointPackagingTests(unittest.TestCase):
             text,
         )
 
+    def test_e2e_watchdog_reaps_its_timer_when_target_finishes(self):
+        e2e_text = (REPOSITORY_ROOT / "scripts" / "e2e" / "verify-e2e.sh").read_text(
+            encoding="utf-8"
+        )
+        function_prefix, separator, _ = e2e_text.partition("\nbounded_compose() {")
+        self.assertTrue(separator, "bounded_compose boundary must remain available")
+        probe = function_prefix + '\nrun_with_watchdog 5 /dev/null true\nrmdir "$WATCHDOG_ROOT"\n'
+        bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        environment = os.environ.copy()
+        if not bash.is_file():
+            bash = Path("bash")
+        else:
+            environment["PATH"] = os.pathsep.join(
+                [str(bash.parent.parent / "usr" / "bin"), environment.get("PATH", "")]
+            )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            probe_path = Path(temporary_directory) / "watchdog-probe.sh"
+            probe_path.write_bytes(probe.encode("utf-8"))
+            started = time.monotonic()
+            completed = subprocess.run(
+                [str(bash), str(probe_path)],
+                cwd=str(REPOSITORY_ROOT),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                env=environment,
+            )
+            elapsed = time.monotonic() - started
+
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        self.assertLess(elapsed, 2.0, f"successful target retained watchdog timer for {elapsed:.2f}s")
+
 
 def load_helper():
     specification = importlib.util.spec_from_file_location("workflow_helper_under_test", HELPER_PATH)

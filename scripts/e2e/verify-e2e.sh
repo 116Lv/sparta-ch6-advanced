@@ -49,7 +49,12 @@ run_with_watchdog() {
     ACTIVE_TARGET_PID=$target_pid
     printf '%s\n' "$target_pid" > "$ACTIVE_TARGET_FILE"
     (
-        sleep "$timeout_seconds"
+        elapsed_seconds=0
+        while [ "$elapsed_seconds" -lt "$timeout_seconds" ]; do
+            sleep 1
+            kill -0 "$target_pid" 2>/dev/null || exit 0
+            elapsed_seconds=$((elapsed_seconds + 1))
+        done
         if kill -0 "$target_pid" 2>/dev/null; then
             : > "$marker"
             kill -TERM "$target_pid" 2>/dev/null || true
