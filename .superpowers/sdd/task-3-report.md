@@ -2,7 +2,7 @@
 
 ## Status
 
-- Implementation: complete by static review.
+- Implementation: authored and statically inspected; compilation and runtime behavior remain unverified.
 - Runtime verification: `NOT RUN` because both official attempts stopped at `PRE_COMMAND` with `POSIX_EXECUTION_NOT_CONFIGURED`.
 - Owning feature: `specs/003-order-payment`.
 

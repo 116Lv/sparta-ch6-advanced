@@ -84,6 +84,30 @@ class OutboxPublisherMySqlIntegrationTest {
         assertThat(repository.findAll()).allMatch(event -> event.getStatus() == OutboxStatus.PROCESSING);
     }
 
+    @Test void databaseTimeControlsClaimLeaseDespiteJvmClockSkew() {
+        seedEvents(1);
+        LocalDateTime[] observed = new LocalDateTime[3];
+
+        transactions.executeWithoutResult(status -> {
+            jdbcTemplate.execute("SET timestamp = 1893456000");
+            try {
+                observed[0] = repository.currentDatabaseTime();
+                publisher("database-clock-worker", 1).claimNext().orElseThrow();
+                repository.flush();
+                OutboxEvent claimed = repository.findAll().getFirst();
+                observed[1] = claimed.getClaimedAt();
+                observed[2] = claimed.getClaimUntil();
+            } finally {
+                jdbcTemplate.execute("SET timestamp = 0");
+            }
+        });
+
+        assertThat(observed[1]).isEqualTo(observed[0]);
+        assertThat(observed[2]).isEqualTo(observed[0].plusSeconds(30));
+        assertThat(observed[0]).isNotBetween(
+                LocalDateTime.now().minusMinutes(1), LocalDateTime.now().plusMinutes(1));
+    }
+
     @Test void slowSendDoesNotPreleaseLaterRowAndUsesCanonicalTopicAndAggregateKey() throws Exception {
         seedEvents(2);
         CompletableFuture<SendResult<String, String>> send = new CompletableFuture<>();

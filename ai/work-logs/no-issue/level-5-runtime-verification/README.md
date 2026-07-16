@@ -4,10 +4,10 @@ issue_url:
 tracking_status: pending_issue
 status: blocked
 owning_feature: "none"
-current_owner: orchestrator
+current_owner: final-reviewer
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T12:45:00+09:00
+last_updated: 2026-07-16T14:35:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md
@@ -40,7 +40,9 @@ migration_history: []
 
 ## Recovery Summary
 
-The approved design and implementation plan are committed at `97926ba`. GitHub Issue creation was attempted and rejected by the external-disclosure gate, so implementation continues under this strict local fallback. Resume at Task 1 of the implementation plan.
+The approved design and implementation plan are committed at `97926ba`. Tasks 1-5 were authored,
+and the final whole-branch static review returned Critical 0, Important 3, plus Minor/evidence
+findings. GitHub Issue creation remains blocked by the external-disclosure gate.
 
 ## Routing Outcome
 
@@ -58,12 +60,13 @@ The approved design and implementation plan are committed at `97926ba`. GitHub I
 
 ## Agent Logs
 
-- [Implementation Agent](implementation-agent.md): in_progress
-- [Review Agent](reviewer.md): planned
+- [Implementation Agent](implementation-agent.md): handoff_needed after one-wave corrections; runtime remains unavailable
+- [Review Agent](reviewer.md): in_review; correction-wave re-review pending
 
 ## Current State
 
-Tasks 1-5 are authored. Required runtime evidence remains unavailable; pre-QA and QA are BLOCKED.
+Tasks 1-5 and the final-review correction wave are authored. Re-review is pending. Required runtime
+evidence, pre-QA, and QA remain BLOCKED.
 
 ## Decisions
 
@@ -88,6 +91,13 @@ Tasks 1-5 are authored. Required runtime evidence remains unavailable; pre-QA an
 - Task 5 review correction reproduced focused RED 8/8 and then GREEN 8/8 for strict committed-offset,
   structural JSON, registry timestamp, and work-log contracts. Fresh request
   `verify-20260716-level5-task5-review-fix-e2e-01` again exited 1 before runner startup; runtime remains NOT RUN/BLOCKED.
+- Independent final whole-branch static review: Critical 0, Important 3, plus Minor/evidence
+  findings covering process watchdogs, DB-authoritative Outbox lease time, local Compose exposure,
+  non-root image execution, stronger E2E state/cache proof, and evidence-log reconciliation.
+- One-wave correction focused RED reproduced 8/8 findings and focused GREEN passed 9/9 source
+  contracts. Fresh `verify.integration` (`verify-20260716-level5-final-review-integration-01`) and
+  `verify.e2e` (`verify-20260716-level5-final-review-e2e-01`) requests each exited 1 before runner
+  startup; no attempt, infrastructure, counts, or artifacts exist. Final re-review remains pending.
 
 ## Blockers
 
@@ -97,11 +107,13 @@ Tasks 1-5 are authored. Required runtime evidence remains unavailable; pre-QA an
 
 ## Next Handoff
 
-- Next role: implementation-agent
+- Next role: final reviewer
 - Required reading:
   - [Implementation plan](../../../../docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md)
   - [Command registry](../../../command-registry.json)
 - Context links:
   - [Implementation log](implementation-agent.md)
-- Remaining work: Tasks 1-5 with per-task independent review.
-- Evidence required: RED/GREEN official runner output, task review, final review, and completion-gate reconciliation.
+- Remaining work: finish the one-wave final-review corrections, obtain final re-review, then execute
+  all required product commands on a supported POSIX/Docker runner.
+- Evidence required: focused correction RED/GREEN, zero unresolved final-review findings, finalized
+  runtime artifacts, registry reconciliation, and completion-gate reconciliation.

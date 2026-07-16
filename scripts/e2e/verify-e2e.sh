@@ -4,20 +4,65 @@ set -eu
 COMPOSE_FILE=docker-compose.e2e.yml
 PROJECT_NAME="ch6-e2e-$(date +%s)-$$"
 FAILED=1
+STARTUP_TIMEOUT=300
+OPERATION_TIMEOUT=30
+LOG_TIMEOUT=20
+CLEANUP_TIMEOUT=30
+WATCHDOG_SEQUENCE=0
+WATCHDOG_ROOT="${TMPDIR:-/tmp}/$PROJECT_NAME-watchdog"
+mkdir -p "$WATCHDOG_ROOT"
 
-compose() {
-    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+run_with_watchdog() {
+    timeout_seconds=$1
+    shift
+    WATCHDOG_SEQUENCE=$((WATCHDOG_SEQUENCE + 1))
+    marker="$WATCHDOG_ROOT/timeout-$WATCHDOG_SEQUENCE"
+    rm -f "$marker"
+    "$@" <&0 &
+    target_pid=$!
+    (
+        sleep "$timeout_seconds"
+        if kill -0 "$target_pid" 2>/dev/null; then
+            : > "$marker"
+            kill -TERM "$target_pid" 2>/dev/null || true
+            sleep 2
+            kill -KILL "$target_pid" 2>/dev/null || true
+        fi
+    ) &
+    watchdog_pid=$!
+    command_status=0
+    wait "$target_pid" || command_status=$?
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+    if [ -f "$marker" ]; then
+        rm -f "$marker"
+        printf 'Command timed out after %s seconds: %s\n' "$timeout_seconds" "$*" >&2
+        return 124
+    fi
+    return "$command_status"
+}
+
+bounded_compose() {
+    timeout_seconds=$1
+    shift
+    run_with_watchdog "$timeout_seconds" docker compose \
+        -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
 }
 
 cleanup() {
     status=$?
     trap - 0 HUP INT TERM
+    if [ "$status" -eq 0 ] && [ "$FAILED" -ne 0 ]; then
+        status=1
+    fi
     if [ "$status" -ne 0 ] || [ "$FAILED" -ne 0 ]; then
         printf '%s\n' 'E2E failed; recent service logs follow.' >&2
-        compose ps >&2 || true
-        compose logs --no-color --tail=80 app mysql redis kafka >&2 || true
+        bounded_compose "$OPERATION_TIMEOUT" ps >&2 || true
+        bounded_compose "$LOG_TIMEOUT" logs --no-color --tail=80 app mysql redis kafka >&2 || true
     fi
-    compose down -v --remove-orphans >/dev/null 2>&1 || true
+    bounded_compose "$CLEANUP_TIMEOUT" down -v --remove-orphans >/dev/null 2>&1 || true
+    rm -f "$WATCHDOG_ROOT"/timeout-*
+    rmdir "$WATCHDOG_ROOT" 2>/dev/null || true
     exit "$status"
 }
 trap cleanup 0
@@ -29,7 +74,8 @@ fail() {
 }
 
 mysql_query() {
-    compose exec -T mysql mysql --batch --skip-column-names -uroot -proot cafe -e "$1"
+    bounded_compose "$OPERATION_TIMEOUT" exec -T mysql \
+        mysql --batch --skip-column-names -uroot -proot cafe -e "$1"
 }
 
 wait_for_sql() {
@@ -47,7 +93,7 @@ wait_for_sql() {
 }
 
 consumer_offset() {
-    description=$(compose exec -T kafka kafka-consumer-groups.sh \
+    description=$(bounded_compose "$OPERATION_TIMEOUT" exec -T kafka kafka-consumer-groups.sh \
         --bootstrap-server kafka:9092 --group coffee-order-analytics --describe) \
         || fail 'Kafka consumer-group describe failed'
     printf '%s\n' "$description" | awk '
@@ -182,8 +228,8 @@ command -v docker >/dev/null 2>&1 || fail 'docker is required'
 command -v curl >/dev/null 2>&1 || fail 'curl is required'
 PYTHON=$(resolve_python)
 
-compose up --build -d --wait --wait-timeout 240
-APP_PORT=$(compose port app 8080 | awk -F: 'END { print $NF }')
+bounded_compose "$STARTUP_TIMEOUT" up --build -d --wait --wait-timeout 240
+APP_PORT=$(bounded_compose "$OPERATION_TIMEOUT" port app 8080 | awk -F: 'END { print $NF }')
 [ -n "$APP_PORT" ] || fail 'app host port was not published'
 BASE_URL="http://127.0.0.1:$APP_PORT"
 http_json GET "$BASE_URL/api/v1/menus" >/dev/null
@@ -204,6 +250,7 @@ TODAY=$(mysql_query 'SELECT DATE(CONVERT_TZ(UTC_TIMESTAMP(),"+00:00","+09:00"));
 wait_for_sql 'paid order row' "SELECT COUNT(*) FROM orders WHERE id=$ORDER_ID AND user_id=$USER_ID AND menu_id=$MENU_ID AND order_price=3000 AND status='PAID';" 1
 wait_for_sql 'successful payment row' "SELECT COUNT(*) FROM payments WHERE order_id=$ORDER_ID AND user_id=$USER_ID AND amount=3000 AND status='SUCCESS';" 1
 wait_for_sql 'charge and use histories' "SELECT COUNT(*) FROM point_histories WHERE user_id=$USER_ID AND ((type='CHARGE' AND amount=10000) OR (type='USE' AND amount=3000));" 2
+wait_for_sql 'final user point balance' "SELECT balance FROM user_points WHERE user_id=$USER_ID;" 7000
 wait_for_sql 'daily sales row' "SELECT order_count FROM daily_menu_sales WHERE sales_date='$TODAY' AND menu_id=$MENU_ID;" 1
 wait_for_sql 'ORDER_PAID outbox row' "SELECT COUNT(*) FROM outbox_events WHERE aggregate_id=$ORDER_ID AND event_type='ORDER_PAID';" 1
 wait_for_sql 'Outbox PUBLISHED state' "SELECT status FROM outbox_events WHERE aggregate_id=$ORDER_ID AND event_type='ORDER_PAID';" PUBLISHED
@@ -213,14 +260,25 @@ wait_for_sql 'consumer processed marker' "SELECT COUNT(*) FROM processed_events 
 wait_for_sql 'consumer analytics effect' "SELECT COUNT(*) FROM order_paid_analytics WHERE consumer_group='coffee-order-analytics' AND event_id=$EVENT_ID AND aggregate_id=$ORDER_ID AND user_id=$USER_ID AND menu_id=$MENU_ID AND payment_amount=3000;" 1
 OFFSET_BASELINE=$(wait_for_stable_positive_offset)
 
-REDIS_SCORE=$(compose exec -T redis redis-cli --raw ZSCORE "popular-menu:$TODAY" "$MENU_ID" | tr -d '\r')
+REDIS_SCORE=$(bounded_compose "$OPERATION_TIMEOUT" exec -T redis \
+    redis-cli --raw ZSCORE "popular-menu:$TODAY" "$MENU_ID" | tr -d '\r')
 [ "$REDIS_SCORE" = 1 ] || fail "Redis ranking score (expected 1, got '$REDIS_SCORE')"
+MARKER_BEFORE=$(bounded_compose "$OPERATION_TIMEOUT" exec -T redis \
+    redis-cli --raw GET "popular-menu:complete:$TODAY" | tr -d '\r')
+printf '%s\n' "$MARKER_BEFORE" | awk -F'|' \
+    'NF == 3 && length($1) > 0 && $2 == "1" && $3 == "1" { valid = 1 } END { exit valid ? 0 : 1 }' \
+    || fail 'Redis completion marker metadata must be generation|1|1'
 popular=$(http_json GET "$BASE_URL/api/v1/menus/popular?days=7&limit=3")
 printf '%s' "$popular" | verify_popular_response "$MENU_ID"
+popular_cached=$(http_json GET "$BASE_URL/api/v1/menus/popular?days=7&limit=3")
+printf '%s' "$popular_cached" | verify_popular_response "$MENU_ID"
+MARKER_AFTER=$(bounded_compose "$OPERATION_TIMEOUT" exec -T redis \
+    redis-cli --raw GET "popular-menu:complete:$TODAY" | tr -d '\r')
+[ "$MARKER_AFTER" = "$MARKER_BEFORE" ] || fail 'popular-menu cache-hit request changed marker generation'
 
 MESSAGE="{\"eventId\":$EVENT_ID,\"eventType\":\"ORDER_PAID\",\"aggregateId\":$ORDER_ID,\"payload\":{\"userId\":$USER_ID,\"menuId\":$MENU_ID,\"paymentAmount\":3000}}"
 EXPECTED_OFFSET=$((OFFSET_BASELINE + 1))
-printf '%s\n' "$MESSAGE" | compose exec -T kafka kafka-console-producer.sh \
+printf '%s\n' "$MESSAGE" | bounded_compose "$OPERATION_TIMEOUT" exec -T kafka kafka-console-producer.sh \
     --bootstrap-server kafka:9092 --topic coffee.order.paid
 wait_for_exact_offset "$EXPECTED_OFFSET"
 [ "$(mysql_query "SELECT COUNT(*) FROM processed_events WHERE consumer_group='coffee-order-analytics' AND event_id=$EVENT_ID;")" = 1 ] || fail 'duplicate changed processed marker count'

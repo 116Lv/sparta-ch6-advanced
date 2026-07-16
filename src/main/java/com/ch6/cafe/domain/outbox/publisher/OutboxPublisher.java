@@ -64,7 +64,7 @@ public class OutboxPublisher {
 
     public Optional<ClaimedEvent> claimNext() {
         ClaimedEvent claimed = transactionTemplate.execute(status -> {
-            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime now = repository.currentDatabaseTime();
             return repository.findClaimable(now, PageRequest.of(0, 1)).stream().findFirst().map(event -> {
                     String token = UUID.randomUUID().toString();
                     event.claim(token, owner, now, now.plus(claimDuration));
@@ -98,15 +98,21 @@ public class OutboxPublisher {
     }
 
     private void complete(long id, String token) {
-        transactionTemplate.executeWithoutResult(status -> repository.findByIdForUpdate(id)
-                .filter(event -> token.equals(event.getClaimToken()))
-                .ifPresent(event -> event.markPublished(token, LocalDateTime.now())));
+        transactionTemplate.executeWithoutResult(status -> {
+            LocalDateTime now = repository.currentDatabaseTime();
+            repository.findByIdForUpdate(id)
+                    .filter(event -> token.equals(event.getClaimToken()))
+                    .ifPresent(event -> event.markPublished(token, now));
+        });
     }
 
     private void fail(long id, String token, String error) {
-        transactionTemplate.executeWithoutResult(status -> repository.findByIdForUpdate(id)
-                .filter(event -> token.equals(event.getClaimToken()))
-                .ifPresent(event -> event.markFailed(token, error, maxRetries, LocalDateTime.now())));
+        transactionTemplate.executeWithoutResult(status -> {
+            LocalDateTime now = repository.currentDatabaseTime();
+            repository.findByIdForUpdate(id)
+                    .filter(event -> token.equals(event.getClaimToken()))
+                    .ifPresent(event -> event.markFailed(token, error, maxRetries, now));
+        });
     }
 
     public record ClaimedEvent(

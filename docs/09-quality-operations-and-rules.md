@@ -168,6 +168,15 @@ The exact release workflow is not yet confirmed. Until a repository-owned workfl
 - PR description should include changed requirements and verification evidence.
 - Breaking changes require documentation update.
 
+### Local Compose boundary
+
+The root `docker-compose.yml` is a local-development-only dependency topology, not a production
+deployment manifest. Its MySQL, Redis, and Kafka ports bind only to `127.0.0.1`; local host ports
+and MySQL credentials are parameterized through the documented `CAFE_*` environment variables in
+the Compose file. Kafka retains separate internal service-DNS and loopback external listeners.
+Production credentials, load balancing, multi-instance deployment, and operating-cluster topology
+remain external deployment concerns.
+
 ## Migration Rules
 
 - DB migration must be reviewed before deployment.

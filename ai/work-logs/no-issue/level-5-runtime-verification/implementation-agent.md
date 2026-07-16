@@ -3,12 +3,12 @@ issue: pending
 issue_url:
 agent: implementation-agent
 tracking_status: pending_issue
-status: blocked
+status: handoff_needed
 owning_feature: "none"
-current_owner: implementation-agent
+current_owner: final-reviewer
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T13:35:00+09:00
+last_updated: 2026-07-16T14:35:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
@@ -38,6 +38,11 @@ changed_files:
   - specs/004-popular-menu/checklist.md
   - .superpowers/sdd/task-5-report.md
   - .superpowers/sdd/task-5-done-claim.md
+  - src/main/java/com/ch6/cafe/domain/outbox/publisher/OutboxPublisher.java
+  - src/main/java/com/ch6/cafe/domain/outbox/repository/OutboxEventRepository.java
+  - src/test/java/com/ch6/cafe/domain/outbox/publisher/OutboxPublisherMySqlIntegrationTest.java
+  - ai/work-logs/no-issue/level-5-runtime-verification/reviewer.md
+  - ai/work-logs/index.md
 commands_run:
   - "verify.build: run verify-20260716-level5-task1-build-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.unit: run verify-20260716-level5-task1-unit-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
@@ -54,6 +59,8 @@ commands_run:
   - "verify.api-smoke Task 4 second review fix: requested run verify-20260716-level5-task4-review2-green-01; same unavailable WSL/POSIX entry-point boundary; no RUN_START, PRE_COMMAND, attempt, process, artifact, or test count"
   - "Task 5 final five: requested verify-20260716-level5-task5-final-build-01, final-unit-01, final-integration-01, final-api-smoke-01, and final-e2e-01; each Windows launcher exited 1 before command-runner startup; no attempts, infrastructure, counts, or artifacts"
   - "verify.e2e Task 5 review fix: requested run verify-20260716-level5-task5-review-fix-e2e-01; Windows bash/WSL launcher exited 1 before command-runner startup; no RUN_START, PRE_COMMAND, attempt, process, infrastructure, artifact, or test count"
+  - "verify.integration final review: requested run verify-20260716-level5-final-review-integration-01; Windows launcher exited 1 before runner startup; no attempt, infrastructure, count, or artifact"
+  - "verify.e2e final review: requested run verify-20260716-level5-final-review-e2e-01; Windows launcher exited 1 before runner startup; no attempt, infrastructure, count, or artifact"
 tests_run:
   - "RED canonical contract: 1 failure with 19 violations"
   - "RED E2E allowlist: 2 failures"
@@ -78,6 +85,8 @@ tests_run:
   - "Task 5 review fix source GREEN: 8/8 focused contracts passed for fatal describe/missing rows, stable positive baseline, exact baseline+1, structural JSON, timestamp alignment, and current handoff"
   - "Task 5 final Python portability source RED: 4/4 expected hard-coded interpreter/report wording findings reproduced"
   - "Task 5 final Python portability source GREEN: 7/7 contracts passed for python3-first absolute usable resolution and all three parser calls"
+  - "Final whole-branch review fix source RED: 8/8 watchdog, DB-time, exposure, image, E2E, and evidence findings reproduced"
+  - "Final whole-branch review fix source GREEN: 9/9 focused source contracts passed; runtime integration/E2E remain NOT RUN"
 blockers:
   - "Supported POSIX/WSL product execution is unavailable on the current Windows host."
   - "GitHub Issue reconciliation remains pending external authorization."
@@ -150,7 +159,8 @@ Implement Tasks 1-5 sequentially under TDD and the official command-runner polic
 Tasks 1-5 and the Task 5 review corrections are authored. The corrected E2E source requires a
 successful Kafka consumer-group description, a stable positive original committed offset, and an
 exact one-record offset advance after duplicate injection before proving durable counts remain one.
-Required runtime evidence and final completion gates remain BLOCKED on this unsupported Windows host.
+The complete final-review finding wave is authored and focused source contracts are GREEN. Required
+runtime evidence, final re-review, and completion gates remain BLOCKED/pending on this host.
 
 # Decisions
 

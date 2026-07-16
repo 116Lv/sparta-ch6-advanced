@@ -89,3 +89,38 @@ A supported POSIX runner with Docker Engine/Compose must rerun all five commands
 their finalized artifacts, reconcile the registry only from those artifacts, and perform the
 independent final review and completion gates. Runtime gates and feature runtime checklist items
 must remain unchecked until that evidence exists.
+
+## Final Whole-Branch Review Fix Wave
+
+The independent final static review returned Critical 0, Important 3, plus Minor/evidence findings.
+All findings were addressed in one source/document wave:
+
+- Every potentially blocking Compose client operation now runs through a portable POSIX process
+  watchdog. Startup, port discovery, every exec/admin/producer operation, failure `ps`/logs, and
+  cleanup are bounded. Log capture and `down -v --remove-orphans` use separate deadlines, and cleanup
+  preserves the original failure status. A forced-hang runtime helper check was NOT RUN because this
+  host has no usable POSIX shell; static watchdog coverage is not reported as runtime proof.
+- Outbox claimability, `claimed_at`, `claim_until`, publication completion, and failure timestamps
+  now use repository-provided MySQL `CURRENT_TIMESTAMP(6)` inside their transactions. The authored
+  MySQL integration case pins the session DB clock to 2030 and asserts claimed time equals DB time,
+  lease expiry equals DB time plus 30 seconds, and the value is separated from JVM wall time.
+- The development Compose topology is explicitly local-only, binds MySQL/Redis/Kafka to loopback,
+  parameterizes local ports and MySQL credentials, and retains coherent internal/external Kafka listeners.
+- The runtime image uses an owned jar and non-root `cafe` user.
+- E2E now asserts final point balance 7000, marker metadata `generation|1|1`, a repeated structural
+  popular-menu response, and unchanged marker generation across the cache-hit request.
+- Task 3 wording and reviewer/issue/index state were reconciled without a runtime-completion claim.
+
+Focused source RED reproduced 8/8 findings against the prior state. Focused source GREEN passed 9/9
+contracts after correction. Registry JSON parsing and `git diff --check` also passed as static checks.
+
+Fresh official requests:
+
+| Command | Requested run ID | Launcher exit | Runtime evidence |
+|---|---|---:|---|
+| `verify.integration` | `verify-20260716-level5-final-review-integration-01` | 1 | none; runner did not start |
+| `verify.e2e` | `verify-20260716-level5-final-review-e2e-01` | 1 | none; runner did not start |
+
+Both requests stopped at the Windows WSL launcher before RUN_START/PRE_COMMAND. No attempt ID,
+process, infrastructure, test count, or finalized artifact exists. Integration/E2E, QA, registry
+promotion, and overall completion remain NOT RUN/BLOCKED pending supported execution and re-review.
