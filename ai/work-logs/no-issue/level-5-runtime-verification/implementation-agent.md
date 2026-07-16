@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T04:30:00+09:00
+last_updated: 2026-07-16T10:21:07+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
@@ -21,6 +21,9 @@ changed_files:
   - scripts/ai/tests/test_workflow_helper.py
   - ai/work-logs/no-issue/level-5-runtime-verification/README.md
   - ai/work-logs/no-issue/level-5-runtime-verification/implementation-agent.md
+  - src/test/java/com/ch6/cafe/domain/outbox/publisher/OrderPaidKafkaIntegrationTest.java
+  - src/test/resources/application-test.yml
+  - .superpowers/sdd/task-3-report.md
 commands_run:
   - "verify.build: run verify-20260716-level5-task1-build-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.unit: run verify-20260716-level5-task1-unit-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
@@ -28,6 +31,8 @@ commands_run:
   - "verify.integration GREEN: run verify-20260716-level5-task2-green-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.integration final GREEN: run verify-20260716-level5-task2-green-02; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.integration Task 2 review fix: run verify-20260716-level5-task2-review-green-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
+  - "verify.integration Task 3 RED: run verify-20260716-level5-task3-red-01; RUN_START PASS; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
+  - "verify.integration Task 3 GREEN: run verify-20260716-level5-task3-green-01; RUN_START PASS; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
 tests_run:
   - "RED canonical contract: 1 failure with 19 violations"
   - "RED E2E allowlist: 2 failures"
@@ -39,6 +44,7 @@ tests_run:
   - "Task 1 review fix GREEN: 6 focused tests passed"
   - "Task 2 review fix source RED: missing explicit fragment method and native increment annotation contracts"
   - "Task 2 review fix focused static GREEN: explicit fragment and increment contracts present"
+  - "Task 3 broker integration: NOT RUN; official RED/GREEN attempts both stopped before execution with POSIX_EXECUTION_NOT_CONFIGURED"
 blockers: []
 skill_ids:
   - superpowers:test-driven-development
@@ -70,10 +76,12 @@ Implement Tasks 1-5 sequentially under TDD and the official command-runner polic
 - Task 2 RED assertions now cover exact grouped projection values and require aggregate reads to leave JPQL `@Query` methods.
 - Task 2 production aggregation now uses a custom Spring Data repository fragment backed by `JPAQueryFactory`; the native MySQL increment UPSERT remains unchanged.
 - Task 2 review fix explicitly reflects on both fragment aggregate methods to prohibit JPQL annotations and separately proves `increment` retains a native `@Query`.
+- Task 3 adds a Kafka/MySQL Testcontainers integration test for the real Outbox publisher, independent broker observation, real listener durable effects, same-group duplicate suppression, and real producer failure retry state.
+- Task 3 retains existing service-level MySQL tests for different-group independence and transactional rollback, avoiding duplicate direct-consumer evidence in the broker test.
 
 # Current State
 
-Task 2 QueryDSL implementation and focused review fix are committed/static-GREEN. Official integration launches remain blocked before attempt reservation because the workflow supports product execution only on POSIX.
+Task 3 broker integration coverage is implemented and static-reviewed. Official integration launches remain blocked before attempt reservation because the workflow supports product execution only on POSIX.
 
 # Decisions
 
@@ -96,11 +104,15 @@ Task 2 QueryDSL implementation and focused review fix are committed/static-GREEN
 - Task 2 review-fix source RED detected all missing focused contracts in the pre-fix test: explicit fragment lookup, both aggregate method names, and native-query validation.
 - Task 2 review-fix focused static GREEN confirmed explicit lookup of both fragment methods, absence assertions for each `@Query`, explicit `increment(LocalDate, Long)` lookup, and `nativeQuery() == true`.
 - Task 2 review-fix official run `verify-20260716-level5-task2-review-green-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, artifact, or test count.
+- Task 3 RED run `verify-20260716-level5-task3-red-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, container, artifact, or test count.
+- Task 3 GREEN run `verify-20260716-level5-task3-green-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, container, artifact, or test count.
+- Task 3 static review: `git diff --check` exit 0; Spring Kafka 4.1 send overloads and Testcontainers 1.20.4 Kafka constructor/bootstrap APIs were present in cached dependency inspection. This is not compilation or runtime PASS evidence.
 
 # Blockers
 
 - Supported POSIX product execution is unavailable on this Windows host, so Task 1 cannot produce build/unit runtime evidence or promote registry status.
 - Supported POSIX product execution is unavailable on this Windows host, so Task 2 cannot produce compile/MySQL integration evidence.
+- Supported POSIX product execution is unavailable on this Windows host, so Task 3 cannot produce compile/Kafka/MySQL integration evidence.
 - The review's Minor structural task-block matcher wording was not present in the available local review artifact; it is deferred for final review rather than implemented by inference.
 
 # Next Handoff
