@@ -28,28 +28,27 @@ This section cannot be changed independently of its canonical JSON source.
 - Canonical source: `ai/command-registry.json`
 - Schema: `./schemas/command-registry.schema.json`
 - Schema version: `1`
-- Updated at: `2026-07-16T03:30:00Z`
+- Updated at: `2026-07-16T10:05:00Z`
 - Registered capability records: `10`
-- Verified command records: `0`
+- Verified command records: `5`
 
 | ID | Purpose | Configuration Status | Classification | Argv Display | Evidence | Last Verified |
 |---|---|---|---|---|---|---|
 | `dependencies.install` | Install or resolve project dependencies | `UNKNOWN` | `UNAVAILABLE` | `UNKNOWN` | NONE | NONE |
 | `server.dev` | Start the development server | `UNKNOWN` | `UNAVAILABLE` | `UNKNOWN` | NONE | NONE |
-| `verify.build` | Compile or build the project | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./gradlew", "assemble"]` | `build.gradle`; `gradlew` | NONE |
-| `verify.unit` | Run the configured Gradle test task | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./gradlew", "test"]` | `build.gradle`; `gradlew` | NONE |
+| `verify.build` | Compile or build the project | `VERIFIED` | `SAFE` | `["./gradlew", "assemble"]` | finalized artifact; final-verifier log | 2026-07-16T09:59:21Z |
+| `verify.unit` | Run the configured Gradle test task | `VERIFIED` | `SAFE` | `["./gradlew", "test"]` | finalized artifact; final-verifier log | 2026-07-16T09:59:23Z |
 | `verify.lint` | Run lint checks | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `build.gradle` | NONE |
-| `verify.integration` | Run a dedicated integration-test command | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./gradlew", "integrationTest"]` | `build.gradle`; `gradlew` | NONE |
-| `verify.e2e` | Run end-to-end tests | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./scripts/e2e/verify-e2e.sh"]` | approved design; `scripts/e2e/verify-e2e.sh` | NONE |
-| `verify.api-smoke` | Run real HTTP API smoke verification | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./gradlew", "apiSmokeTest"]` | `build.gradle`; `gradlew` | NONE |
+| `verify.integration` | Run a dedicated integration-test command | `VERIFIED` | `SAFE` | `["./gradlew", "integrationTest"]` | finalized artifact; final-verifier log | 2026-07-16T09:59:25Z |
+| `verify.e2e` | Run end-to-end tests | `VERIFIED` | `SAFE` | `["./scripts/e2e/verify-e2e.sh"]` | finalized artifact; final-verifier log | 2026-07-16T09:59:30Z |
+| `verify.api-smoke` | Run real HTTP API smoke verification | `VERIFIED` | `SAFE` | `["./gradlew", "apiSmokeTest"]` | finalized artifact; final-verifier log | 2026-07-16T09:59:28Z |
 | `db.migration` | Apply database migrations | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `build.gradle` | NONE |
 | `db.seed` | Seed development or test data | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `src/main/resources/application.yml`; `docs/superpowers/specs/2026-07-10-ai-workflow-phase-1a-spec.md` | NONE |
 
 ### Bootstrap Constraints
 
-- Build, unit, integration, API smoke, and E2E are configured but unverified with the exact POSIX argv shown above.
-- The E2E executable and isolated Compose topology are authored; runtime evidence remains unavailable.
+- Build, unit, integration, API smoke, and E2E are VERIFIED by finalized Ubuntu-native official-runner artifacts for the exact POSIX argv shown above.
+- The E2E artifact records the isolated Compose topology and completed black-box scenario.
 - Lint, migration, and seed are not configured; dependency installation and the development server remain unknown and unavailable.
-- Every recorded evidence item is `STATIC_FILE`; no runtime evidence exists.
-- Every `lastVerifiedAt` value is `null`.
+- Each VERIFIED command records both its immutable finalized artifact manifest and the durable final-verifier reconciliation log.
 <!-- GENERATED:END source=ai/command-registry.json -->

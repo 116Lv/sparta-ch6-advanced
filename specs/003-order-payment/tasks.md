@@ -4,9 +4,9 @@
 
 - [x] Order graph, Outbox publishing, claim/retry lifecycle, and focused contract tests inspected/authored.
 - [x] Consumer analytics effect, idempotent marker, rollback behavior, and audited FAILED recovery are tracked and authored.
-- [ ] Product, Kafka, MySQL, Redis, migration, and real HTTP verification run through a supported VERIFIED command.
+- [x] Product, Kafka, MySQL, Redis, migration, and real HTTP verification ran through supported VERIFIED commands.
 - [x] Docker Compose E2E topology and assertions authored for HTTP payment, durable order graph, Outbox publication, real-broker consumption, and same-group duplicate idempotency.
-- [ ] Docker Compose E2E runtime gate passes through finalized `verify.e2e` evidence (NOT RUN/BLOCKED: supported POSIX runner unavailable on the current host).
+- [x] Docker Compose E2E runtime gate passed through finalized `verify.e2e` evidence.
 
 ## Phase 1: Design Check
 

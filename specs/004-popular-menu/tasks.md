@@ -4,9 +4,9 @@
 
 - [x] MySQL authority, seven-day completeness markers, generation checks, fallback rebuild, and absolute updates are tracked and authored.
 - [x] Temporary ZSET population, safety TTL, live replacement, and marker publication are atomic in one Lua script.
-- [ ] Product, Redis, MySQL, Docker, and real HTTP verification run through a supported VERIFIED command.
+- [x] Product, Redis, MySQL, Docker, and real HTTP verification ran through supported VERIFIED commands.
 - [x] Docker Compose E2E assertions authored for MySQL daily sales, Redis daily score, and popular-menu real HTTP response.
-- [ ] Docker Compose E2E runtime gate passes through finalized `verify.e2e` evidence (NOT RUN/BLOCKED: supported POSIX runner unavailable on the current host).
+- [x] Docker Compose E2E runtime gate passed through finalized `verify.e2e` evidence.
 
 ## Phase 1: Design Check
 

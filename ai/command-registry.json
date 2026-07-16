@@ -2,7 +2,7 @@
   "$schema": "./schemas/command-registry.schema.json",
   "$id": "ai/command-registry.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-16T03:30:00Z",
+  "updatedAt": "2026-07-16T10:05:00Z",
   "commands": [
     {
       "id": "dependencies.install",
@@ -35,7 +35,7 @@
     {
       "id": "verify.build",
       "purpose": "Compile or build the project",
-      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "configurationStatus": "VERIFIED",
       "classification": "SAFE",
       "argv": ["./gradlew", "assemble"],
       "workingDirectory": ".",
@@ -51,16 +51,26 @@
           "kind": "STATIC_FILE",
           "path": "gradlew",
           "claim": "The POSIX Gradle wrapper entry point exists."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": ".ai-runs/verify-20260716-level5-completion-build-01/artifact-manifest.json",
+          "claim": "Finalized official verify.build run passed with exit code 0."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": "ai/work-logs/no-issue/level-5-runtime-verification/final-verifier.md",
+          "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
         }
       ],
       "inputPaths": ["build.gradle", "settings.gradle", "gradle/**", "src/main/**", "src/test/**"],
-      "lastVerifiedAt": null,
-      "notes": ["Static configuration evidence exists; the command has not been executed."]
+      "lastVerifiedAt": "2026-07-16T09:59:21Z",
+      "notes": ["Finalized official Ubuntu-native runtime evidence passed for the exact registered argv."]
     },
     {
       "id": "verify.unit",
       "purpose": "Run the configured Gradle test task",
-      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "configurationStatus": "VERIFIED",
       "classification": "SAFE",
       "argv": ["./gradlew", "test"],
       "workingDirectory": ".",
@@ -76,12 +86,22 @@
           "kind": "STATIC_FILE",
           "path": "gradlew",
           "claim": "The POSIX Gradle wrapper entry point exists."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": ".ai-runs/verify-20260716-level5-completion-unit-01/artifact-manifest.json",
+          "claim": "Finalized official verify.unit run passed 39 tests with zero failures, errors, or skips."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": "ai/work-logs/no-issue/level-5-runtime-verification/final-verifier.md",
+          "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
         }
       ],
       "inputPaths": ["build.gradle", "settings.gradle", "gradle/**", "src/main/**", "src/test/**"],
-      "lastVerifiedAt": null,
+      "lastVerifiedAt": "2026-07-16T09:59:23Z",
       "notes": [
-        "Static configuration evidence exists; the command has not been executed.",
+        "Finalized official Ubuntu-native runtime evidence passed for the exact registered argv.",
         "Native gradlew.bat execution is future scope and NOT_CONFIGURED."
       ]
     },
@@ -108,7 +128,7 @@
     {
       "id": "verify.integration",
       "purpose": "Run a dedicated integration-test command",
-      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "configurationStatus": "VERIFIED",
       "classification": "SAFE",
       "argv": ["./gradlew", "integrationTest"],
       "workingDirectory": ".",
@@ -124,16 +144,26 @@
           "kind": "STATIC_FILE",
           "path": "gradlew",
           "claim": "The POSIX Gradle wrapper entry point exists."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": ".ai-runs/verify-20260716-level5-completion-integration-01/artifact-manifest.json",
+          "claim": "Finalized official verify.integration run passed 35 Testcontainers tests with zero failures, errors, or skips."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": "ai/work-logs/no-issue/level-5-runtime-verification/final-verifier.md",
+          "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
         }
       ],
       "inputPaths": ["build.gradle", "src/test/**"],
-      "lastVerifiedAt": null,
-      "notes": ["Static configuration evidence exists; the command has not been executed."]
+      "lastVerifiedAt": "2026-07-16T09:59:25Z",
+      "notes": ["Finalized official Ubuntu-native runtime evidence passed for the exact registered argv."]
     },
     {
       "id": "verify.e2e",
       "purpose": "Run end-to-end tests",
-      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "configurationStatus": "VERIFIED",
       "classification": "SAFE",
       "argv": ["./scripts/e2e/verify-e2e.sh"],
       "workingDirectory": ".",
@@ -149,19 +179,29 @@
           "kind": "STATIC_FILE",
           "path": "scripts/e2e/verify-e2e.sh",
           "claim": "The no-argument script defines bounded black-box assertions and unconditional isolated Compose cleanup."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": ".ai-runs/verify-20260716-level5-completion-e2e-01/artifact-manifest.json",
+          "claim": "Finalized official verify.e2e run passed the Docker Compose black-box scenario with zero failures."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": "ai/work-logs/no-issue/level-5-runtime-verification/final-verifier.md",
+          "claim": "Durable reconciliation records the finalized run identity, manifest, scenario result, and clean Ubuntu checkout HEAD."
         }
       ],
       "inputPaths": ["scripts/e2e/verify-e2e.sh", "docker-compose.yml", "docker-compose.e2e.yml", "Dockerfile", "src/main/**", "src/test/**"],
-      "lastVerifiedAt": null,
+      "lastVerifiedAt": "2026-07-16T09:59:30Z",
       "notes": [
         "The executable and isolated Compose topology are authored.",
-        "Static configuration evidence exists; no finalized runtime evidence is available."
+        "Finalized official Ubuntu-native Docker Compose runtime evidence passed for the exact registered argv."
       ]
     },
     {
       "id": "verify.api-smoke",
       "purpose": "Run real HTTP API smoke verification",
-      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "configurationStatus": "VERIFIED",
       "classification": "SAFE",
       "argv": ["./gradlew", "apiSmokeTest"],
       "workingDirectory": ".",
@@ -177,11 +217,21 @@
           "kind": "STATIC_FILE",
           "path": "gradlew",
           "claim": "The POSIX Gradle wrapper entry point exists."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": ".ai-runs/verify-20260716-level5-completion-api-smoke-01/artifact-manifest.json",
+          "claim": "Finalized official verify.api-smoke run passed 2 real HTTP tests with zero failures, errors, or skips."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": "ai/work-logs/no-issue/level-5-runtime-verification/final-verifier.md",
+          "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
         }
       ],
       "inputPaths": ["src/main/**", "src/test/**", "docs/07-data-and-api-contracts.md"],
-      "lastVerifiedAt": null,
-      "notes": ["Static configuration evidence exists; the command has not been executed."]
+      "lastVerifiedAt": "2026-07-16T09:59:28Z",
+      "notes": ["Finalized official Ubuntu-native real HTTP runtime evidence passed for the exact registered argv."]
     },
     {
       "id": "db.migration",
