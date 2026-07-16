@@ -2,12 +2,12 @@
 issue: 20
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20
 tracking_status: issue_backed
-status: in_review
+status: done
 owning_feature: "none"
-current_owner: final-verifier
+current_owner: repository-owner
 started_at: 2026-07-16T00:00:00+09:00
 ended_at: 2026-07-16T19:25:00+09:00
-last_updated: 2026-07-16T20:10:58+09:00
+last_updated: 2026-07-16T20:28:27+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md
@@ -65,7 +65,7 @@ legitimately promoted to `VERIFIED`; failure triage and regression correction ar
 - [Implementation Agent](implementation-agent.md): done; implementation and runtime handoff complete
 - [Review Agent](reviewer.md): done; final source/static review clean
 - [Runtime Verifier](runtime-verifier.md): done; environment diagnosis and preserved failed/successful execution history
-- [Failure Fixer](failure-fixer.md): handoff_needed; stale CI contracts corrected with RED/GREEN evidence
+- [Failure Fixer](failure-fixer.md): done; stale CI contracts corrected with RED/GREEN and refreshed CI evidence
 - [Independent Reviewer](independent-reviewer.md): done; CI-fix diff Critical 0, Important 0, Minor 0
 - [Final Verifier](final-verifier.md): done; five finalized runs, registry reconciliation, Phase 2C and QA evidence
 
@@ -74,8 +74,9 @@ legitimately promoted to `VERIFIED`; failure triage and regression correction ar
 Implementation, independent review, fresh finalized Level 5 runtime verification, registry
 reconciliation, Phase 2C, and implementation QA were completed. Tracking is `issue_backed` and the
 fallback migration is complete. The stale helper-test assumptions and migrated evidence pointers
-are corrected, focused tests pass, and the full 551-test Ubuntu helper suite is green. The issue is
-now `in_review` pending an independent diff and evidence check.
+are corrected, the full 551-test Ubuntu helper suite is green, independent review reports
+Critical 0 / Important 0 / Minor 0, and refreshed GitHub Actions run `29494202619` passed. The
+workflow status is restored to `done`; PR review/merge and Issue closure remain pending.
 
 ## Decisions
 
@@ -91,6 +92,8 @@ now `in_review` pending an independent diff and evidence check.
 - CI regression full helper suite: 551 tests passed in Ubuntu, 0 failures.
 - Post-correction official `verify.unit`: run `verify-20260716-ci-regression-unit-green-01`, attempt
   `2f5d5e62-f89b-461a-b8c8-f54382cd62ea`, exit 0, 39 tests, 0 failures/errors/skips.
+- Refreshed GitHub Actions: run `29494202619`, job `87607202842`,
+  `phase-3b-repository-contract` PASS in 5m6s.
 - Existing historical evidence: `verify.unit` run `verify-20260716-wsl-11`, exit 0, 69 tests, 0 failures/errors/skips.
 - Task 1 focused contracts: GREEN, 5 tests passed after RED evidence for the missing command/test boundaries, E2E allowlist, and wrapper-validation boundary.
 - Task 1 final whole helper suite: NOT PASS; 544 tests, 14 failures, 44 errors, 20 skips. Remaining failures/errors are repository-root `.ai-runs` assumptions and sandbox-denied Phase 3B provenance fixture writes; the isolated Task 1 resolver regression passes in the focused set.
@@ -125,7 +128,7 @@ now `in_review` pending an independent diff and evidence check.
 ## Blockers
 
 - Implementation blockers: none.
-- PR merge and Issue #20 closure remain blocked until independent review and refreshed GitHub CI.
+- PR merge and Issue #20 closure remain repository-owner workflow steps.
 
 ## Next Handoff
 

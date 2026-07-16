@@ -7,8 +7,8 @@ status: done
 owning_feature: "none"
 current_owner: repository-owner
 started_at: 2026-07-16T18:30:00+09:00
-ended_at: 2026-07-16T20:20:00+09:00
-last_updated: 2026-07-16T20:20:00+09:00
+ended_at: 2026-07-16T20:28:27+09:00
+last_updated: 2026-07-16T20:28:27+09:00
 branch: codex/implement-cafe-features
 related_files:
   - ai/verification-gates.md
@@ -163,5 +163,7 @@ production code, helper/runtime behavior, schema, Gradle boundary, or public con
 ### Decision
 
 Local final verification: PASS. The correction is ready for the repository-owner workflow. The
-remaining external merge gate is refreshed GitHub CI after the reviewed diff is pushed; this log
-does not claim that future CI run has passed.
+remaining external merge gate was refreshed GitHub CI after the reviewed diff was pushed. GitHub
+Actions run `29494202619`, job `87607202842`, subsequently passed
+`phase-3b-repository-contract` in 5m6s. Local and remote verification are now reconciled; PR review,
+merge, and Issue closure remain repository-owner decisions.
