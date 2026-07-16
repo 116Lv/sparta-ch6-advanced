@@ -109,6 +109,24 @@ class PosixEntryPointPackagingTests(unittest.TestCase):
                 self.assertNotIn("KAFKA_CFG_", text)
                 self.assertNotIn("ALLOW_PLAINTEXT_LISTENER", text)
 
+    def test_e2e_materializes_duplicate_event_input_before_async_watchdog(self):
+        text = (REPOSITORY_ROOT / "scripts" / "e2e" / "verify-e2e.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("bounded_compose_with_input()", text)
+        self.assertIn('cat > "$input_file"', text)
+        self.assertIn('"$@" < "$input_file" &', text)
+        self.assertIn(
+            'bounded_compose_with_input "$OPERATION_TIMEOUT" exec -T kafka '
+            '/opt/kafka/bin/kafka-console-producer.sh',
+            text,
+        )
+        self.assertNotIn(
+            'printf \'%s\\n\' "$MESSAGE" | bounded_compose "$OPERATION_TIMEOUT"',
+            text,
+        )
+
 
 def load_helper():
     specification = importlib.util.spec_from_file_location("workflow_helper_under_test", HELPER_PATH)

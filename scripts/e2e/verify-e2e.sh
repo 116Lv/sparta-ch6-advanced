@@ -39,11 +39,12 @@ terminate_active_processes() {
 
 run_with_watchdog() {
     timeout_seconds=$1
-    shift
+    input_file=$2
+    shift 2
     WATCHDOG_SEQUENCE=$((WATCHDOG_SEQUENCE + 1))
     marker="$WATCHDOG_ROOT/timeout-$WATCHDOG_SEQUENCE"
     rm -f "$marker"
-    "$@" <&0 &
+    "$@" < "$input_file" &
     target_pid=$!
     ACTIVE_TARGET_PID=$target_pid
     printf '%s\n' "$target_pid" > "$ACTIVE_TARGET_FILE"
@@ -75,8 +76,20 @@ run_with_watchdog() {
 bounded_compose() {
     timeout_seconds=$1
     shift
-    run_with_watchdog "$timeout_seconds" docker compose \
+    run_with_watchdog "$timeout_seconds" /dev/null docker compose \
         -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+}
+
+bounded_compose_with_input() {
+    timeout_seconds=$1
+    shift
+    input_file="$WATCHDOG_ROOT/stdin"
+    cat > "$input_file"
+    command_status=0
+    run_with_watchdog "$timeout_seconds" "$input_file" docker compose \
+        -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@" || command_status=$?
+    rm -f "$input_file"
+    return "$command_status"
 }
 
 cleanup() {
@@ -329,7 +342,7 @@ MARKERS_AFTER_CACHE_HIT=$(snapshot_seven_markers)
 
 MESSAGE="{\"eventId\":$EVENT_ID,\"eventType\":\"ORDER_PAID\",\"aggregateId\":$ORDER_ID,\"payload\":{\"userId\":$USER_ID,\"menuId\":$MENU_ID,\"paymentAmount\":3000}}"
 EXPECTED_OFFSET=$((OFFSET_BASELINE + 1))
-printf '%s\n' "$MESSAGE" | bounded_compose "$OPERATION_TIMEOUT" exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
+printf '%s\n' "$MESSAGE" | bounded_compose_with_input "$OPERATION_TIMEOUT" exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
     --bootstrap-server kafka:9092 --topic coffee.order.paid
 wait_for_exact_offset "$EXPECTED_OFFSET"
 [ "$(mysql_query "SELECT COUNT(*) FROM processed_events WHERE consumer_group='coffee-order-analytics' AND event_id=$EVENT_ID;")" = 1 ] || fail 'duplicate changed processed marker count'
