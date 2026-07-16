@@ -18,7 +18,7 @@
 
 Canonical source: `ai/project-state.json`
 Schema version: `1`
-Updated at: `2026-07-14T00:00:00Z`
+Updated at: `2026-07-16T09:48:08Z`
 
 This section was manually bootstrapped from canonical JSON during Phase 1A.
 Automatic generation and stale-state validation begin in Phase 1B or later.
@@ -72,7 +72,7 @@ This section cannot be changed independently of its canonical JSON source.
 
 | Environment | Target | Detected | Configuration Status | Version | Evidence |
 |---|---|---|---|---|---|
-| LOCAL | Python 3 | Python 3 | VERIFIED | 3.9.6 (tags/v3.9.6:db3ff76, Jun 28 2021, 15:26:21) [MSC v.1929 64 bit (AMD64)] | RUNTIME_COMMAND: ai/evidence/local-helper-runtime.json (Local Python 3 helper runtime passed the Phase 1B preflight.) |
+| LOCAL | Python 3 | Python 3 | VERIFIED | 3.14.4 (main, Jun 18 2026, 14:25:02) [GCC 15.2.0] | RUNTIME_COMMAND: ai/evidence/local-helper-runtime.json (Local Python 3 helper runtime passed the Phase 1B preflight.) |
 | CI | Python 3 | N/A | NOT_CONFIGURED | N/A | N/A |
 
 ### Command Registry Reference

@@ -2,7 +2,7 @@
   "$schema": "./schemas/project-state.schema.json",
   "$id": "ai/project-state.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-14T00:00:00Z",
+  "updatedAt": "2026-07-16T09:48:08Z",
   "project": {
     "name": "sparta-ch6-advanced",
     "productType": "Spring Boot backend API assignment",
@@ -136,7 +136,7 @@
       "targetRuntime": "Python 3",
       "detectedRuntime": "Python 3",
       "configurationStatus": "VERIFIED",
-      "version": "3.9.6 (tags/v3.9.6:db3ff76, Jun 28 2021, 15:26:21) [MSC v.1929 64 bit (AMD64)]",
+      "version": "3.14.4 (main, Jun 18 2026, 14:25:02) [GCC 15.2.0]",
       "evidence": [
         {
           "kind": "RUNTIME_COMMAND",
