@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T10:21:07+09:00
+last_updated: 2026-07-16T10:31:42+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
@@ -33,6 +33,7 @@ commands_run:
   - "verify.integration Task 2 review fix: run verify-20260716-level5-task2-review-green-01; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.integration Task 3 RED: run verify-20260716-level5-task3-red-01; RUN_START PASS; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
   - "verify.integration Task 3 GREEN: run verify-20260716-level5-task3-green-01; RUN_START PASS; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
+  - "verify.integration Task 3 review fix: run verify-20260716-level5-task3-review-green-01; RUN_START PASS; PRE_COMMAND NOT_CONFIGURED; POSIX_EXECUTION_NOT_CONFIGURED; no attempt reserved"
 tests_run:
   - "RED canonical contract: 1 failure with 19 violations"
   - "RED E2E allowlist: 2 failures"
@@ -45,6 +46,8 @@ tests_run:
   - "Task 2 review fix source RED: missing explicit fragment method and native increment annotation contracts"
   - "Task 2 review fix focused static GREEN: explicit fragment and increment contracts present"
   - "Task 3 broker integration: NOT RUN; official RED/GREEN attempts both stopped before execution with POSIX_EXECUTION_NOT_CONFIGURED"
+  - "Task 3 review fix source RED: missing payload userId/menuId, exact durable analytics field assertions, and deterministic non-Kafka endpoint contracts"
+  - "Task 3 review fix source GREEN: all canonical payload/durable effect assertions and ephemeral bound non-Kafka endpoint cleanup contracts present"
 blockers: []
 skill_ids:
   - superpowers:test-driven-development
@@ -78,6 +81,8 @@ Implement Tasks 1-5 sequentially under TDD and the official command-runner polic
 - Task 2 review fix explicitly reflects on both fragment aggregate methods to prohibit JPQL annotations and separately proves `increment` retains a native `@Query`.
 - Task 3 adds a Kafka/MySQL Testcontainers integration test for the real Outbox publisher, independent broker observation, real listener durable effects, same-group duplicate suppression, and real producer failure retry state.
 - Task 3 retains existing service-level MySQL tests for different-group independence and transactional rollback, avoiding duplicate direct-consumer evidence in the broker test.
+- Task 3 review fix asserts every canonical payload field and the persisted analytics aggregate/user/menu/payment values after real listener processing.
+- Task 3 review fix replaces the host-state assumption at `127.0.0.1:1` with a loopback `ServerSocket` bound to an ephemeral port and closed deterministically.
 
 # Current State
 
@@ -107,6 +112,9 @@ Task 3 broker integration coverage is implemented and static-reviewed. Official 
 - Task 3 RED run `verify-20260716-level5-task3-red-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, container, artifact, or test count.
 - Task 3 GREEN run `verify-20260716-level5-task3-green-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, container, artifact, or test count.
 - Task 3 static review: `git diff --check` exit 0; Spring Kafka 4.1 send overloads and Testcontainers 1.20.4 Kafka constructor/bootstrap APIs were present in cached dependency inspection. This is not compilation or runtime PASS evidence.
+- Task 3 review-fix source RED exited 1 with four expected violations: missing payload user/menu assertions, missing exact durable analytics assertions, and the hard-coded assumed-closed endpoint.
+- Task 3 review-fix source GREEN exited 0 after all six canonical/durable field assertions and the ephemeral `ServerSocket` lifecycle contracts were present.
+- Task 3 review-fix official run `verify-20260716-level5-task3-review-green-01`: RUN_START PASS, then PRE_COMMAND `NOT_CONFIGURED/POSIX_EXECUTION_NOT_CONFIGURED`; no attempt ID, process, container, artifact, or test count.
 
 # Blockers
 

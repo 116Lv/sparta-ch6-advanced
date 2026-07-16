@@ -10,6 +10,8 @@ import com.ch6.cafe.domain.outbox.repository.OutboxEventRepository;
 import com.ch6.cafe.domain.outbox.repository.ProcessedEventRepository;
 import com.ch6.cafe.domain.ranking.repository.RedisPopularMenuRepository;
 import com.ch6.cafe.global.lock.DistributedLockManager;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -115,9 +117,17 @@ class OrderPaidKafkaIntegrationTest {
             assertThat(envelope.path("eventId").longValue()).isEqualTo(event.getId());
             assertThat(envelope.path("eventType").textValue()).isEqualTo("ORDER_PAID");
             assertThat(envelope.path("aggregateId").longValue()).isEqualTo(101L);
+            assertThat(envelope.path("payload").path("userId").longValue()).isEqualTo(1L);
+            assertThat(envelope.path("payload").path("menuId").longValue()).isEqualTo(1L);
             assertThat(envelope.path("payload").path("paymentAmount").longValue()).isEqualTo(4_500L);
 
             awaitDatabaseState(event.getId(), 1, 1);
+            assertThat(analyticsRepository.findAll()).singleElement().satisfies(effect -> {
+                assertThat(effect.getAggregateId()).isEqualTo(101L);
+                assertThat(effect.getUserId()).isEqualTo(1L);
+                assertThat(effect.getMenuId()).isEqualTo(1L);
+                assertThat(effect.getPaymentAmount()).isEqualTo(4_500L);
+            });
             assertThat(outboxRepository.findById(event.getId()).orElseThrow().getStatus())
                     .isEqualTo(OutboxStatus.PUBLISHED);
 
@@ -137,32 +147,36 @@ class OrderPaidKafkaIntegrationTest {
     }
 
     @Test
-    void realProducerFailureReturnsClaimToRetryableReadyState() {
+    void realProducerFailureReturnsClaimToRetryableReadyState() throws Exception {
         OutboxEvent event = seedEvent(201L);
-        Map<String, Object> properties = new HashMap<>();
-        properties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "127.0.0.1:1");
-        properties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        properties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        properties.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 500);
-        properties.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 500);
-        properties.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 1_000);
-        properties.put(ProducerConfig.RETRIES_CONFIG, 0);
-        DefaultKafkaProducerFactory<String, String> factory = new DefaultKafkaProducerFactory<>(properties);
-        try {
-            OutboxPublisher failingPublisher = new OutboxPublisher(
-                    outboxRepository, new KafkaTemplate<>(factory), transactions, objectMapper,
-                    "broker-failure-test", 1, 30, 5);
+        try (ServerSocket nonKafkaEndpoint = new ServerSocket(
+                0, 1, InetAddress.getByName("127.0.0.1"))) {
+            Map<String, Object> properties = new HashMap<>();
+            properties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
+                    "127.0.0.1:" + nonKafkaEndpoint.getLocalPort());
+            properties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+            properties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+            properties.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 500);
+            properties.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 500);
+            properties.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 1_000);
+            properties.put(ProducerConfig.RETRIES_CONFIG, 0);
+            DefaultKafkaProducerFactory<String, String> factory = new DefaultKafkaProducerFactory<>(properties);
+            try {
+                OutboxPublisher failingPublisher = new OutboxPublisher(
+                        outboxRepository, new KafkaTemplate<>(factory), transactions, objectMapper,
+                        "broker-failure-test", 1, 30, 5);
 
-            failingPublisher.publishBatch();
+                failingPublisher.publishBatch();
 
-            OutboxEvent retryable = outboxRepository.findById(event.getId()).orElseThrow();
-            assertThat(retryable.getStatus()).isEqualTo(OutboxStatus.READY);
-            assertThat(retryable.getRetryCount()).isOne();
-            assertThat(retryable.getLastError()).isNotBlank();
-            assertThat(retryable.getClaimToken()).isNull();
-            assertThat(retryable.getClaimOwner()).isNull();
-        } finally {
-            factory.destroy();
+                OutboxEvent retryable = outboxRepository.findById(event.getId()).orElseThrow();
+                assertThat(retryable.getStatus()).isEqualTo(OutboxStatus.READY);
+                assertThat(retryable.getRetryCount()).isOne();
+                assertThat(retryable.getLastError()).isNotBlank();
+                assertThat(retryable.getClaimToken()).isNull();
+                assertThat(retryable.getClaimOwner()).isNull();
+            } finally {
+                factory.destroy();
+            }
         }
     }
 

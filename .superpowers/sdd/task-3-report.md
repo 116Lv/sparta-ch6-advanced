@@ -59,3 +59,17 @@ All product-command attempts used the repository-owned runner. Gradle was never 
 - Compilation, Testcontainers startup, Kafka listener assignment, MySQL migration compatibility, and runtime assertions are unverified on this Windows host. Do not infer PASS from static review.
 - The official integration command must be rerun on a configured POSIX execution path. Any compile or runtime failure must be handled with a new RED/GREEN cycle and fresh run IDs.
 - The shared integration suite may be container-heavy; actual timing and flake behavior remain unknown until supported execution produces evidence.
+
+## Review-fix evidence
+
+- Review scope: assert the complete canonical payload and exact durable analytics values in the live broker path; replace the assumed-closed fixed port with a test-controlled non-Kafka endpoint.
+- Source RED command inspected `OrderPaidKafkaIntegrationTest.java` for the required contracts and exited 1 with four expected violations:
+  - `missing payload userId assertion`
+  - `missing payload menuId assertion`
+  - `missing exact persisted analytics field assertions`
+  - `hard-coded assumed-closed broker endpoint`
+- Source GREEN command exited 0 and confirmed assertions for payload `userId`, payload `menuId`, persisted `aggregateId`, `userId`, `menuId`, and `paymentAmount`, plus an ephemeral bound `ServerSocket`, selected local port, producer-factory cleanup, and absence of `127.0.0.1:1`.
+- The failure-path test now owns a loopback `ServerSocket` on an OS-selected port. The socket deliberately does not speak Kafka, remains bound for the publish attempt, and closes through try-with-resources. Kafka metadata/request/delivery timeouts remain bounded and the producer factory closes in `finally`.
+- Official command: `scripts/ai/command-runner.sh start --run-id verify-20260716-level5-task3-review-green-01 --task-key level-5-runtime-verification`; result `RUN_START PASS`.
+- Official command: `scripts/ai/command-runner.sh run verify.integration --run-id verify-20260716-level5-task3-review-green-01`; result `PRE_COMMAND NOT_CONFIGURED`, reason `POSIX_EXECUTION_NOT_CONFIGURED`.
+- No attempt ID, Gradle process, container execution, artifact, or test count was produced. The review fix remains runtime-unverified.
