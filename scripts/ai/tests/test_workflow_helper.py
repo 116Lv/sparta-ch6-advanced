@@ -53,20 +53,30 @@ PHASE_1A_SEMANTIC_INVALID_FIXTURES_PATH = REPOSITORY_ROOT / "ai" / "fixtures" / 
 
 
 class PosixEntryPointPackagingTests(unittest.TestCase):
-    def test_directly_executed_workflow_gate_has_git_executable_mode(self):
+    def tracked_mode(self, path):
         tracked = subprocess.run(
-            ["git", "ls-files", "--stage", "--", "scripts/ai/workflow-gate.sh"],
+            ["git", "ls-files", "--stage", "--", path],
             cwd=REPOSITORY_ROOT,
             check=True,
             capture_output=True,
             text=True,
         ).stdout.split()
 
-        self.assertTrue(tracked, "workflow-gate.sh must be tracked by Git")
+        self.assertTrue(tracked, f"{path} must be tracked by Git")
+        return tracked[0]
+
+    def test_directly_executed_workflow_gate_has_git_executable_mode(self):
         self.assertEqual(
-            tracked[0],
+            self.tracked_mode("scripts/ai/workflow-gate.sh"),
             "100755",
             "command-runner.sh directly execs workflow-gate.sh, so its Git mode must be executable",
+        )
+
+    def test_registered_gradle_commands_have_an_executable_wrapper(self):
+        self.assertEqual(
+            self.tracked_mode("gradlew"),
+            "100755",
+            "registered Gradle commands launch ./gradlew directly, so its Git mode must be executable",
         )
 
 
