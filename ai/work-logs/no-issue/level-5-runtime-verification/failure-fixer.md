@@ -5,7 +5,7 @@ agent: failure-fixer
 tracking_status: pending_issue
 status: done
 owning_feature: "none"
-current_owner: final-reviewer
+current_owner: repository-owner
 started_at: 2026-07-16T17:33:16+09:00
 ended_at: 2026-07-16T18:16:57+09:00
 last_updated: 2026-07-16T18:16:57+09:00
@@ -30,8 +30,15 @@ skill_ids:
   - superpowers:systematic-debugging
   - superpowers:test-driven-development
 handoff_state_ref: ai/work-logs/no-issue/level-5-runtime-verification/README.md
+reusable_context_refs:
+  - ai/work-logs/no-issue/level-5-runtime-verification/runtime-verifier.md
+not_run_project_commands: []
 github_reconciliation_status: pending_external_authorization
 reconciliation_required: true
+issue_creation_attempted_at: 2026-07-16T00:00:00+09:00
+issue_creation_failure_reason: GitHub connector rejected external disclosure because explicit authorization to publish repository planning content was not established.
+expected_issue_scope: Apply and independently review the approved Level 5 QueryDSL, real-infrastructure verification, canonical commands, and evidence reconciliation as one cohesive completion unit.
+migration_history: []
 ---
 
 # Failure Fixer

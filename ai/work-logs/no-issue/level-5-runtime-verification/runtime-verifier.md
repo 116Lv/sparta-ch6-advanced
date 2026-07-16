@@ -23,7 +23,7 @@ commands_run:
   - verify.e2e
 tests_run: []
 blockers:
-  - The original workflow-gate and gradlew executable-mode blockers were corrected in later local commits; the earlier failed runs remain preserved below.
+  - GitHub Issue reconciliation remains pending external authorization; the original executable-mode blockers were corrected in later local commits.
 skill_ids:
   - superpowers:subagent-driven-development
   - superpowers:systematic-debugging
@@ -39,6 +39,12 @@ migration_history: []
 ---
 
 # Runtime Verifier
+
+## Later Reconciliation
+
+The executable-mode blocker documented by this role was corrected in later local commits. The
+final-verifier subsequently ran and finalized all five official commands from a fresh Ubuntu-native
+checkout. The failure evidence below remains intentionally preserved as historical diagnosis.
 
 ## Status
 

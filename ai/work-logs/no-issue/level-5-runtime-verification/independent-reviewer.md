@@ -19,7 +19,7 @@ commands_run: []
 tests_run:
   - "Independent full merge-base..85e55ef review: Critical 0, Important 0, Minor 0"
 blockers:
-  - "Earlier PASS command results remained in OPEN run sessions without finalized run.json or artifact-manifest.json and were excluded from VERIFIED promotion."
+  - "GitHub Issue reconciliation remains pending external authorization; earlier OPEN runs were replaced by later finalized runs."
 skill_ids:
   - superpowers:requesting-code-review
 handoff_state_ref: ai/work-logs/no-issue/level-5-runtime-verification/README.md
@@ -54,7 +54,7 @@ and available runtime records. The final finding count was Critical 0, Important
 # Current State
 
 Source/spec/runtime behavior is independently approved. Completion evidence remains with the
-final verifier because each official command needs a new finalized run.
+final verifier, which subsequently produced a new finalized run for every official command.
 
 # Decisions
 
