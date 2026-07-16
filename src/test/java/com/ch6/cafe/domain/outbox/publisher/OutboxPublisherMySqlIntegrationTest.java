@@ -144,7 +144,8 @@ class OutboxPublisherMySqlIntegrationTest {
         seedEvents(1);
         OutboxPublisher publisher = publisher("worker-a", 1);
         OutboxPublisher.ClaimedEvent oldClaim = publisher.claimNext().orElseThrow();
-        jdbcTemplate.update("UPDATE outbox_events SET claim_until = ? WHERE id = ?", LocalDateTime.now().minusSeconds(1), oldClaim.id());
+        jdbcTemplate.update("UPDATE outbox_events SET claim_until = ? WHERE id = ?",
+                repository.currentDatabaseTime().minusSeconds(1), oldClaim.id());
 
         OutboxPublisher.ClaimedEvent reassigned = publisher("worker-b", 1).claimNext().orElseThrow();
         OutboxEvent event = repository.findById(reassigned.id()).orElseThrow();
