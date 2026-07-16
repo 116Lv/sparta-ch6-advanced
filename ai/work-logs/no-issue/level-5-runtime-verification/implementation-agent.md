@@ -8,7 +8,7 @@ owning_feature: "none"
 current_owner: implementation-agent
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T10:56:18+09:00
+last_updated: 2026-07-16T11:02:31+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/plans/2026-07-16-level-5-runtime-verification-implementation.md
@@ -40,6 +40,7 @@ commands_run:
   - "verify.api-smoke Task 4 RED: requested run verify-20260716-level5-task4-red-01; command-runner POSIX entry point could not start because Windows bash resolved to WSL with no installed distribution; no RUN_START, PRE_COMMAND, attempt, process, artifact, or test count"
   - "verify.api-smoke Task 4 GREEN: requested run verify-20260716-level5-task4-green-01; same POSIX_EXECUTION_NOT_CONFIGURED host boundary; no RUN_START, PRE_COMMAND, attempt, process, artifact, or test count"
   - "verify.api-smoke Task 4 review fix: requested run verify-20260716-level5-task4-review-green-01; same unavailable WSL/POSIX entry-point boundary; no RUN_START, PRE_COMMAND, attempt, process, artifact, or test count"
+  - "verify.api-smoke Task 4 second review fix: requested run verify-20260716-level5-task4-review2-green-01; same unavailable WSL/POSIX entry-point boundary; no RUN_START, PRE_COMMAND, attempt, process, artifact, or test count"
 tests_run:
   - "RED canonical contract: 1 failure with 19 violations"
   - "RED E2E allowlist: 2 failures"
@@ -58,6 +59,8 @@ tests_run:
   - "Task 4 static review: git diff --check exit 0; random-port/HttpClient/Testcontainers/status/error/durable-state source contracts present; not compile or runtime evidence"
   - "Task 4 review fix source RED: 5 expected violations for missing second popular request, bounded timeout, seven completion markers, Redis daily score assertion, and shared-profile Outbox disable"
   - "Task 4 review fix source GREEN: 7 focused contracts passed; runtime API smoke remains NOT RUN"
+  - "Task 4 second review fix source RED: 5 expected violations for missing local test configuration/import, primary fixed Clock, exact fixed instant/zone, and marker snapshot equality"
+  - "Task 4 second review fix source GREEN: 6 focused fixed-clock/cache-hit contracts passed; runtime API smoke remains NOT RUN"
 blockers: []
 skill_ids:
   - superpowers:test-driven-development
@@ -96,6 +99,7 @@ Implement Tasks 1-5 sequentially under TDD and the official command-runner polic
 - Task 4 adds a random-port real-server smoke suite using only `java.net.http.HttpClient`, real MySQL and Redis Testcontainers, exact JSON/status assertions, and JDBC durable-state checks across menu query, point charge, paid order, popular menu, request validation, and insufficient-point rollback.
 - Task 4 makes Outbox scheduling conditional on `outbox.publisher.enabled`; the smoke class inline properties disable scheduled publishing and Kafka listener startup. No controller or business-rule change was made.
 - Task 4 review fix confines scheduler disable to the smoke class, verifies order-side Redis recording before fallback, verifies the rebuilt seven-day production marker/data contracts, repeats the popular-menu request against the complete cache, and bounds every HTTP request to ten seconds.
+- Task 4 second review fix imports a suite-local primary Clock fixed at `2026-07-16T01:00:00Z` in `Asia/Seoul` and proves that all seven marker generation strings remain identical across the second popular-menu request.
 
 # Current State
 
@@ -134,6 +138,9 @@ Task 3 broker integration coverage is implemented and static-reviewed. Official 
 - Task 4 review-fix RED source contract exited 1 with five intended violations: no second popular request, no request timeout, no seven-day marker assertion, no Redis ZSET score assertion, and shared `application-test.yml` Outbox scheduling suppression.
 - Task 4 review-fix GREEN source contract exited 0 with `GREEN: 7 focused Task 4 source contracts passed`, covering the canonical popular path, two real requests, both builder timeouts, seven markers, the daily score, pre-fallback recording assertion, and shared-profile preservation.
 - Task 4 review-fix official request `verify-20260716-level5-task4-review-green-01` stopped before `command-runner.sh` startup because Windows `bash.exe` again found no installed WSL/POSIX runtime. No runtime result or counts exist; PASS is not inferred.
+- Task 4 second review-fix RED source contract exited 1 with five intended violations: missing suite-local test configuration/import, missing primary fixed Clock, missing exact instant/zone, and missing marker snapshot equality.
+- Task 4 second review-fix GREEN source contract exited 0 with `GREEN: 6 focused fixed-clock/cache-hit contracts passed`, covering the local imported primary Clock, exact instant/zone, injected-clock date expectation, and marker snapshots bracketing the second HTTP request.
+- Task 4 second review-fix official request `verify-20260716-level5-task4-review2-green-01` stopped before `command-runner.sh` startup because Windows `bash.exe` again found no installed WSL/POSIX runtime. No runtime result or counts exist; PASS is not inferred.
 
 # Blockers
 

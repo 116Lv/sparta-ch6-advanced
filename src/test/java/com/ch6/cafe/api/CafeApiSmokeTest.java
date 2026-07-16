@@ -9,7 +9,11 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -18,7 +22,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.ApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -36,6 +44,7 @@ import tools.jackson.databind.ObjectMapper;
 
 @Testcontainers
 @ActiveProfiles("test")
+@Import(CafeApiSmokeTest.FixedClockConfig.class)
 @SpringBootTest(webEnvironment = RANDOM_PORT, properties = {
         "spring.jpa.hibernate.ddl-auto=validate",
         "spring.flyway.enabled=true",
@@ -137,10 +146,12 @@ class CafeApiSmokeTest {
                 """;
         assertJson(popular, expectedPopular);
         assertCompleteSevenDayRanking(today);
+        Map<String, String> markersBeforeCachedRequest = completionMarkerSnapshot(today);
 
         HttpResult cachedPopular = get(POPULAR_MENU_PATH);
         assertStatus(cachedPopular, 200);
         assertJson(cachedPopular, expectedPopular);
+        assertThat(completionMarkerSnapshot(today)).isEqualTo(markersBeforeCachedRequest);
     }
 
     @Test
@@ -250,6 +261,17 @@ class CafeApiSmokeTest {
         assertThat(Long.parseLong(parts[2])).isEqualTo(expectedMenuCount);
     }
 
+    private Map<String, String> completionMarkerSnapshot(LocalDate today) {
+        Map<String, String> markers = new LinkedHashMap<>();
+        for (int offset = 0; offset < 7; offset++) {
+            String key = "popular-menu:complete:" + today.minusDays(offset);
+            String value = redisTemplate.opsForValue().get(key);
+            assertThat(value).as("completion marker %s", key).isNotNull();
+            markers.put(key, value);
+        }
+        return Map.copyOf(markers);
+    }
+
     private void cleanDatabase() {
         for (String table : new String[] {
                 "outbox_recovery_audits", "order_paid_analytics", "processed_events", "outbox_events",
@@ -260,5 +282,17 @@ class CafeApiSmokeTest {
     }
 
     private record HttpResult(int status, String body) {
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class FixedClockConfig {
+
+        @Bean
+        @Primary
+        Clock fixedApiSmokeClock() {
+            return Clock.fixed(
+                    Instant.parse("2026-07-16T01:00:00Z"),
+                    ZoneId.of("Asia/Seoul"));
+        }
     }
 }

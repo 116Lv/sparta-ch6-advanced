@@ -109,3 +109,38 @@ bash scripts/ai/command-runner.sh run verify.api-smoke --run-id verify-20260716-
 ```
 
 Result: exit 1 before `command-runner.sh` started because Windows `bash.exe` reported no installed WSL distribution/POSIX runtime. No `RUN_START`, `PRE_COMMAND`, attempt ID, process, container, artifact, HTTP evidence, server log, or test/failure/error/skip count exists. PASS is not claimed.
+
+## Second Review Fix Evidence
+
+### Focused source RED
+
+The second focused source contract exited 1 with all five expected gaps:
+
+```text
+RED: missing suite-local TestConfiguration
+RED: missing fixed-clock configuration import
+RED: missing primary Clock bean
+RED: missing exact fixed Clock
+RED: missing before/after marker generation snapshot equality
+```
+
+### Implemented corrections
+
+- `CafeApiSmokeTest` imports a nested `@TestConfiguration` whose `@Primary` Clock is fixed at `2026-07-16T01:00:00Z` with the `Asia/Seoul` zone. The same injected Clock determines the test's `LocalDate`, so order payment, popular-menu query, ranking record/rebuild, and assertions share `2026-07-16` without changing production `TimeConfig`.
+- Immediately before the second popular-menu request, the test snapshots the exact values of all seven completion markers, including their UUID generations. It reads the same seven values after the request and asserts map equality in addition to the exact HTTP body, so a fallback rebuild that replaces marker generations fails the test.
+
+### Focused source GREEN
+
+```text
+GREEN: 6 focused fixed-clock/cache-hit contracts passed
+```
+
+The source contract exited 0. This remains static evidence, not compilation or runtime evidence.
+
+### Fresh official runner request
+
+```text
+bash scripts/ai/command-runner.sh run verify.api-smoke --run-id verify-20260716-level5-task4-review2-green-01
+```
+
+Result: exit 1 before `command-runner.sh` started because Windows `bash.exe` reported no installed WSL distribution/POSIX runtime. No `RUN_START`, `PRE_COMMAND`, attempt ID, process, container, artifact, HTTP evidence, server log, or test/failure/error/skip count exists. PASS is not claimed.
