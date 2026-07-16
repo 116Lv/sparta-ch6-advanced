@@ -26,7 +26,7 @@ public class DailyMenuSalesQueryRepositoryImpl implements DailyMenuSalesQueryRep
                 .groupBy(dailyMenuSale.menuId)
                 .fetch()
                 .stream()
-                .map(tuple -> new MenuSalesAggregateResult(
+                .<MenuSalesAggregate>map(tuple -> new MenuSalesAggregateResult(
                         tuple.get(dailyMenuSale.menuId),
                         tuple.get(totalOrderCount)))
                 .toList();
@@ -47,7 +47,7 @@ public class DailyMenuSalesQueryRepositoryImpl implements DailyMenuSalesQueryRep
                 .groupBy(dailyMenuSale.salesDate)
                 .fetch()
                 .stream()
-                .map(tuple -> new DailySalesMetadataResult(
+                .<DailySalesMetadataProjection>map(tuple -> new DailySalesMetadataResult(
                         tuple.get(dailyMenuSale.salesDate),
                         tuple.get(totalOrderCount),
                         tuple.get(menuCount)))
