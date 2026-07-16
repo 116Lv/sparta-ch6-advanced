@@ -87,24 +87,27 @@ class OutboxPublisherMySqlIntegrationTest {
     @Test void databaseTimeControlsClaimLeaseDespiteJvmClockSkew() {
         seedEvents(1);
         LocalDateTime[] observed = new LocalDateTime[3];
+        long[] claimedEventId = new long[1];
 
         transactions.executeWithoutResult(status -> {
             jdbcTemplate.execute("SET timestamp = 1893456000");
             try {
                 observed[0] = repository.currentDatabaseTime();
-                publisher("database-clock-worker", 1).claimNext().orElseThrow();
+                claimedEventId[0] = publisher("database-clock-worker", 1)
+                        .claimNext().orElseThrow().id();
                 repository.flush();
             } finally {
                 jdbcTemplate.execute("SET timestamp = 0");
             }
         });
         jdbcTemplate.queryForObject(
-                "SELECT claimed_at, claim_until FROM outbox_events WHERE id = 1",
+                "SELECT claimed_at, claim_until FROM outbox_events WHERE id = ?",
                 (resultSet, rowNumber) -> {
                     observed[1] = resultSet.getTimestamp("claimed_at").toLocalDateTime();
                     observed[2] = resultSet.getTimestamp("claim_until").toLocalDateTime();
                     return null;
-                });
+                },
+                claimedEventId[0]);
 
         assertThat(observed[1]).isEqualTo(observed[0]);
         assertThat(observed[2]).isEqualTo(observed[0].plusSeconds(30));

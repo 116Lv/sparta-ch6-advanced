@@ -7,7 +7,7 @@ owning_feature: "none"
 current_owner: final-reviewer
 started_at: 2026-07-16T00:00:00+09:00
 ended_at:
-last_updated: 2026-07-16T15:05:00+09:00
+last_updated: 2026-07-16T15:20:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md
@@ -102,6 +102,9 @@ evidence, pre-QA, and QA remain BLOCKED.
   snapshots, active process termination/reaping before cleanup, DATETIME-aligned DB time, and JDBC
   durable lease reads. Fresh second-final integration/E2E requests exited 1 before runner startup;
   no runtime evidence exists.
+- Remaining final findings reproduced RED 2/2 and GREEN 5/5. Exact
+  `C:\Program Files\Git\bin\bash.exe -n scripts/e2e/verify-e2e.sh` exited 0 after separating the
+  shell marker helper from Python and binding the durable reread to the actual claimed event ID.
 
 ## Blockers
 

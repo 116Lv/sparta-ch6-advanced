@@ -250,6 +250,10 @@ expected = {
     "orderCount": 1,
     }],
 }
+if not isinstance(body, dict) or body != expected:
+    raise SystemExit("popular-menu response contract mismatch")
+' "$expected_menu_id"
+}
 
 snapshot_seven_markers() {
     for marker_date in $SEVEN_DATES; do
@@ -268,10 +272,6 @@ snapshot_seven_markers() {
             || fail "Redis completion marker metadata mismatch for $marker_date"
         printf '%s=%s\n' "$marker_date" "$marker_value"
     done
-}
-if not isinstance(body, dict) or body != expected:
-    raise SystemExit("popular-menu response contract mismatch")
-' "$expected_menu_id"
 }
 
 command -v docker >/dev/null 2>&1 || fail 'docker is required'

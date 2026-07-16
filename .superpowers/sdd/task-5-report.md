@@ -146,3 +146,13 @@ Fresh official requests `verify-20260716-level5-second-final-integration-01` and
 `verify-20260716-level5-second-final-e2e-01` each exited 1 at the Windows launcher before runner
 startup. No RUN_START, PRE_COMMAND, attempt, process, infrastructure, count, or artifact exists;
 runtime status remains NOT RUN/BLOCKED.
+
+## Remaining Final-Review Syntax And ID Fix
+
+- Focused source RED reproduced 2/2 findings: the shell marker helper was embedded inside the
+  single-quoted Python program, and the durable lease reread hard-coded Outbox ID 1.
+- Focused source GREEN passed 5/5 contracts. `verify_popular_response` now closes its Python program
+  and shell function before the top-level `snapshot_seven_markers` definition. The DB-time test
+  captures the actual `ClaimedEvent.id()` and binds it to `WHERE id = ?` for the durable JDBC reread.
+- Exact static syntax command: `C:\Program Files\Git\bin\bash.exe -n scripts/e2e/verify-e2e.sh`.
+  Result: exit 0. This proves shell syntax only; it is not product or E2E runtime evidence.
