@@ -97,6 +97,23 @@ Errors:
 
 인기 메뉴 조회는 Redis를 우선 사용한다. Redis는 빠른 조회용이며 기준 데이터는 MySQL 일별 집계 테이블이다. Redis 갱신 실패가 발생해도 주문 성공 트랜잭션에서 `daily_menu_sales`가 증가했다면 복구 가능하다.
 
+## Implemented Cache Completeness Contract
+
+- The public query accepts exactly `days=7` and `limit=3`.
+- MySQL `daily_menu_sales` is authoritative. Redis is readable only when all seven daily markers
+  match MySQL total/member metadata and the corresponding ZSET cardinality and score sum.
+- Daily ranking keys use `popular-menu:{yyyy-MM-dd}` and markers use
+  `popular-menu:complete:{yyyy-MM-dd}`. Both expire after 14 days.
+- A missing marker, Redis failure, or cached menu ID missing from MySQL returns the durable MySQL
+  aggregate and attempts a full seven-day rebuild, including empty dates.
+- Each marker contains a unique generation, durable total, and durable member count. Generations
+  must remain unchanged across the union read.
+- Rebuild and post-commit updates share `ranking:date:{yyyy-MM-dd}` locks. Updates atomically assign
+  the current durable count and publish current metadata rather than incrementing a Redis snapshot.
+- Rebuild atomically replaces or deletes the live key while publishing its marker. Temporary keys
+  have a one-minute safety TTL and are deleted after the operation.
+- Query and order date boundaries use the application `Clock`.
+
 ## Test Cases
 
 - 최근 7일 TOP 3 조회

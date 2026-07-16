@@ -4,6 +4,8 @@
 
 Testing rules are also governed by `ai/verification-levels.md` and `ai/qa-gate.md`.
 
+The detailed business invariants are owned by [03. Domain Model](03-domain-model.md#consistency-invariants). Every concurrency, load, recovery, and failure test must check applicable invariants in addition to latency and error results.
+
 ### Unit Test
 
 Write unit tests for:
@@ -24,6 +26,24 @@ Write integration tests for:
 - Outbox event persistence
 - Redis ranking update
 
+Popular-menu verification must cover the inclusive seven-day window, outside-range exclusion,
+top-three tie ordering, exact `days=7&limit=3` validation, fixed-clock alignment, all-marker cache
+hits, partial marker loss, complete empty dates, stale-key deletion, TTL and temporary-key cleanup,
+missing-menu and Redis-failure fallback, and deterministic rebuild/update interleavings. MySQL
+counts remain authoritative in every failure case.
+
+The exact verification boundaries are repository-owned commands. `verify.unit` runs Gradle
+`test` and excludes `*IntegrationTest` and `*ApiSmokeTest`; `verify.integration` runs Gradle
+`integrationTest` against Testcontainers-backed MySQL, Redis, and Kafka; `verify.api-smoke` runs
+Gradle `apiSmokeTest` with a random-port real HTTP server and Testcontainers MySQL/Redis; and
+`verify.e2e` runs the no-argument `scripts/e2e/verify-e2e.sh` Docker Compose black-box topology.
+`verify.build` runs Gradle `assemble` without executing the verification suites. Every command
+must remain `CONFIGURED_UNVERIFIED` until finalized official runner evidence proves its exact argv.
+
+Testcontainers is required for focused infrastructure integration and API smoke suites. Docker
+Compose is additionally required for packaged application, service-DNS, Flyway, broker, durable
+state, cache, public HTTP, idempotency, and cleanup verification across the deployed topology.
+
 ### Real API Verification
 
 Any API behavior change requires real HTTP request verification against a running server unless blocked by missing project setup. If blocked, report `BLOCKED` with the reason.
@@ -35,6 +55,95 @@ Write concurrency tests for:
 - same user multiple orders
 - same user charge and order at the same time
 - lock timeout behavior
+
+Required consistency assertions include no negative point balance, no lost point update, no duplicate payment for one order, and no missing Outbox event for a committed paid order.
+
+Required event assertions include one marker plus one analytics effect for the first delivery in a
+consumer group, no additional durable state for a duplicate, independent effects for different
+groups, and rollback of both marker and effect when analytics persistence fails. Invalid payloads
+must produce neither table row.
+
+Publisher verification must cover claim-one-immediately-before-publish, competing workers,
+expired claim reassignment, stale-token rejection, the acknowledgement/status-update duplicate
+boundary, retry 1 through 4 returning to `READY`, and retry 5 becoming `FAILED`.
+
+Permanent-failure recovery verification must prove that only `FAILED` transitions to `READY`,
+that retry/error/claim state is cleared, and that operator, reason, previous retry/error, and time
+are preserved in exactly one audit row. Blank provenance, non-`FAILED` state, missing events, or
+transaction failure must leave both event and audit state unchanged. Direct unaudited SQL requeue
+is prohibited, and no unauthenticated recovery endpoint may expose the service.
+
+### Additive schema rollout and rollback
+
+Deploy migration V2 before any application instance that writes `order_paid_analytics` or
+`outbox_recovery_audits`. The migration is additive, so old application instances may continue
+running while the new tables are created; only after migration success may the new consumer and
+audited recovery code be rolled out. Verify table, constraint, index, and application mapping
+compatibility before enabling Kafka listener traffic or recovery operations.
+
+If the new application must be rolled back, stop or disable the new listener/recovery writers and
+roll application instances back while retaining the additive tables and their audit/analytics
+data. Do not drop the tables as an emergency rollback because that destroys durable effects and
+recovery provenance. Repair incompatible application or migration behavior with a reviewed
+forward-fix migration, then redeploy and resume consumption from Kafka; consumer idempotency
+absorbs replay of already committed events.
+
+## Performance and Load Test Plan
+
+The scenarios and metrics below are fixed now. Numeric TPS and p95 targets are intentionally not fixed until a reproducible baseline run records the environment, dataset, instance counts, tool configuration, and bottleneck evidence. After that run, record the target values and regression tolerance in the verification evidence owner rather than silently inventing them in README.
+
+### Workloads
+
+| Scenario | Traffic shape | Purpose |
+|---|---|---|
+| Normal load | Menu reads, point charges, orders, and popular-menu reads with users distributed across keys | Establish baseline throughput, latency distribution, and resource use |
+| Hot key | A high share of point mutations targets one user key | Measure serialization cost, timeout policy, fairness, and tail latency |
+| Charge/order contention | Charges and orders run concurrently for the same users | Detect lost updates, negative balances, duplicate payment, and inconsistent histories |
+| Outbox backlog | Build a READY backlog, then restore publisher/broker throughput while new orders continue | Measure claim fairness, recovery throughput, residence time, duplicates, and consumer lag |
+
+Increase load in documented stages: warm-up, baseline steady state, expected peak, saturation, and recovery. Use the same dataset and traffic distribution when comparing alternatives.
+
+### Redisson and DB pessimistic-lock comparison
+
+Run the normal-load, hot-key, and charge/order-contention workloads twice with equivalent correctness rules:
+
+1. Redisson admission control followed by the MySQL transaction.
+2. MySQL pessimistic row locking without Redisson.
+
+Compare throughput, p50/p95/p99 latency, error and timeout rates, lock wait, DB connection-pool active/waiting counts, and invariant violations. Redisson is justified only by evidence that DB-entry contention control or faster timeout behavior is valuable enough to offset Redis dependency, lease/watchdog risks, and the additional failure boundary.
+
+### Metrics
+
+Record at minimum:
+
+- request throughput and successful business-operation throughput
+- p50, p95, and p99 latency by endpoint and workload phase
+- HTTP/operation error rate, lock timeout rate, and retry rate
+- Redisson acquisition wait and hold time, or DB row-lock wait for the comparison path
+- DB connection-pool active, idle, pending/waiting, timeout, and saturation signals
+- Outbox backlog count and event residence time from `created_at` to `published_at`
+- Outbox claim recovery count, publish retry count, and duplicate-delivery count
+- Kafka producer error/retry rate and consumer lag by group and partition
+
+Report correctness violations separately from transport or timeout errors. A higher TPS result is invalid if any mandatory invariant fails.
+
+## Failure and Recovery Scenarios
+
+| Failure | Injection and expected behavior | Recovery evidence |
+|---|---|---|
+| API instance failure | Stop one stateless API instance during traffic; the load balancer sends new requests to healthy instances | Error window, retry outcome, no in-memory ownership loss, invariants preserved |
+| Outbox Publisher failure | Stop a worker after row claim and before publish or status update | Expired claim is reclaimed; no event omission; any duplicate is absorbed by consumer idempotency |
+| Kafka consumer failure | Stop a consumer while partitions are active | Consumer-group rebalance dynamically assigns partitions; lag returns toward baseline; same-key order is preserved |
+| Redis delay/unavailability | Delay or remove Redis during point mutation and ranking traffic | Point mutation fails with a controlled policy and never bypasses an unknown lock; ranking uses documented fallback/rebuild behavior |
+| Lease/watchdog boundary | Pause or terminate a lock owner near the configured lease/watchdog boundary | No concurrent mutation breaks point/payment invariants; ownership checks prevent unsafe unlock |
+| Kafka outage | Make the broker unavailable while orders continue | Committed orders retain retryable Outbox events; backlog and residence time grow observably, then drain after recovery |
+| API overload | Drive traffic beyond saturation | Bounded timeouts and controlled errors occur; DB pool and lock waits expose the bottleneck; service recovers after load removal |
+
+Redis Sentinel may be evaluated later for master failover, but it is not a current test-environment assumption and must not be counted as sharding or write-load distribution.
+
+A real load balancer and multiple deployed application instances remain follow-up deployment
+work. Neither is implemented or proven by the single-application E2E topology. Redis Sentinel
+remains a future availability option, not current verification infrastructure.
 
 ## Security Rules
 
@@ -53,13 +162,20 @@ Write concurrency tests for:
 
 ## Release Rules
 
-TODO: Confirm actual branch and release workflow after repository setup.
-
-Suggested rules:
+The exact release workflow is not yet confirmed. Until a repository-owned workflow is accepted, apply these minimum rules:
 
 - Do not merge without QA Gate evidence.
 - PR description should include changed requirements and verification evidence.
 - Breaking changes require documentation update.
+
+### Local Compose boundary
+
+The root `docker-compose.yml` is a local-development-only dependency topology, not a production
+deployment manifest. Its MySQL, Redis, and Kafka ports bind only to `127.0.0.1`; local host ports
+and MySQL credentials are parameterized through the documented `CAFE_*` environment variables in
+the Compose file. Kafka retains separate internal service-DNS and loopback external listeners.
+Production credentials, load balancing, multi-instance deployment, and operating-cluster topology
+remain external deployment concerns.
 
 ## Migration Rules
 
@@ -80,7 +196,9 @@ A feature is done only when:
 7. Docs/specs/adr were updated if behavior changed.
 8. Done claim follows `ai/done-claim-template.md`.
 
-## Open Questions
+## Resolved Verification Decisions
 
-- Open Question: What exact Gradle tasks should be used for integration and real API verification beyond `test`?
-- Open Question: Will Testcontainers be required for MySQL, Redis, and Kafka integration tests?
+- Exact task boundaries are `assemble`, `test`, `integrationTest`, `apiSmokeTest`, and the
+  no-argument Compose script, exposed as the five `verify.*` commands above.
+- Testcontainers covers focused MySQL, Redis, and Kafka integration; Docker Compose covers the
+  packaged black-box topology. Authored configuration is not runtime PASS evidence.

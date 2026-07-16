@@ -28,6 +28,7 @@
 - 주문 내역은 데이터 수집 플랫폼으로 전송 가능한 이벤트로 남는다.
 - 최근 7일 기준 인기 메뉴 TOP 3를 조회할 수 있다.
 - 다수 서버 환경에서도 포인트 잔액과 주문 횟수가 깨지지 않는다.
+- 로드밸런서 뒤의 stateless API 인스턴스와 동적으로 재할당되는 비동기 작업으로 단일 인스턴스 장애를 견딜 수 있다.
 
 ## Non-goals
 
@@ -45,17 +46,21 @@
 - 포인트 변경은 동시성 전략이 명확하다.
 - 주문/결제는 트랜잭션 경계가 명확하다.
 - 주문 이벤트 전송은 Outbox 기반 재시도 전략이 있다.
+- Outbox row claim, 장애 후 회수, 중복 발행, consumer 멱등성 경계가 설명된다.
 - 인기 메뉴는 Redis 조회 성능과 MySQL 기준 복구 전략을 함께 가진다.
 - 테스트 전략에 정상, 실패, 동시성, 이벤트 실패, 집계 복구 케이스가 포함된다.
+- 일반 부하, hot key, 충전/주문 경합, Outbox backlog 및 API/Redis/Kafka 장애 복구 시나리오와 측정 지표가 정의된다.
+- TPS와 p95 수치 목표는 재현 가능한 기준 테스트 결과를 얻은 뒤 확정한다.
 
 ## Product Principles
 
 - MySQL을 정합성의 기준 저장소로 둔다.
 - Redis와 Kafka는 성능과 비동기 처리를 위한 보조 인프라로 둔다.
 - 다수 서버 환경에서 깨지는 JVM 내부 상태 기반 설계는 피한다.
+- 처리량보다 음수 포인트, lost update, 중복 결제, Outbox 누락 방지 같은 정합성 조건을 우선한다.
 - 문서 없이 구현하지 않는다.
 - 검증 증거 없이 완료를 주장하지 않는다.
 
-## Open Questions
+## External Platform Boundary
 
-- Open Question: 데이터 수집 플랫폼 검증은 Kafka producer test만으로 충분한가, 별도 Mock HTTP API도 함께 제공할 것인가?
+현재 범위는 Kafka에 주문 이벤트를 전달할 수 있는 producer/outbox 경계와 consumer 멱등성 계약까지다. 별도 Mock HTTP 데이터 수집 플랫폼은 요구사항이 추가되지 않는 한 범위에 포함하지 않는다.

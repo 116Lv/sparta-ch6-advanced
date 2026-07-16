@@ -2,7 +2,7 @@
   "$schema": "./schemas/command-registry.schema.json",
   "$id": "ai/command-registry.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-10T12:11:47Z",
+  "updatedAt": "2026-07-16T11:06:24Z",
   "commands": [
     {
       "id": "dependencies.install",
@@ -35,21 +35,42 @@
     {
       "id": "verify.build",
       "purpose": "Compile or build the project",
-      "configurationStatus": "UNKNOWN",
-      "classification": "UNAVAILABLE",
-      "argv": null,
+      "configurationStatus": "VERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "assemble"],
       "workingDirectory": ".",
       "parameters": { "allowed": false, "schema": null },
       "prerequisites": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "build.gradle",
+          "claim": "The Java and Spring Boot plugins provide the assemble lifecycle task."
+        },
+        {
+          "kind": "STATIC_FILE",
+          "path": "gradlew",
+          "claim": "The POSIX Gradle wrapper entry point exists."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": ".ai-runs/verify-20260716-level5-completion-build-01/artifact-manifest.json",
+          "claim": "Finalized official verify.build run passed with exit code 0."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": "ai/work-logs/issue-20/final-verifier.md",
+          "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
+        }
+      ],
       "inputPaths": ["build.gradle", "settings.gradle", "gradle/**", "src/main/**", "src/test/**"],
-      "lastVerifiedAt": null,
-      "notes": ["No exact build argv is selected or executed in Phase 1A."]
+      "lastVerifiedAt": "2026-07-16T09:59:21Z",
+      "notes": ["Finalized official Ubuntu-native runtime evidence passed for the exact registered argv."]
     },
     {
       "id": "verify.unit",
       "purpose": "Run the configured Gradle test task",
-      "configurationStatus": "CONFIGURED_UNVERIFIED",
+      "configurationStatus": "VERIFIED",
       "classification": "SAFE",
       "argv": ["./gradlew", "test"],
       "workingDirectory": ".",
@@ -65,12 +86,22 @@
           "kind": "STATIC_FILE",
           "path": "gradlew",
           "claim": "The POSIX Gradle wrapper entry point exists."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": ".ai-runs/verify-20260716-level5-completion-unit-01/artifact-manifest.json",
+          "claim": "Finalized official verify.unit run passed 39 tests with zero failures, errors, or skips."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": "ai/work-logs/issue-20/final-verifier.md",
+          "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
         }
       ],
       "inputPaths": ["build.gradle", "settings.gradle", "gradle/**", "src/main/**", "src/test/**"],
-      "lastVerifiedAt": null,
+      "lastVerifiedAt": "2026-07-16T09:59:23Z",
       "notes": [
-        "Static configuration evidence exists; the command has not been executed.",
+        "Finalized official Ubuntu-native runtime evidence passed for the exact registered argv.",
         "Native gradlew.bat execution is future scope and NOT_CONFIGURED."
       ]
     },
@@ -97,9 +128,9 @@
     {
       "id": "verify.integration",
       "purpose": "Run a dedicated integration-test command",
-      "configurationStatus": "NOT_CONFIGURED",
-      "classification": "UNAVAILABLE",
-      "argv": null,
+      "configurationStatus": "VERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "integrationTest"],
       "workingDirectory": ".",
       "parameters": { "allowed": false, "schema": null },
       "prerequisites": [],
@@ -107,19 +138,72 @@
         {
           "kind": "STATIC_FILE",
           "path": "build.gradle",
-          "claim": "No dedicated integration-test task is declared."
+          "claim": "The integrationTest task runs classes named *IntegrationTest on JUnit Platform."
+        },
+        {
+          "kind": "STATIC_FILE",
+          "path": "gradlew",
+          "claim": "The POSIX Gradle wrapper entry point exists."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": ".ai-runs/verify-20260716-level5-completion-integration-01/artifact-manifest.json",
+          "claim": "Finalized official verify.integration run passed 35 Testcontainers tests with zero failures, errors, or skips."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": "ai/work-logs/issue-20/final-verifier.md",
+          "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
         }
       ],
       "inputPaths": ["build.gradle", "src/test/**"],
-      "lastVerifiedAt": null,
-      "notes": []
+      "lastVerifiedAt": "2026-07-16T09:59:25Z",
+      "notes": ["Finalized official Ubuntu-native runtime evidence passed for the exact registered argv."]
     },
     {
       "id": "verify.e2e",
       "purpose": "Run end-to-end tests",
-      "configurationStatus": "NOT_CONFIGURED",
-      "classification": "UNAVAILABLE",
-      "argv": null,
+      "configurationStatus": "VERIFIED",
+      "classification": "SAFE",
+      "argv": ["./scripts/e2e/verify-e2e.sh"],
+      "workingDirectory": ".",
+      "parameters": { "allowed": false, "schema": null },
+      "prerequisites": [],
+      "evidence": [
+        {
+          "kind": "STATIC_FILE",
+          "path": "docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md",
+          "claim": "The approved design assigns black-box Docker Compose verification to the no-argument E2E POSIX script."
+        },
+        {
+          "kind": "STATIC_FILE",
+          "path": "scripts/e2e/verify-e2e.sh",
+          "claim": "The no-argument script defines bounded black-box assertions and unconditional isolated Compose cleanup."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": ".ai-runs/verify-20260716-level5-completion-e2e-01/artifact-manifest.json",
+          "claim": "Finalized official verify.e2e run passed the Docker Compose black-box scenario with zero failures."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": "ai/work-logs/issue-20/final-verifier.md",
+          "claim": "Durable reconciliation records the finalized run identity, manifest, scenario result, and clean Ubuntu checkout HEAD."
+        }
+      ],
+      "inputPaths": ["scripts/e2e/verify-e2e.sh", "docker-compose.yml", "docker-compose.e2e.yml", "Dockerfile", "src/main/**", "src/test/**"],
+      "lastVerifiedAt": "2026-07-16T09:59:30Z",
+      "notes": [
+        "The executable and isolated Compose topology are authored.",
+        "Finalized official Ubuntu-native Docker Compose runtime evidence passed for the exact registered argv."
+      ]
+    },
+    {
+      "id": "verify.api-smoke",
+      "purpose": "Run real HTTP API smoke verification",
+      "configurationStatus": "VERIFIED",
+      "classification": "SAFE",
+      "argv": ["./gradlew", "apiSmokeTest"],
       "workingDirectory": ".",
       "parameters": { "allowed": false, "schema": null },
       "prerequisites": [],
@@ -127,37 +211,27 @@
         {
           "kind": "STATIC_FILE",
           "path": "build.gradle",
-          "claim": "No E2E task or framework is declared."
-        }
-      ],
-      "inputPaths": ["build.gradle"],
-      "lastVerifiedAt": null,
-      "notes": []
-    },
-    {
-      "id": "verify.api-smoke",
-      "purpose": "Run real HTTP API smoke verification",
-      "configurationStatus": "NOT_CONFIGURED",
-      "classification": "UNAVAILABLE",
-      "argv": null,
-      "workingDirectory": ".",
-      "parameters": { "allowed": false, "schema": null },
-      "prerequisites": ["server.dev"],
-      "evidence": [
-        {
-          "kind": "STATIC_FILE",
-          "path": "src/main/java/com/ch6/cafe/CafeApplication.java",
-          "claim": "This file defines the Spring Boot application entry point and does not register an API smoke runner."
+          "claim": "The apiSmokeTest task runs classes named *ApiSmokeTest on JUnit Platform."
         },
         {
           "kind": "STATIC_FILE",
-          "path": "docs/superpowers/specs/2026-07-10-ai-workflow-phase-1a-spec.md",
-          "claim": "The approved Phase 1A intake classifies verify.api-smoke as NOT_CONFIGURED."
+          "path": "gradlew",
+          "claim": "The POSIX Gradle wrapper entry point exists."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": ".ai-runs/verify-20260716-level5-completion-api-smoke-01/artifact-manifest.json",
+          "claim": "Finalized official verify.api-smoke run passed 2 real HTTP tests with zero failures, errors, or skips."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": "ai/work-logs/issue-20/final-verifier.md",
+          "claim": "Durable reconciliation records the finalized run identity, manifest, counts, and clean Ubuntu checkout HEAD."
         }
       ],
       "inputPaths": ["src/main/**", "src/test/**", "docs/07-data-and-api-contracts.md"],
-      "lastVerifiedAt": null,
-      "notes": []
+      "lastVerifiedAt": "2026-07-16T09:59:28Z",
+      "notes": ["Finalized official Ubuntu-native real HTTP runtime evidence passed for the exact registered argv."]
     },
     {
       "id": "db.migration",

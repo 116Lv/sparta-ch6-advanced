@@ -6,25 +6,25 @@
 
 ## Technical Approach
 
-- API: `PointController`
-- Application: `PointChargeService`
-- Domain: `UserPoint`, `PointHistory`
-- Persistence: `UserPointRepository`, `PointHistoryRepository`
+- Controller: `PointController`
+- Service: `PointChargeService`
+- Entity: `UserPoint`, `PointHistory`
+- Repository: `UserPointRepository`, `PointHistoryRepository`
 - External: Redisson lock
 - Test: integration test, concurrency test
 
 ## Files to Add
 
-- `point/api/PointController.java`
-- `point/api/PointChargeRequest.java`
-- `point/api/PointChargeResponse.java`
-- `point/application/PointChargeService.java`
-- `point/domain/UserPoint.java`
-- `point/domain/PointHistory.java`
-- `point/domain/PointHistoryType.java`
-- `point/infrastructure/UserPointRepository.java`
-- `point/infrastructure/PointHistoryRepository.java`
-- `common/lock/DistributedLockManager.java`
+- `src/main/java/com/ch6/cafe/domain/point/controller/PointController.java`
+- `src/main/java/com/ch6/cafe/domain/point/dto/request/PointChargeRequest.java`
+- `src/main/java/com/ch6/cafe/domain/point/dto/response/PointChargeResponse.java`
+- `src/main/java/com/ch6/cafe/domain/point/service/PointChargeService.java`
+- `src/main/java/com/ch6/cafe/domain/point/entity/UserPoint.java`
+- `src/main/java/com/ch6/cafe/domain/point/entity/PointHistory.java`
+- `src/main/java/com/ch6/cafe/domain/point/entity/PointHistoryType.java`
+- `src/main/java/com/ch6/cafe/domain/point/repository/UserPointRepository.java`
+- `src/main/java/com/ch6/cafe/domain/point/repository/PointHistoryRepository.java`
+- `src/main/java/com/ch6/cafe/global/lock/DistributedLockManager.java`
 
 ## Files to Modify
 
@@ -36,7 +36,7 @@
 1. 포인트 엔티티와 이력 엔티티를 정의한다.
 2. 충전 금액 validation을 구현한다.
 3. Redisson lock wrapper를 구현한다.
-4. `PointChargeService`에서 lock과 transaction 경계를 구성한다.
+4. `PointChargeService`에서 비즈니스 규칙, lock, transaction 경계를 구성한다.
 5. 충전 API를 구현한다.
 6. 정상/실패/동시성 테스트를 작성한다.
 
@@ -47,5 +47,5 @@
 
 ## Rollback Plan
 
-- 문제가 발생하면 lock 적용 전 단순 트랜잭션 방식으로 되돌릴 수 있으나, 다수 서버 동시성 보장은 약해진다.
+- 문제가 발생하면 검증된 MySQL 비관적 락 경로로 전환할 수 있다. 락 없이 단순 트랜잭션만 사용하는 방식으로 낮추지 않는다.
 

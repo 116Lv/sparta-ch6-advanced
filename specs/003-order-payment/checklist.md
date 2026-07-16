@@ -1,5 +1,12 @@
 # Checklist: Order Payment
 
+## 2026-07-15 Audit Evidence
+
+- [x] Implementation and authored tests cover the durable order graph, publisher, consumer analytics, and recovery path.
+- [x] Runtime test, Kafka, database, migration, and API evidence is available from supported VERIFIED commands and finalized manifests.
+- [x] Static E2E implementation includes bounded Outbox/consumer/analytics and duplicate-broker assertions with cleanup.
+- [x] E2E assertions have finalized Ubuntu-native Docker Compose runtime evidence.
+
 ## Spec Quality
 
 - [x] 요구사항이 명확하다.

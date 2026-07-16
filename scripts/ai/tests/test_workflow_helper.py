@@ -52,6 +52,118 @@ EXECUTION_FIXTURES_PATH = REPOSITORY_ROOT / "ai" / "fixtures" / "phase-1b" / "ex
 PHASE_1A_SEMANTIC_INVALID_FIXTURES_PATH = REPOSITORY_ROOT / "ai" / "fixtures" / "phase-1a" / "semantic-invalid"
 
 
+class PosixEntryPointPackagingTests(unittest.TestCase):
+    def tracked_mode(self, path):
+        tracked = subprocess.run(
+            ["git", "ls-files", "--stage", "--", path],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+
+        self.assertTrue(tracked, f"{path} must be tracked by Git")
+        return tracked[0]
+
+    def test_directly_executed_workflow_gate_has_git_executable_mode(self):
+        self.assertEqual(
+            self.tracked_mode("scripts/ai/workflow-gate.sh"),
+            "100755",
+            "command-runner.sh directly execs workflow-gate.sh, so its Git mode must be executable",
+        )
+
+    def test_registered_gradle_commands_have_an_executable_wrapper(self):
+        self.assertEqual(
+            self.tracked_mode("gradlew"),
+            "100755",
+            "registered Gradle commands launch ./gradlew directly, so its Git mode must be executable",
+        )
+
+    def test_e2e_command_inputs_use_the_supported_closed_path_grammar(self):
+        registry = json.loads(
+            (REPOSITORY_ROOT / "ai" / "command-registry.json").read_text(encoding="utf-8")
+        )
+        command = next(item for item in registry["commands"] if item["id"] == "verify.e2e")
+
+        helper = load_helper()
+        try:
+            helper.input_fingerprint(REPOSITORY_ROOT, command)
+        except helper.InvalidStateError as error:
+            self.fail(f"verify.e2e input paths must be executable by the official runner: {error}")
+
+    def test_compose_uses_the_fixed_official_kafka_image_contract(self):
+        required = (
+            "image: apache/kafka:3.8.0",
+            "KAFKA_NODE_ID:",
+            "KAFKA_PROCESS_ROLES:",
+            "KAFKA_CONTROLLER_QUORUM_VOTERS:",
+            "KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1",
+            "KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1",
+            "KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1",
+        )
+        for relative in ("docker-compose.yml", "docker-compose.e2e.yml"):
+            text = (REPOSITORY_ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(compose=relative):
+                for contract in required:
+                    self.assertIn(contract, text)
+                self.assertNotIn("KAFKA_CFG_", text)
+                self.assertNotIn("ALLOW_PLAINTEXT_LISTENER", text)
+
+    def test_e2e_materializes_duplicate_event_input_before_async_watchdog(self):
+        text = (REPOSITORY_ROOT / "scripts" / "e2e" / "verify-e2e.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("bounded_compose_with_input()", text)
+        self.assertIn('cat > "$input_file"', text)
+        self.assertIn('"$@" < "$input_file" &', text)
+        self.assertIn(
+            'bounded_compose_with_input "$OPERATION_TIMEOUT" exec -T kafka '
+            '/opt/kafka/bin/kafka-console-producer.sh',
+            text,
+        )
+        self.assertNotIn(
+            'printf \'%s\\n\' "$MESSAGE" | bounded_compose "$OPERATION_TIMEOUT"',
+            text,
+        )
+
+    def test_e2e_watchdog_reaps_its_timer_when_target_finishes(self):
+        e2e_text = (REPOSITORY_ROOT / "scripts" / "e2e" / "verify-e2e.sh").read_text(
+            encoding="utf-8"
+        )
+        function_prefix, separator, _ = e2e_text.partition("\nbounded_compose() {")
+        self.assertTrue(separator, "bounded_compose boundary must remain available")
+        probe = function_prefix + '\nrun_with_watchdog 5 /dev/null true\nrmdir "$WATCHDOG_ROOT"\n'
+        bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        environment = os.environ.copy()
+        if not bash.is_file():
+            bash = Path("bash")
+        else:
+            environment["PATH"] = os.pathsep.join(
+                [str(bash.parent.parent / "usr" / "bin"), environment.get("PATH", "")]
+            )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            probe_path = Path(temporary_directory) / "watchdog-probe.sh"
+            probe_path.write_bytes(probe.encode("utf-8"))
+            started = time.monotonic()
+            completed = subprocess.run(
+                [str(bash), str(probe_path)],
+                cwd=str(REPOSITORY_ROOT),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                env=environment,
+            )
+            elapsed = time.monotonic() - started
+
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        self.assertLess(elapsed, 2.0, f"successful target retained watchdog timer for {elapsed:.2f}s")
+
+
 def load_helper():
     specification = importlib.util.spec_from_file_location("workflow_helper_under_test", HELPER_PATH)
     module = importlib.util.module_from_spec(specification)
@@ -1529,6 +1641,77 @@ class RegistrySemanticValidationTests(unittest.TestCase):
                 self.command(registry)["argv"][0] = executable
                 self.assert_semantic_invalid(root, registry, "UNSUPPORTED_EXECUTABLE", "/commands/0/argv/0")
 
+    def test_verify_e2e_allows_only_the_exact_no_argument_script(self):
+        root = self.temporary_repository()
+        registry = self.registry()
+        command = self.command(registry)
+        command["id"] = "verify.e2e"
+        command["argv"] = ["./scripts/e2e/verify-e2e.sh"]
+        command["parameters"] = {"allowed": False, "schema": None}
+        try:
+            semantic_order = self.helper.validate_registry_semantics(root, registry)
+        except self.helper.InvalidStateError as error:
+            self.fail(f"exact verify.e2e argv must be accepted: {error}")
+        self.assertEqual(semantic_order["verify.e2e"], [])
+
+        (root / "gradlew").unlink()
+        self.assertEqual(self.helper.validate_registry_semantics(root, registry)["verify.e2e"], [])
+
+        cases = (
+            ("wrong-command", "verify.other", ["./scripts/e2e/verify-e2e.sh"], "/commands/0/argv/0"),
+            ("argument", "verify.e2e", ["./scripts/e2e/verify-e2e.sh", "--unsafe"], "/commands/0/argv/1"),
+            ("other-script", "verify.e2e", ["./scripts/e2e/other.sh"], "/commands/0/argv/0"),
+        )
+        for label, command_id, argv, expected_path in cases:
+            with self.subTest(case=label):
+                root = self.temporary_repository()
+                registry = self.registry()
+                command = self.command(registry)
+                command["id"] = command_id
+                command["argv"] = argv
+                command["parameters"] = {"allowed": False, "schema": None}
+                self.assert_semantic_invalid(
+                    root, registry, "UNSUPPORTED_EXECUTABLE", expected_path,
+                )
+
+    def test_command_registry_schema_allows_exact_verify_e2e_argv(self):
+        registry = self.registry()
+        command = self.command(registry)
+        command["id"] = "verify.e2e"
+        command["argv"] = ["./scripts/e2e/verify-e2e.sh"]
+        command["parameters"] = {"allowed": False, "schema": None}
+        schema = json.loads(
+            (REPOSITORY_ROOT / "ai" / "schemas" / "command-registry.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        errors = sorted(Draft202012Validator(schema).iter_errors(registry), key=str)
+        self.assertEqual(errors, [])
+
+    def test_verify_e2e_requires_a_contained_directory_working_directory(self):
+        cases = (
+            ("missing", "missing", "WORKING_DIRECTORY_MISSING"),
+            ("not-directory", "not-directory", "WORKING_DIRECTORY_NOT_DIRECTORY"),
+            ("outside", "..", "WORKING_DIRECTORY_OUTSIDE_REPOSITORY"),
+        )
+        for label, working_directory, expected_code in cases:
+            with self.subTest(case=label):
+                root = self.temporary_repository()
+                if label == "not-directory":
+                    (root / working_directory).write_text("fixture file\n", encoding="utf-8")
+                registry = self.registry()
+                command = self.command(registry)
+                command["id"] = "verify.e2e"
+                command["argv"] = ["./scripts/e2e/verify-e2e.sh"]
+                command["workingDirectory"] = working_directory
+                command["parameters"] = {"allowed": False, "schema": None}
+                self.assert_semantic_invalid(
+                    root,
+                    registry,
+                    expected_code,
+                    "/commands/0/workingDirectory",
+                )
+
     def test_prerequisites_reject_unknown_self_and_cycles_and_have_a_stable_topological_order(self):
         cases = (
             ("unknown", ["verify.missing"], "UNKNOWN_PREREQUISITE", "/commands/0/prerequisites/0"),
@@ -2023,6 +2206,7 @@ class PureResolutionTests(unittest.TestCase):
                 command["configurationStatus"] = configuration_status
                 command["classification"] = "UNAVAILABLE"
                 command["argv"] = None
+                command["lastVerifiedAt"] = None
                 self.save_registry()
                 result, status = self.resolve()
                 self.assertEqual((result["result"], status), (expected_result, expected_status))
@@ -11403,7 +11587,7 @@ class Phase2CVerificationGateTests(unittest.TestCase):
                     "--output", "-",
                 ])
 
-    def test_phase_2c_repository_artifacts_and_registry_verified_remain_absent(self):
+    def test_phase_2c_repository_artifacts_remain_absent(self):
         self.assertFalse((REPOSITORY_ROOT / ".ai-runs").exists())
         bad = []
         for path in REPOSITORY_ROOT.rglob("*"):
@@ -11415,8 +11599,6 @@ class Phase2CVerificationGateTests(unittest.TestCase):
             if normalized.startswith(".ai-runs/") or path.name in {"artifact-manifest.json", "run.json"}:
                 bad.append(normalized)
         self.assertEqual(bad, [])
-        registry = self.helper.validate_repository_instance(REPOSITORY_ROOT, "ai/command-registry.json")
-        self.assertFalse(any(command["configurationStatus"] == "VERIFIED" for command in registry["commands"]))
         summary = self.read_repository_text("ai/work-logs/issue-7/README.md")
         self.assertIn("authorization failure: GitHub API 403 Resource not accessible by integration", summary)
 
@@ -14999,6 +15181,80 @@ print(json.dumps({"result": result, "status": status}))
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Level5CanonicalVerificationCommandTests(unittest.TestCase):
+    def test_canonical_verification_commands_and_gradle_test_boundaries(self):
+        self.maxDiff = None
+        registry = json.loads(
+            (REPOSITORY_ROOT / "ai" / "command-registry.json").read_text(encoding="utf-8")
+        )
+        commands = {command["id"]: command for command in registry["commands"]}
+        expected_argv = {
+            "verify.build": ["./gradlew", "assemble"],
+            "verify.unit": ["./gradlew", "test"],
+            "verify.integration": ["./gradlew", "integrationTest"],
+            "verify.api-smoke": ["./gradlew", "apiSmokeTest"],
+            "verify.e2e": ["./scripts/e2e/verify-e2e.sh"],
+        }
+
+        violations = []
+        for command_id, argv in expected_argv.items():
+            command = commands.get(command_id)
+            if command is None:
+                violations.append(f"{command_id}: command is missing")
+                continue
+            if command["argv"] != argv:
+                violations.append(f"{command_id}: expected argv {argv!r}, got {command['argv']!r}")
+            if command["configurationStatus"] != "VERIFIED":
+                violations.append(
+                    f"{command_id}: expected VERIFIED, "
+                    f"got {command['configurationStatus']}"
+                )
+            if command["classification"] != "SAFE":
+                violations.append(f"{command_id}: expected SAFE, got {command['classification']}")
+            if command["parameters"] != {"allowed": False, "schema": None}:
+                violations.append(f"{command_id}: parameters must be disabled")
+            if command["lastVerifiedAt"] is None:
+                violations.append(f"{command_id}: lastVerifiedAt must record runtime verification")
+            runtime_evidence = [
+                evidence for evidence in command["evidence"]
+                if evidence["kind"] == "RUNTIME_COMMAND"
+            ]
+            if not runtime_evidence:
+                violations.append(f"{command_id}: runtime verification evidence is required")
+            if not any(
+                evidence["path"] == "ai/work-logs/issue-20/final-verifier.md"
+                for evidence in runtime_evidence
+            ):
+                violations.append(f"{command_id}: Issue #20 verification evidence is required")
+            if argv[0] == "./gradlew" and not any(
+                evidence["kind"] == "STATIC_FILE" and evidence["path"] == "gradlew"
+                for evidence in command["evidence"]
+            ):
+                violations.append(f"{command_id}: Gradle command must evidence gradlew")
+
+        build_text = (REPOSITORY_ROOT / "build.gradle").read_text(encoding="utf-8")
+        gradle_contracts = (
+            "exclude '**/*IntegrationTest.class', '**/*ApiSmokeTest.class'",
+            "tasks.register('integrationTest', Test)",
+            "include '**/*IntegrationTest.class'",
+            "shouldRunAfter tasks.named('test')",
+            "tasks.register('apiSmokeTest', Test)",
+            "include '**/*ApiSmokeTest.class'",
+            "shouldRunAfter tasks.named('integrationTest')",
+        )
+        for contract in gradle_contracts:
+            if contract not in build_text:
+                violations.append(f"build.gradle: missing {contract}")
+
+        helper = load_helper()
+        try:
+            helper.validate_registry_semantics(REPOSITORY_ROOT, registry)
+        except helper.InvalidStateError as error:
+            violations.append(f"canonical registry semantic validation failed: {error}")
+
+        self.assertEqual(violations, [])
 
 
 class Phase3BCIGatesDurableEvidenceTests(unittest.TestCase):

@@ -161,11 +161,15 @@
             {
               "type": "array",
               "minItems": 1,
-              "$comment": "schemaVersion 1 executable argv is allowlisted to ./gradlew. Future non-Gradle executable profiles require an approved schema contract or version expansion; Phase 1B must reject any non-allowlisted executable as INVALID_STATE before execution.",
+              "$comment": "schemaVersion 1 Gradle-backed argv is allowlisted to ./gradlew.",
               "prefixItems": [
                 { "const": "./gradlew" }
               ],
               "items": { "$ref": "#/$defs/argvToken" }
+            },
+            {
+              "$comment": "The only non-Gradle profile is the exact no-argument verify.e2e POSIX script; semantic validation binds it to that command ID.",
+              "const": ["./scripts/e2e/verify-e2e.sh"]
             }
           ]
         },

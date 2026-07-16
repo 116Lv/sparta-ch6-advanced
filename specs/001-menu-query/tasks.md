@@ -1,5 +1,10 @@
 # Tasks: Menu Query
 
+## 2026-07-15 Static Audit Tracking
+
+- [x] Menu domain, persistence, service, API, and focused contract tests inspected/authored.
+- [ ] Product tests and real HTTP verification run through a supported VERIFIED command.
+
 ## Phase 1: Design Check
 
 - [ ] `docs/05-functional-requirements.md`의 FR-001 확인

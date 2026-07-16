@@ -89,6 +89,8 @@ Rules:
 | Payment | 포인트 결제 기록 |
 | OutboxEvent | Kafka 발행 대상 이벤트 |
 | DailyMenuSale | 메뉴별 일별 주문 집계 |
+| OrderPaidAnalytics | consumer group이 소유하는 내구성 있는 주문 결제 분석 입력 |
+| OutboxRecoveryAudit | 영구 실패 Outbox 이벤트의 감사 가능한 복구 기록 |
 
 ## Relationships
 
@@ -123,6 +125,25 @@ Menu 1:N DailyMenuSale
 ### BR-005: 인기 메뉴 주문 횟수는 복구 가능해야 한다
 
 Redis Sorted Set은 빠른 조회용이며, MySQL `daily_menu_sales`가 복구 기준이다.
+
+## Consistency Invariants
+
+These conditions are mandatory regardless of whether concurrency control uses Redisson or a MySQL pessimistic lock:
+
+| Invariant | Required condition |
+|---|---|
+| No negative point | A committed `user_points.balance` is always zero or greater. An insufficient-balance order changes no point, order, payment, history, aggregate, or Outbox state. |
+| No lost update | Every committed charge or point use is reflected exactly once in the final balance and has one matching `point_histories` record. Concurrent operations must not overwrite one another. |
+| No duplicate payment | One order has at most one payment. A retry or concurrent execution for the same order identity must not create a second payment or deduct points twice. |
+| No Outbox omission | Every committed paid order has its `ORDER_PAID` Outbox event saved in the same transaction. A rolled-back order has no publishable event. |
+| Idempotent event consumption | In one consumer group, the first delivery commits one `processed_events` marker and one `order_paid_analytics` effect in the same transaction. A duplicate commits neither a second marker nor a second effect, and an analytics failure rolls back the marker. |
+| Recoverable ranking | MySQL `daily_menu_sales` remains sufficient to rebuild Redis ranking after Redis data loss. |
+
+`OrderPaidAnalytics` stores the immutable event ID together with aggregate/order ID, user ID, menu ID, payment amount, consumer group, and processing time. Its identity is `(consumer_group, event_id)`, and `(consumer_group, aggregate_id)` is also unique.
+
+An Outbox event in `FAILED` may return to `READY` only through the application-owned audited recovery operation. Recovery records the operator, reason, previous retry count/error, and recovery time before resetting retry and claim state in the same transaction.
+
+Load and failure tests are invalid if any invariant fails, even when their throughput or latency target is met.
 
 ## Glossary
 

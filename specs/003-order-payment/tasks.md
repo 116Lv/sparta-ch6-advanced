@@ -1,5 +1,13 @@
 # Tasks: Order Payment
 
+## 2026-07-15 Static Audit Tracking
+
+- [x] Order graph, Outbox publishing, claim/retry lifecycle, and focused contract tests inspected/authored.
+- [x] Consumer analytics effect, idempotent marker, rollback behavior, and audited FAILED recovery are tracked and authored.
+- [x] Product, Kafka, MySQL, Redis, migration, and real HTTP verification ran through supported VERIFIED commands.
+- [x] Docker Compose E2E topology and assertions authored for HTTP payment, durable order graph, Outbox publication, real-broker consumption, and same-group duplicate idempotency.
+- [x] Docker Compose E2E runtime gate passed through finalized `verify.e2e` evidence.
+
 ## Phase 1: Design Check
 
 - [ ] `docs/03-domain-model.md`와 `docs/09-quality-operations-and-rules.md`의 주문 트랜잭션/검증 기준 확인

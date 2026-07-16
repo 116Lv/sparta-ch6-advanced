@@ -30,7 +30,9 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
-    implementation 'org.springframework.kafka:spring-kafka'
+    implementation 'org.springframework.boot:spring-boot-starter-flyway'
+    runtimeOnly 'org.flywaydb:flyway-mysql'
+    implementation 'org.springframework.boot:spring-boot-starter-kafka'
 
     implementation "com.querydsl:querydsl-jpa:${querydslVersion}:jakarta"
     annotationProcessor "com.querydsl:querydsl-apt:${querydslVersion}:jakarta"
@@ -46,6 +48,7 @@ dependencies {
     testRuntimeOnly 'com.h2database:h2'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
     testImplementation 'org.springframework.kafka:spring-kafka-test'
     testImplementation platform("org.testcontainers:testcontainers-bom:${testcontainersVersion}")
     testImplementation 'org.testcontainers:junit-jupiter'
@@ -57,4 +60,25 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    exclude '**/*IntegrationTest.class', '**/*ApiSmokeTest.class'
+}
+
+tasks.register('integrationTest', Test) {
+    description = 'Runs real-infrastructure Testcontainers integration tests.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/*IntegrationTest.class'
+    shouldRunAfter tasks.named('test')
+}
+
+tasks.register('apiSmokeTest', Test) {
+    description = 'Runs random-port real HTTP API smoke tests.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    include '**/*ApiSmokeTest.class'
+    shouldRunAfter tasks.named('integrationTest')
 }

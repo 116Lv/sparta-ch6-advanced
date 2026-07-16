@@ -2,26 +2,26 @@
 
 ## Summary
 
-Spring MVC Controller에서 메뉴 목록 요청을 받고, application service가 menu repository를 통해 판매 중인 메뉴를 조회한다.
+Spring MVC Controller에서 메뉴 목록 요청을 받고, service가 menu repository를 통해 판매 중인 메뉴를 조회한다.
 
 ## Technical Approach
 
-- API: `MenuController`
-- Application: `MenuQueryService`
-- Domain: `Menu`, `MenuStatus`
-- Persistence: `MenuRepository`
+- Controller: `MenuController`
+- Service: `MenuQueryService`
+- Entity: `Menu`, `MenuStatus`
+- Repository: `MenuRepository`
 - External: 없음
 - Test: controller slice 또는 integration test
 
 ## Files to Add
 
-- `menu/api/MenuController.java`
-- `menu/api/MenuResponse.java`
-- `menu/application/MenuQueryService.java`
-- `menu/domain/Menu.java`
-- `menu/domain/MenuStatus.java`
-- `menu/infrastructure/MenuRepository.java`
-- `menu/MenuQueryIntegrationTest.java`
+- `src/main/java/com/ch6/cafe/domain/menu/controller/MenuController.java`
+- `src/main/java/com/ch6/cafe/domain/menu/dto/response/MenuResponse.java`
+- `src/main/java/com/ch6/cafe/domain/menu/service/MenuQueryService.java`
+- `src/main/java/com/ch6/cafe/domain/menu/entity/Menu.java`
+- `src/main/java/com/ch6/cafe/domain/menu/entity/MenuStatus.java`
+- `src/main/java/com/ch6/cafe/domain/menu/repository/MenuRepository.java`
+- `src/test/java/com/ch6/cafe/domain/menu/MenuQueryIntegrationTest.java`
 
 ## Files to Modify
 

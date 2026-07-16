@@ -26,21 +26,31 @@ popular-menu:{yyyy-MM-dd}
 On successful order:
 
 1. Increment MySQL `daily_menu_sales`.
-2. Increment Redis Sorted Set score for the menu.
+2. After commit, take the date-scoped ranking lock, read the durable count, and assign that
+   absolute value to the Redis member. The same atomic Redis operation publishes a new generation
+   and a completeness marker containing the current durable total and member count.
 
-For recent 7-day query:
+For the recent 7-day query:
 
-1. Union the last 7 daily Sorted Sets.
-2. Read top 3 by score.
-3. Fetch menu details from MySQL.
+1. Read per-date MySQL total/member metadata and require each
+   `popular-menu:complete:{yyyy-MM-dd}` marker to match it.
+2. Union the last 7 daily Sorted Sets only when the range is complete.
+3. Read top 3 by score and fetch menu details from MySQL.
+4. Validate daily ZSET cardinality and score sum, and require marker generations to remain
+   identical across the union read.
+5. If metadata, data, generation, or menu resolution is invalid, return the MySQL aggregate and
+   rebuild all seven dates.
 
 If Redis data is unavailable or lost, rebuild ranking from MySQL `daily_menu_sales`.
+
+Redis Sentinel is not part of the confirmed implementation. It is a future availability option if automatic promotion of a replica is required after Redis master failure. Sentinel monitors and coordinates failover; it does not shard data, distribute write load across masters, or increase write throughput. Sharding or write distribution would require a separate Redis Cluster or application-level partitioning decision.
 
 ## Alternatives Considered
 
 - Orders table direct aggregation: strongest simplicity, but potentially expensive at read time.
 - Redis Sorted Set only: fast reads, but weak recovery story.
 - MySQL daily aggregate only: durable and accurate, but less suitable for frequent ranking reads.
+- Redis Sentinel: can automate master failover when replicas exist, but adds operational complexity and does not solve sharding or write-load distribution. Deferred until availability requirements and failure tests justify it.
 
 ## Consequences
 
@@ -61,11 +71,20 @@ If Redis data is unavailable or lost, rebuild ranking from MySQL `daily_menu_sal
 
 - If MySQL update succeeds and Redis update fails, the system remains recoverable.
 - The API may need fallback behavior if Redis is down.
+- Sentinel must not be described as a current dependency or as a scaling mechanism unless a later ADR accepts and verifies it.
 
 ## Follow-up
 
-- Define Redis key TTL.
-- Define reconciliation job or recovery command.
+- Daily ranking keys use a 14-day TTL; temporary union keys use a 1-minute TTL and are deleted
+  after the query.
+- Daily completeness markers use the same 14-day TTL. A complete empty date has a marker and no
+  live ZSET.
+- `RankingRebuildService` reconstructs every date under the same date-scoped lock used by
+  post-commit updates. It atomically replaces or deletes the live generation before publishing
+  the marker.
+- A missing marker, Redis failure, or unresolved cached menu serves the MySQL aggregate and
+  attempts reconstruction without changing the committed order result.
 - Add tests for last-7-days calculation.
 - Add tests for Redis rebuild from `daily_menu_sales`.
+- Test Redis unavailability and recovery first; use the evidence to decide whether a later Sentinel ADR is warranted.
 

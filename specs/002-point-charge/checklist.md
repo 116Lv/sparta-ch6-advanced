@@ -1,5 +1,10 @@
 # Checklist: Point Charge
 
+## 2026-07-15 Audit Evidence
+
+- [x] Implementation and authored tests satisfy the statically inspectable checklist items.
+- [ ] Runtime test and API evidence is available from a supported VERIFIED command.
+
 ## Spec Quality
 
 - [x] 요구사항이 명확하다.

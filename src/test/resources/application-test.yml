@@ -8,8 +8,14 @@ spring:
     hibernate:
       ddl-auto: create-drop
     open-in-view: false
+  flyway:
+    enabled: false
   kafka:
     bootstrap-servers: localhost:9092
+    consumer:
+      group-id: coffee-order-analytics
+      auto-offset-reset: earliest
+      enable-auto-commit: false
 
 redisson:
   address: redis://localhost:6379
