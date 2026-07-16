@@ -4,6 +4,8 @@
 
 - [x] Implementation and authored tests satisfy the statically inspectable ranking completeness and recovery items.
 - [ ] Runtime test, Redis, database, and API evidence is available from a supported VERIFIED command.
+- [x] Static E2E implementation observes the daily Redis ranking and public popular-menu response.
+- [ ] E2E assertions have finalized runtime evidence (NOT RUN/BLOCKED on the current unsupported host).
 
 ## Spec Quality
 

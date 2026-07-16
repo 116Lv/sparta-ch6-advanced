@@ -32,6 +32,18 @@ hits, partial marker loss, complete empty dates, stale-key deletion, TTL and tem
 missing-menu and Redis-failure fallback, and deterministic rebuild/update interleavings. MySQL
 counts remain authoritative in every failure case.
 
+The exact verification boundaries are repository-owned commands. `verify.unit` runs Gradle
+`test` and excludes `*IntegrationTest` and `*ApiSmokeTest`; `verify.integration` runs Gradle
+`integrationTest` against Testcontainers-backed MySQL, Redis, and Kafka; `verify.api-smoke` runs
+Gradle `apiSmokeTest` with a random-port real HTTP server and Testcontainers MySQL/Redis; and
+`verify.e2e` runs the no-argument `scripts/e2e/verify-e2e.sh` Docker Compose black-box topology.
+`verify.build` runs Gradle `assemble` without executing the verification suites. Every command
+must remain `CONFIGURED_UNVERIFIED` until finalized official runner evidence proves its exact argv.
+
+Testcontainers is required for focused infrastructure integration and API smoke suites. Docker
+Compose is additionally required for packaged application, service-DNS, Flyway, broker, durable
+state, cache, public HTTP, idempotency, and cleanup verification across the deployed topology.
+
 ### Real API Verification
 
 Any API behavior change requires real HTTP request verification against a running server unless blocked by missing project setup. If blocked, report `BLOCKED` with the reason.
@@ -129,6 +141,10 @@ Report correctness violations separately from transport or timeout errors. A hig
 
 Redis Sentinel may be evaluated later for master failover, but it is not a current test-environment assumption and must not be counted as sharding or write-load distribution.
 
+A real load balancer and multiple deployed application instances remain follow-up deployment
+work. Neither is implemented or proven by the single-application E2E topology. Redis Sentinel
+remains a future availability option, not current verification infrastructure.
+
 ## Security Rules
 
 - Do not log secrets, tokens, passwords, or sensitive personal data.
@@ -171,7 +187,9 @@ A feature is done only when:
 7. Docs/specs/adr were updated if behavior changed.
 8. Done claim follows `ai/done-claim-template.md`.
 
-## Open Questions
+## Resolved Verification Decisions
 
-- Open Question: What exact Gradle tasks should be used for integration and real API verification beyond `test`?
-- Open Question: Will Testcontainers be required for MySQL, Redis, and Kafka integration tests?
+- Exact task boundaries are `assemble`, `test`, `integrationTest`, `apiSmokeTest`, and the
+  no-argument Compose script, exposed as the five `verify.*` commands above.
+- Testcontainers covers focused MySQL, Redis, and Kafka integration; Docker Compose covers the
+  packaged black-box topology. Authored configuration is not runtime PASS evidence.

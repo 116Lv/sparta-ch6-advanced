@@ -40,7 +40,7 @@ This section cannot be changed independently of its canonical JSON source.
 | `verify.unit` | Run the configured Gradle test task | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./gradlew", "test"]` | `build.gradle`; `gradlew` | NONE |
 | `verify.lint` | Run lint checks | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `build.gradle` | NONE |
 | `verify.integration` | Run a dedicated integration-test command | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./gradlew", "integrationTest"]` | `build.gradle`; `gradlew` | NONE |
-| `verify.e2e` | Run end-to-end tests | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./scripts/e2e/verify-e2e.sh"]` | `docs/superpowers/specs/2026-07-16-level-5-runtime-verification-design.md` | NONE |
+| `verify.e2e` | Run end-to-end tests | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./scripts/e2e/verify-e2e.sh"]` | approved design; `scripts/e2e/verify-e2e.sh` | NONE |
 | `verify.api-smoke` | Run real HTTP API smoke verification | `CONFIGURED_UNVERIFIED` | `SAFE` | `["./gradlew", "apiSmokeTest"]` | `build.gradle`; `gradlew` | NONE |
 | `db.migration` | Apply database migrations | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `build.gradle` | NONE |
 | `db.seed` | Seed development or test data | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `src/main/resources/application.yml`; `docs/superpowers/specs/2026-07-10-ai-workflow-phase-1a-spec.md` | NONE |
@@ -48,7 +48,7 @@ This section cannot be changed independently of its canonical JSON source.
 ### Bootstrap Constraints
 
 - Build, unit, integration, API smoke, and E2E are configured but unverified with the exact POSIX argv shown above.
-- The E2E executable is planned and registered but is not created until Task 5.
+- The E2E executable and isolated Compose topology are authored; runtime evidence remains unavailable.
 - Lint, migration, and seed are not configured; dependency installation and the development server remain unknown and unavailable.
 - Every recorded evidence item is `STATIC_FILE`; no runtime evidence exists.
 - Every `lastVerifiedAt` value is `null`.

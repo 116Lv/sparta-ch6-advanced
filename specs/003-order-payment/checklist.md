@@ -4,6 +4,8 @@
 
 - [x] Implementation and authored tests cover the durable order graph, publisher, consumer analytics, and recovery path.
 - [ ] Runtime test, Kafka, database, migration, and API evidence is available from a supported VERIFIED command.
+- [x] Static E2E implementation includes bounded Outbox/consumer/analytics and duplicate-broker assertions with cleanup.
+- [ ] E2E assertions have finalized runtime evidence (NOT RUN/BLOCKED on the current unsupported host).
 
 ## Spec Quality
 
