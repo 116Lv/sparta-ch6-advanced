@@ -47,9 +47,53 @@ wait_for_sql() {
 }
 
 consumer_offset() {
-    compose exec -T kafka kafka-consumer-groups.sh \
-        --bootstrap-server kafka:9092 --group coffee-order-analytics --describe 2>/dev/null \
-        | awk '$2 == "coffee.order.paid" { total += $4 } END { print total + 0 }'
+    description=$(compose exec -T kafka kafka-consumer-groups.sh \
+        --bootstrap-server kafka:9092 --group coffee-order-analytics --describe) \
+        || fail 'Kafka consumer-group describe failed'
+    printf '%s\n' "$description" | awk '
+            $2 == "coffee.order.paid" {
+                found = 1
+                if ($4 !~ /^[0-9]+$/) invalid = 1
+                total += $4
+            }
+            END {
+                if (invalid) exit 2
+                if (!found) exit 3
+                print total
+            }'
+}
+
+wait_for_stable_positive_offset() {
+    attempts=0
+    previous=
+    while [ "$attempts" -lt 60 ]; do
+        current=$(consumer_offset)
+        if [ "$current" -gt 0 ]; then
+            if [ -n "$previous" ] && [ "$current" -eq "$previous" ]; then
+                printf '%s\n' "$current"
+                return 0
+            fi
+            previous=$current
+        else
+            previous=
+        fi
+        attempts=$((attempts + 1))
+        sleep 1
+    done
+    fail 'analytics consumer offset did not reach a stable positive baseline'
+}
+
+wait_for_exact_offset() {
+    expected=$1
+    attempts=0
+    while [ "$attempts" -lt 60 ]; do
+        current=$(consumer_offset)
+        [ "$current" -eq "$expected" ] && return 0
+        [ "$current" -gt "$expected" ] && fail "analytics consumer offset exceeded expected value $expected"
+        attempts=$((attempts + 1))
+        sleep 1
+    done
+    fail "analytics consumer offset did not become exactly $expected"
 }
 
 http_json() {
@@ -64,8 +108,64 @@ http_json() {
     fi
 }
 
+verify_charge_response() {
+    expected_user_id=$1
+    python -c '
+import json, sys
+body = json.load(sys.stdin)
+expected = {"userId": int(sys.argv[1]), "chargedAmount": 10000, "balance": 10000}
+if not isinstance(body, dict) or body != expected:
+    raise SystemExit("charge response contract mismatch")
+' "$expected_user_id"
+}
+
+verify_order_response() {
+    expected_user_id=$1
+    expected_menu_id=$2
+    python -c '
+import json, sys
+body = json.load(sys.stdin)
+if not isinstance(body, dict):
+    raise SystemExit("order response must be an object")
+order_id = body.get("orderId")
+if not isinstance(order_id, int) or isinstance(order_id, bool) or order_id <= 0:
+    raise SystemExit("orderId must be a positive integer")
+expected = {
+    "orderId": body["orderId"],
+    "userId": int(sys.argv[1]),
+    "menuId": int(sys.argv[2]),
+    "paymentAmount": 3000,
+    "remainingPoint": 7000,
+    "status": "PAID",
+}
+if body != expected:
+    raise SystemExit("order response contract mismatch")
+print(order_id)
+' "$expected_user_id" "$expected_menu_id"
+}
+
+verify_popular_response() {
+    expected_menu_id=$1
+    python -c '
+import json, sys
+body = json.load(sys.stdin)
+expected = {
+    "periodDays": 7,
+    "menus": [{
+    "menuId": int(sys.argv[1]),
+    "name": "E2E Coffee",
+    "price": 3000,
+    "orderCount": 1,
+    }],
+}
+if not isinstance(body, dict) or body != expected:
+    raise SystemExit("popular-menu response contract mismatch")
+' "$expected_menu_id"
+}
+
 command -v docker >/dev/null 2>&1 || fail 'docker is required'
 command -v curl >/dev/null 2>&1 || fail 'curl is required'
+command -v python >/dev/null 2>&1 || fail 'python is required'
 
 compose up --build -d --wait --wait-timeout 240
 APP_PORT=$(compose port app 8080 | awk -F: 'END { print $NF }')
@@ -80,12 +180,10 @@ MENU_ID=$(printf '%s\n' "$fixture" | awk 'END { print $2 }')
 [ -n "$USER_ID" ] && [ -n "$MENU_ID" ] || fail 'fixture identifiers were not returned'
 
 charge=$(http_json POST "$BASE_URL/api/v1/users/$USER_ID/points/charge" '{"amount":10000}')
-printf '%s' "$charge" | grep -Eq '"balance"[[:space:]]*:[[:space:]]*10000' || fail 'charge response balance'
+printf '%s' "$charge" | verify_charge_response "$USER_ID"
 
 order=$(http_json POST "$BASE_URL/api/v1/orders" "{\"userId\":$USER_ID,\"menuId\":$MENU_ID}")
-printf '%s' "$order" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"PAID"' || fail 'paid order response status'
-ORDER_ID=$(printf '%s' "$order" | sed -n 's/.*"orderId"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
-[ -n "$ORDER_ID" ] || fail 'orderId missing from response'
+ORDER_ID=$(printf '%s' "$order" | verify_order_response "$USER_ID" "$MENU_ID")
 
 TODAY=$(mysql_query 'SELECT DATE(CONVERT_TZ(UTC_TIMESTAMP(),"+00:00","+09:00"));')
 wait_for_sql 'paid order row' "SELECT COUNT(*) FROM orders WHERE id=$ORDER_ID AND user_id=$USER_ID AND menu_id=$MENU_ID AND order_price=3000 AND status='PAID';" 1
@@ -98,25 +196,18 @@ wait_for_sql 'Outbox PUBLISHED state' "SELECT status FROM outbox_events WHERE ag
 EVENT_ID=$(mysql_query "SELECT id FROM outbox_events WHERE aggregate_id=$ORDER_ID AND event_type='ORDER_PAID';")
 wait_for_sql 'consumer processed marker' "SELECT COUNT(*) FROM processed_events WHERE consumer_group='coffee-order-analytics' AND event_id=$EVENT_ID;" 1
 wait_for_sql 'consumer analytics effect' "SELECT COUNT(*) FROM order_paid_analytics WHERE consumer_group='coffee-order-analytics' AND event_id=$EVENT_ID AND aggregate_id=$ORDER_ID AND user_id=$USER_ID AND menu_id=$MENU_ID AND payment_amount=3000;" 1
+OFFSET_BASELINE=$(wait_for_stable_positive_offset)
 
 REDIS_SCORE=$(compose exec -T redis redis-cli --raw ZSCORE "popular-menu:$TODAY" "$MENU_ID" | tr -d '\r')
 [ "$REDIS_SCORE" = 1 ] || fail "Redis ranking score (expected 1, got '$REDIS_SCORE')"
 popular=$(http_json GET "$BASE_URL/api/v1/menus/popular?days=7&limit=3")
-printf '%s' "$popular" | grep -Eq "\"menuId\"[[:space:]]*:[[:space:]]*$MENU_ID" || fail 'popular-menu response menuId'
-printf '%s' "$popular" | grep -Eq '"orderCount"[[:space:]]*:[[:space:]]*1' || fail 'popular-menu response orderCount'
+printf '%s' "$popular" | verify_popular_response "$MENU_ID"
 
 MESSAGE="{\"eventId\":$EVENT_ID,\"eventType\":\"ORDER_PAID\",\"aggregateId\":$ORDER_ID,\"payload\":{\"userId\":$USER_ID,\"menuId\":$MENU_ID,\"paymentAmount\":3000}}"
-OFFSET_BEFORE=$(consumer_offset)
+EXPECTED_OFFSET=$((OFFSET_BASELINE + 1))
 printf '%s\n' "$MESSAGE" | compose exec -T kafka kafka-console-producer.sh \
     --bootstrap-server kafka:9092 --topic coffee.order.paid
-attempts=0
-while [ "$attempts" -lt 60 ]; do
-    OFFSET_AFTER=$(consumer_offset)
-    [ "$OFFSET_AFTER" -gt "$OFFSET_BEFORE" ] && break
-    attempts=$((attempts + 1))
-    sleep 1
-done
-[ "$OFFSET_AFTER" -gt "$OFFSET_BEFORE" ] || fail 'analytics consumer group did not consume duplicate broker record'
+wait_for_exact_offset "$EXPECTED_OFFSET"
 [ "$(mysql_query "SELECT COUNT(*) FROM processed_events WHERE consumer_group='coffee-order-analytics' AND event_id=$EVENT_ID;")" = 1 ] || fail 'duplicate changed processed marker count'
 [ "$(mysql_query "SELECT COUNT(*) FROM order_paid_analytics WHERE consumer_group='coffee-order-analytics' AND event_id=$EVENT_ID;")" = 1 ] || fail 'duplicate changed analytics count'
 

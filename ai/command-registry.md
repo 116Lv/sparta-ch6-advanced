@@ -28,7 +28,7 @@ This section cannot be changed independently of its canonical JSON source.
 - Canonical source: `ai/command-registry.json`
 - Schema: `./schemas/command-registry.schema.json`
 - Schema version: `1`
-- Updated at: `2026-07-15T18:21:19Z`
+- Updated at: `2026-07-16T03:30:00Z`
 - Registered capability records: `10`
 - Verified command records: `0`
 

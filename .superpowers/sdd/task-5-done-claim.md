@@ -20,7 +20,10 @@ unavailable on this Windows host, so this is a BLOCKED evidence record, not a PA
 - Feature observations: `specs/003-order-payment` and `specs/004-popular-menu`.
 - The authored script covers Flyway-backed readiness, HTTP charge/order, the durable order graph,
   Outbox publication, real broker consumption and duplicate delivery, analytics idempotency, Redis
-  ranking, popular-menu HTTP output, failure logs, and isolated cleanup.
+  ranking, popular-menu HTTP output, failure logs, and isolated cleanup. Its corrected duplicate
+  contract requires successful consumer-group observation, a stable positive committed baseline,
+  and exactly one committed-offset advance after one injection before durable idempotency checks.
+  HTTP response bodies and order ID are parsed structurally with Python stdlib JSON.
 
 ## 4. Delegated-Work Tracking
 
@@ -47,6 +50,9 @@ No run, attempt, process, finalized artifact, infrastructure, or test-count evid
 | Integration | NOT RUN / BLOCKED | requested ID `verify-20260716-level5-task5-final-integration-01`; launcher exit 1 |
 | API smoke | NOT RUN / BLOCKED | requested ID `verify-20260716-level5-task5-final-api-smoke-01`; launcher exit 1 |
 | E2E | NOT RUN / BLOCKED | requested ID `verify-20260716-level5-task5-final-e2e-01`; launcher exit 1 |
+| E2E review fix | NOT RUN / BLOCKED | requested ID `verify-20260716-level5-task5-review-fix-e2e-01`; launcher exit 1 |
+| Review source RED | RED (static only) | 8/8 expected review findings reproduced against `825ec53` |
+| Review source GREEN | PASS (static only) | 8/8 corrected offset/JSON/timestamp/log contracts |
 | Static source contracts | PASS (static only) | required topology/scenario strings present; no `container_name` |
 | `git diff --check` | PASS | exit 0 |
 

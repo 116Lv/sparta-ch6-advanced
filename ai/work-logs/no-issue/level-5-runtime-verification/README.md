@@ -85,6 +85,9 @@ Tasks 1-5 are authored. Required runtime evidence remains unavailable; pre-QA an
   `verify-20260716-level5-task5-final-api-smoke-01`, and
   `verify-20260716-level5-task5-final-e2e-01`. No attempts, counts, infrastructure, or artifacts exist.
 - Task 5 static E2E source contracts passed and `git diff --check` exited 0. Runtime is NOT RUN.
+- Task 5 review correction reproduced focused RED 8/8 and then GREEN 8/8 for strict committed-offset,
+  structural JSON, registry timestamp, and work-log contracts. Fresh request
+  `verify-20260716-level5-task5-review-fix-e2e-01` again exited 1 before runner startup; runtime remains NOT RUN/BLOCKED.
 
 ## Blockers
 

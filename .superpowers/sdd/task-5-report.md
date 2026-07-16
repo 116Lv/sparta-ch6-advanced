@@ -17,8 +17,12 @@ reported as PASS and the registry remains `CONFIGURED_UNVERIFIED`.
 - The scenario seeds only durable user/menu fixtures, charges and pays over real HTTP, verifies the
   MySQL order/payment/history/daily-sales/Outbox graph, waits for `PUBLISHED`, verifies the consumer
   marker and analytics effect, checks Redis and popular-menu HTTP, injects the same `ORDER_PAID`
-  envelope through Kafka, observes the analytics consumer-group offset advance, and proves marker
-  and analytics counts remain one.
+  envelope through Kafka, and proves marker and analytics counts remain one. The duplicate proof
+  fails on consumer-group describe errors, missing topic rows, or invalid offsets; establishes a
+  positive committed offset stable across consecutive bounded observations; injects exactly one
+  duplicate; and requires the same group to commit exactly `baseline + 1` before checking counts.
+- Charge, order, order ID, and popular-menu response assertions use Python stdlib structural JSON
+  parsing with exact field/type/value checks; no regex/sed JSON extraction remains.
 - Reconciled canonical registry static evidence without promotion and corrected its E2E input glob.
 - Resolved the quality-document command/Testcontainers questions and retained load balancer,
   multi-instance deployment, and Redis Sentinel as explicit future work.
@@ -34,6 +38,16 @@ reported as PASS and the registry remains `CONFIGURED_UNVERIFIED`.
 - `bash -n`: NOT RUN because only the unsupported Windows WSL launcher is available.
 - No static observation is treated as application build, Compose startup, migration, API, or E2E PASS.
 
+### Task 5 Review RED/GREEN
+
+- Focused RED against commit `825ec53`: 8/8 expected findings reproduced—consumer observation
+  errors could be hidden/coerced to zero, advancement was only `> baseline`, response JSON used
+  regex/sed, the registry summary timestamp drifted, and the implementation log retained stale state.
+- Focused GREEN after correction: 8/8 contracts passed for fatal describe/missing/invalid offset
+  handling, stable positive baseline, exact `baseline + 1`, structural response JSON, registry
+  timestamp alignment, and current Task 5 blocker/handoff text.
+- Registry JSON parse: PASS. `git diff --check`: exit 0. These remain static-only results.
+
 ## Fresh Official Requests
 
 | Command | Requested run ID | Launcher exit | Attempt / counts / artifact | Outcome |
@@ -43,6 +57,7 @@ reported as PASS and the registry remains `CONFIGURED_UNVERIFIED`.
 | `verify.integration` | `verify-20260716-level5-task5-final-integration-01` | 1 | none | runner did not start; NOT RUN/BLOCKED |
 | `verify.api-smoke` | `verify-20260716-level5-task5-final-api-smoke-01` | 1 | none | runner did not start; NOT RUN/BLOCKED |
 | `verify.e2e` | `verify-20260716-level5-task5-final-e2e-01` | 1 | none | runner did not start; NOT RUN/BLOCKED |
+| `verify.e2e` review fix | `verify-20260716-level5-task5-review-fix-e2e-01` | 1 | none | runner did not start; NOT RUN/BLOCKED |
 
 Each request invoked `bash scripts/ai/command-runner.sh run <command> --run-id <id>`. Windows
 `bash.exe` reported that no WSL distribution was installed before `command-runner.sh` could start.
