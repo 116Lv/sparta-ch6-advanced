@@ -87,9 +87,97 @@ Kafka는 Outbox와 별개의 선택이다. 이벤트 보존과 replay, 여러 co
 | 일별 집계 테이블만 사용 | DB 기준으로 정합성 검증이 쉽다. | 실시간 랭킹 조회 성능은 Redis보다 낮을 수 있다. |
 | Redis Sorted Set + 일별 집계 테이블 | 빠른 조회와 복구 가능성을 함께 가진다. | 쓰기 경로와 보정 작업이 추가된다. |
 
-본 프로젝트는 주문 성공 시 Redis Sorted Set에 메뉴 주문 횟수를 반영하고, MySQL의 `daily_menu_sales`에도 일별 주문 횟수를 누적한다. 인기 메뉴 조회는 Redis를 우선 사용하고, Redis 장애 또는 데이터 불일치 시 MySQL 일별 집계 테이블을 기준으로 복구할 수 있게 설계한다.
+본 프로젝트는 주문 트랜잭션에서 MySQL의 `daily_menu_sales`를 먼저 누적한다. commit 후에는 해당 날짜의 MySQL durable count와 total/member metadata를 다시 읽고, 날짜별 lock 아래에서 Lua로 Redis Sorted Set score를 절대값 대입(`ZADD`)하면서 completeness marker를 함께 교체한다. 인기 메뉴 조회는 Redis를 우선 사용하고, Redis 장애 또는 데이터 불일치 시 MySQL 일별 집계 테이블을 기준으로 응답하고 복구할 수 있게 설계한다.
 
 Redis Sentinel은 현재 확정 구현이 아니라 향후 master 장애 자동 전환 대안이다. Sentinel은 sharding이나 쓰기 부하 분산 수단이 아니다. 상세 범위는 [ADR-003](adr/ADR-003-redis-sorted-set-daily-aggregation.md)에 있다.
+
+## 로컬 환경과 지원 실행 경로
+
+### 사전 조건
+
+- Java 21
+- Docker Engine 또는 Docker Desktop과 Docker Compose
+- Windows 호환 shell이 아닌 실제 POSIX `bash` 환경
+- Python 3와 `jsonschema` 패키지(저장소 workflow helper 실행에 필요)
+- 저장소의 POSIX Gradle Wrapper 실행 권한
+
+### 로컬 인프라와 기본 포트
+
+루트의 `docker-compose.yml`은 MySQL, Redis, Kafka를 loopback 주소에만 노출하는 로컬 개발용 의존성 구성이다. 기본값은 다음과 같다.
+
+| 서비스 | 주소 |
+|---|---|
+| MySQL | `127.0.0.1:3306` |
+| Redis | `127.0.0.1:6379` |
+| Kafka | `127.0.0.1:9092` |
+
+Compose 값은 다음 환경변수로 바꿀 수 있다.
+
+- MySQL: `CAFE_MYSQL_DATABASE`, `CAFE_MYSQL_USER`, `CAFE_MYSQL_PASSWORD`, `CAFE_MYSQL_ROOT_PASSWORD`, `CAFE_MYSQL_PORT`
+- Redis: `CAFE_REDIS_PORT`
+- Kafka: `CAFE_KAFKA_PORT`
+
+`CAFE_*`는 Compose 컨테이너 설정과 host 포트만 바꾼다. `src/main/resources/application.yml`의 datasource, Spring Data Redis, Redisson, Kafka 연결 정보는 자동으로 바뀌지 않는다. 처음에는 기본값 사용을 권장하며, 값을 바꾸면 Spring datasource/Redis/Kafka와 `redisson.address`도 같은 주소, 포트, database, credential로 맞춰야 한다.
+
+일반 로컬 인프라는 `docker-compose.yml`로 구성하지만, 현재 command registry에는 독립적인 인프라 시작 명령과 애플리케이션 개발 서버 명령이 등록되어 있지 않다. 특히 `server.dev`는 `UNKNOWN`/`UNAVAILABLE`이므로 검증되지 않은 앱 시작 명령을 문서에서 만들지 않는다.
+
+### 애플리케이션 포함 실제 실행
+
+현재 애플리케이션까지 포함해 실제로 실행하는 지원 경로는 command registry의 no-argument `verify.e2e`다. 실제 POSIX `bash`에서 다음과 같이 매번 고유한 run ID로 runner session을 만들고 실행한다.
+
+```bash
+RUN_ID="verify-local-e2e-$(date +%Y%m%d%H%M%S)-$$"
+bash scripts/ai/command-runner.sh start \
+  --run-id "$RUN_ID" \
+  --task-key local-e2e-verification
+bash scripts/ai/command-runner.sh run verify.e2e \
+  --run-id "$RUN_ID"
+```
+
+이 명령은 먼저 기존 단일 인스턴스 black-box 시나리오를 보존 실행하고, 이어서 `docker-compose.multi-instance.yml`의 공유 MySQL·Redis·Kafka, `app-1`/`app-2`, `nginx:1.30.3-alpine`, `grafana/k6:2.1.0` 구성을 실행하도록 작성되어 있다. nginx가 유일한 host endpoint이며, k6는 Compose profile의 일회성 컨테이너이므로 host에 k6를 설치할 필요가 없다. 시나리오는 `scripts/k6/multi-instance.js`, machine-readable 결과는 host의 `build/reports/k6/<compose-project>/k6-summary.json`(container의 `/results/k6-summary.json`)에 기록되고 runner stdout에도 출력된다.
+
+다중 인스턴스 시나리오는 두 upstream 분산, bounded normal/hot-key traffic, 한 인스턴스 중지 후 처리, fixture 범위의 포인트·주문·Outbox·consumer 멱등성, Redis 유실 후 MySQL 기준 인기 메뉴 복구를 확인한다. fresh finalized run `verify-20260717-assignment-p2-e2e-03`의 attempt `1a5979e9-f360-4804-8bb6-8f1a2d20c224`는 exit code 0이었고, k6는 60 requests, 120 checks, 실패 0을 기록했다. finalization은 `INTEGRITY_ONLY`, `completenessEvaluated: false`이므로 artifact 무결성을 확인할 뿐 전체 검증 완전성을 자체적으로 증명하지 않는다.
+
+이 결과는 처리량·latency SLO, publisher fairness, 모든 claim transition의 관찰, Kafka exactly-once publication을 증명하지 않는다. 관측 baseline은 6.44491566218543 requests/s, p50 6.7699985 ms, p95 56.77538449999978 ms, p99 761.2199300399985 ms이며 합격 목표로 해석하지 않는다.
+
+성공·실패와 관계없이 구성은 자동 정리되므로 검증이 끝나면 애플리케이션도 종료된다. 따라서 이는 AI/자동화가 사용할 수 있는 전체 실행 검증 경로이지, 계속 띄워 두는 일반 개발 서버가 아니다. 장기 실행용 `server.dev`는 여전히 미등록·미지원이다.
+
+## 검증
+
+AI 또는 자동화가 Gradle, Docker Compose, HTTP 등 제품 명령을 실행할 때는 직접 호출하지 않고 실제 POSIX `bash`에서 `scripts/ai/command-runner.sh`와 등록된 `verify.*` 명령을 사용한다. 각 검증은 재사용하지 않는 고유 run ID로 별도 세션을 만든다.
+
+```bash
+RUN_ID=verify-submission-unit-20260716-01
+bash scripts/ai/command-runner.sh start \
+  --run-id "$RUN_ID" \
+  --task-key submission-verification
+bash scripts/ai/command-runner.sh run verify.unit \
+  --run-id "$RUN_ID"
+```
+
+다른 검증도 같은 방식으로 `RUN_ID` 값을 매번 새 고유 ID로 바꾸고, 각각 별도 session에서 실행한다.
+
+| 등록 명령 | 검증 범위 |
+|---|---|
+| `verify.build` | 컴파일·패키징 가능 여부 |
+| `verify.unit` | 빠른 단위·슬라이스 테스트 |
+| `verify.integration` | MySQL·Redis·Kafka Testcontainers 통합 테스트 |
+| `verify.api-smoke` | random port에서 실제 HTTP API 계약 |
+| `verify.e2e` | 보존된 단일 인스턴스 후 다중 인스턴스·nginx·Docker k6 black-box 흐름 |
+
+`start`는 run session을 만들고 `run`은 명령 attempt와 stdout/stderr, command result를 남긴다. 이 두 단계만으로 검증이 최종 확정되거나 `.ai-runs/$RUN_ID/run.json`과 `artifact-manifest.json`이 생기는 것은 아니다.
+
+### 검증 결과 확정
+
+finalization에는 `ai/schemas/done-claim.schema.json`을 만족하는 claim 입력 파일이 필요하다. 파일은 symlink가 아닌 regular file이어야 하고 해당 run 디렉터리 안의 repository-relative 경로에 있어야 한다. claim의 `$id`는 `.ai-runs/$RUN_ID/done-claim.json`, `runId`와 `taskKey`는 OPEN session과 일치해야 하며, PASS check와 evidence reference는 실제 session artifact를 가리켜야 한다. 예를 들어 claim을 `.ai-runs/$RUN_ID/claim-input.json`에 준비했다면 다음 별도 단계로 finalize하고 무결성을 다시 확인한다.
+
+```bash
+bash scripts/ai/done-claim-check.sh prepare "$RUN_ID" \
+  --claim ".ai-runs/$RUN_ID/claim-input.json"
+bash scripts/ai/done-claim-check.sh verify-finalized "$RUN_ID"
+```
+
+`prepare`가 성공하면 finalized `run.json`과 `artifact-manifest.json`이 게시되고, `verify-finalized`는 retained receipt·journal·manifest를 기준으로 directory closure와 digest를 읽기 전용으로 재검증한다. 다만 이 Phase 1B-3 결과의 범위는 `INTEGRITY_ONLY`이고 `completenessEvaluated: false`다. 따라서 artifact 무결성은 확인하지만 필요한 검증이 모두 수행됐는지, registry `VERIFIED` 전환이나 reconciliation/Issue closure가 끝났는지, 전체 작업이 무조건 DONE인지를 자체적으로 증명하지 않는다. 상세 lifecycle은 [Phase 1B spec의 Run Finalization Lifecycle](docs/superpowers/specs/2026-07-10-ai-workflow-phase-1b-spec.md#run-finalization-lifecycle)을 따른다. PASS를 기록하기 전에는 finalized `run.json`, artifact manifest, command result와 로그를 함께 확인해야 한다.
 
 ## 4. 도메인 모델
 
@@ -276,6 +364,7 @@ sequenceDiagram
   participant Client
   participant API as Order API
   participant Lock as Redisson
+  participant RankingLock as Date lock
   participant DB as MySQL
   participant Redis
   participant Publisher as Outbox Publisher
@@ -292,8 +381,12 @@ sequenceDiagram
   API->>DB: daily_menu_sales 증가
   API->>DB: outbox_event 저장
   API->>DB: commit
-  API->>Redis: ZINCRBY popular menu
   API->>Lock: unlock
+  API->>RankingLock: lock(ranking:date:{yyyy-MM-dd})
+  RankingLock-->>API: lock acquired
+  API->>DB: durable count/metadata 재조회
+  API->>Redis: Lua ZADD absolute assignment + marker 교체
+  API->>RankingLock: unlock
   API-->>Client: order response
   Publisher->>DB: claim READY rows
   DB-->>Publisher: PROCESSING rows + claim deadline

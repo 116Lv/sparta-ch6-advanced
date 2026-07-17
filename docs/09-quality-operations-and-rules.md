@@ -36,13 +36,41 @@ The exact verification boundaries are repository-owned commands. `verify.unit` r
 `test` and excludes `*IntegrationTest` and `*ApiSmokeTest`; `verify.integration` runs Gradle
 `integrationTest` against Testcontainers-backed MySQL, Redis, and Kafka; `verify.api-smoke` runs
 Gradle `apiSmokeTest` with a random-port real HTTP server and Testcontainers MySQL/Redis; and
-`verify.e2e` runs the no-argument `scripts/e2e/verify-e2e.sh` Docker Compose black-box topology.
+`verify.e2e` runs the no-argument `scripts/e2e/verify-e2e.sh` sequencer: the preserved
+single-instance Docker Compose black-box scenario runs first, followed by the configured
+multi-instance/nginx/k6 scenario.
 `verify.build` runs Gradle `assemble` without executing the verification suites. Every command
 must remain `CONFIGURED_UNVERIFIED` until finalized official runner evidence proves its exact argv.
 
 Testcontainers is required for focused infrastructure integration and API smoke suites. Docker
 Compose is additionally required for packaged application, service-DNS, Flyway, broker, durable
 state, cache, public HTTP, idempotency, and cleanup verification across the deployed topology.
+
+### Multi-instance E2E and load boundary
+
+The P2 verification topology is `docker-compose.multi-instance.yml`. It shares MySQL, Redis, and
+Kafka between `app-1` and `app-2`, publishes only `nginx:1.30.3-alpine` to loopback, and runs
+`grafana/k6:2.1.0` as a profile-gated one-shot container. The public load scenario is
+`scripts/k6/multi-instance.js`; its machine-readable JSON summary is written to
+`build/reports/k6/<compose-project>/k6-summary.json` on the host (`/results/k6-summary.json` in the
+container), validated by `scripts/e2e/verify-multi-instance.sh`, and emitted to runner stdout. A
+host k6 installation is neither required nor supported by this path.
+
+The bounded scenario is configured to observe both upstream sockets, normal and same-user
+contention traffic, one-instance failure, fixture-scoped durable point/order/Outbox/consumer
+invariants, duplicate-delivery idempotency, and Redis-loss ranking recovery from MySQL. It records
+throughput and p50/p95/p99 as baseline observations without inventing TPS or latency thresholds.
+It does not prove publisher fairness, durable observation of every claim transition, exactly-once
+Kafka publication, or global/same-key ordering.
+
+Fresh finalized run `verify-20260717-assignment-p2-e2e-03`, attempt
+`1a5979e9-f360-4804-8bb6-8f1a2d20c224`, completed the changed `verify.e2e` command with exit code 0.
+The k6 summary recorded 60 requests, 120 checks, zero failed requests or checks,
+6.44491566218543 requests/s, p50 6.7699985 ms, p95 56.77538449999978 ms, and p99
+761.2199300399985 ms. These rate and latency values are observations, not SLO thresholds.
+`prepare` and `verify-finalized` also exited 0, but finalization scope is `INTEGRITY_ONLY` with
+`completenessEvaluated: false`; artifact integrity does not independently establish verification
+completeness or any non-claim above.
 
 ### Real API Verification
 
@@ -141,9 +169,10 @@ Report correctness violations separately from transport or timeout errors. A hig
 
 Redis Sentinel may be evaluated later for master failover, but it is not a current test-environment assumption and must not be counted as sharding or write-load distribution.
 
-A real load balancer and multiple deployed application instances remain follow-up deployment
-work. Neither is implemented or proven by the single-application E2E topology. Redis Sentinel
-remains a future availability option, not current verification infrastructure.
+The repository now contains a bounded nginx-backed two-application verification topology. It is
+test infrastructure, not a production deployment manifest or proof of production load-balancer
+availability. Redis Sentinel remains a future availability option, not current verification
+infrastructure.
 
 ## Security Rules
 
@@ -174,8 +203,9 @@ The root `docker-compose.yml` is a local-development-only dependency topology, n
 deployment manifest. Its MySQL, Redis, and Kafka ports bind only to `127.0.0.1`; local host ports
 and MySQL credentials are parameterized through the documented `CAFE_*` environment variables in
 the Compose file. Kafka retains separate internal service-DNS and loopback external listeners.
-Production credentials, load balancing, multi-instance deployment, and operating-cluster topology
-remain external deployment concerns.
+Production credentials, production load balancing, multi-instance deployment operations, and
+operating-cluster topology remain external deployment concerns. The separate
+`docker-compose.multi-instance.yml` exists only for bounded verification.
 
 ## Migration Rules
 
@@ -201,4 +231,5 @@ A feature is done only when:
 - Exact task boundaries are `assemble`, `test`, `integrationTest`, `apiSmokeTest`, and the
   no-argument Compose script, exposed as the five `verify.*` commands above.
 - Testcontainers covers focused MySQL, Redis, and Kafka integration; Docker Compose covers the
-  packaged black-box topology. Authored configuration is not runtime PASS evidence.
+  packaged single- and multi-instance black-box topologies. Authored configuration is not runtime
+  PASS evidence.

@@ -26,6 +26,8 @@ public class OrderPaidAnalyticsService {
         if (consumerGroup == null || consumerGroup.isBlank()) {
             throw new IllegalArgumentException("Consumer group must not be blank.");
         }
+        // This group's marker and analytics effect share one transaction; saveAndFlush surfaces an
+        // effect constraint failure before commit so this marker rolls back with that group's effect.
         int inserted = processedEventRepository.markProcessed(message.eventId(), consumerGroup);
         if (inserted == 0) return false;
         analyticsRepository.saveAndFlush(OrderPaidAnalytics.create(

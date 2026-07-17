@@ -28,7 +28,7 @@ This section cannot be changed independently of its canonical JSON source.
 - Canonical source: `ai/command-registry.json`
 - Schema: `./schemas/command-registry.schema.json`
 - Schema version: `1`
-- Updated at: `2026-07-16T11:06:24Z`
+- Updated at: `2026-07-16T19:43:00Z`
 - Registered capability records: `10`
 - Verified command records: `5`
 
@@ -40,7 +40,7 @@ This section cannot be changed independently of its canonical JSON source.
 | `verify.unit` | Run the configured Gradle test task | `VERIFIED` | `SAFE` | `["./gradlew", "test"]` | finalized artifact; final-verifier log | 2026-07-16T09:59:23Z |
 | `verify.lint` | Run lint checks | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `build.gradle` | NONE |
 | `verify.integration` | Run a dedicated integration-test command | `VERIFIED` | `SAFE` | `["./gradlew", "integrationTest"]` | finalized artifact; final-verifier log | 2026-07-16T09:59:25Z |
-| `verify.e2e` | Run end-to-end tests | `VERIFIED` | `SAFE` | `["./scripts/e2e/verify-e2e.sh"]` | finalized artifact; final-verifier log | 2026-07-16T09:59:30Z |
+| `verify.e2e` | Run end-to-end tests | `VERIFIED` | `SAFE` | `["./scripts/e2e/verify-e2e.sh"]` | fresh finalized P2 artifact; historical single-instance artifact | 2026-07-16T19:40:52Z |
 | `verify.api-smoke` | Run real HTTP API smoke verification | `VERIFIED` | `SAFE` | `["./gradlew", "apiSmokeTest"]` | finalized artifact; final-verifier log | 2026-07-16T09:59:28Z |
 | `db.migration` | Apply database migrations | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `build.gradle` | NONE |
 | `db.seed` | Seed development or test data | `NOT_CONFIGURED` | `UNAVAILABLE` | `NOT CONFIGURED` | `src/main/resources/application.yml`; `docs/superpowers/specs/2026-07-10-ai-workflow-phase-1a-spec.md` | NONE |
@@ -48,7 +48,8 @@ This section cannot be changed independently of its canonical JSON source.
 ### Bootstrap Constraints
 
 - Build, unit, integration, API smoke, and E2E are VERIFIED by finalized Ubuntu-native official-runner artifacts for the exact POSIX argv shown above.
-- The E2E artifact records the isolated Compose topology and completed black-box scenario.
+- The fresh P2 E2E artifact records the no-argument sequencer completing the preserved single-instance scenario and the two-instance nginx/k6 scenario. The earlier E2E artifact remains historical single-instance evidence only.
+- P2 finalization proves retained artifact integrity with `scope: INTEGRITY_ONLY` and `completenessEvaluated: false`; it does not independently prove verification completeness or the documented non-claims.
 - Lint, migration, and seed are not configured; dependency installation and the development server remain unknown and unavailable.
 - Each VERIFIED command records both its immutable finalized artifact manifest and the durable final-verifier reconciliation log.
 <!-- GENERATED:END source=ai/command-registry.json -->
