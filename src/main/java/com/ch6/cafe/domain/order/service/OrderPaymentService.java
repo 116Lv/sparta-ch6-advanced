@@ -73,6 +73,9 @@ public class OrderPaymentService {
         }
         OrderExecution execution = lockManager.withUserPointLock(userId, () ->
                 transactionTemplate.execute(status -> executeOrder(userId, menuId)));
+        // The order transaction has committed and the user-point lock is released before Redis work.
+        // recordCache contains cache RuntimeExceptions, so they cannot roll back the committed order;
+        // daily_menu_sales remains the durable recovery source.
         salesRecorder.recordCache(execution.salesDate(), menuId);
         return execution.response();
     }

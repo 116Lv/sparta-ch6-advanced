@@ -110,7 +110,7 @@ class PosixEntryPointPackagingTests(unittest.TestCase):
                 self.assertNotIn("ALLOW_PLAINTEXT_LISTENER", text)
 
     def test_e2e_materializes_duplicate_event_input_before_async_watchdog(self):
-        text = (REPOSITORY_ROOT / "scripts" / "e2e" / "verify-e2e.sh").read_text(
+        text = (REPOSITORY_ROOT / "scripts" / "e2e" / "verify-single-instance.sh").read_text(
             encoding="utf-8"
         )
 
@@ -128,7 +128,7 @@ class PosixEntryPointPackagingTests(unittest.TestCase):
         )
 
     def test_e2e_watchdog_reaps_its_timer_when_target_finishes(self):
-        e2e_text = (REPOSITORY_ROOT / "scripts" / "e2e" / "verify-e2e.sh").read_text(
+        e2e_text = (REPOSITORY_ROOT / "scripts" / "e2e" / "verify-single-instance.sh").read_text(
             encoding="utf-8"
         )
         function_prefix, separator, _ = e2e_text.partition("\nbounded_compose() {")
@@ -15197,6 +15197,9 @@ class Level5CanonicalVerificationCommandTests(unittest.TestCase):
             "verify.api-smoke": ["./gradlew", "apiSmokeTest"],
             "verify.e2e": ["./scripts/e2e/verify-e2e.sh"],
         }
+        expected_status = {
+            command_id: "VERIFIED" for command_id in expected_argv
+        }
 
         violations = []
         for command_id, argv in expected_argv.items():
@@ -15206,17 +15209,24 @@ class Level5CanonicalVerificationCommandTests(unittest.TestCase):
                 continue
             if command["argv"] != argv:
                 violations.append(f"{command_id}: expected argv {argv!r}, got {command['argv']!r}")
-            if command["configurationStatus"] != "VERIFIED":
+            if command["configurationStatus"] != expected_status[command_id]:
                 violations.append(
-                    f"{command_id}: expected VERIFIED, "
+                    f"{command_id}: expected {expected_status[command_id]}, "
                     f"got {command['configurationStatus']}"
                 )
             if command["classification"] != "SAFE":
                 violations.append(f"{command_id}: expected SAFE, got {command['classification']}")
             if command["parameters"] != {"allowed": False, "schema": None}:
                 violations.append(f"{command_id}: parameters must be disabled")
-            if command["lastVerifiedAt"] is None:
+            if expected_status[command_id] == "VERIFIED" and command["lastVerifiedAt"] is None:
                 violations.append(f"{command_id}: lastVerifiedAt must record runtime verification")
+            if (
+                expected_status[command_id] == "CONFIGURED_UNVERIFIED"
+                and command["lastVerifiedAt"] is not None
+            ):
+                violations.append(
+                    f"{command_id}: changed command must not retain a current verification timestamp"
+                )
             runtime_evidence = [
                 evidence for evidence in command["evidence"]
                 if evidence["kind"] == "RUNTIME_COMMAND"
@@ -15253,6 +15263,287 @@ class Level5CanonicalVerificationCommandTests(unittest.TestCase):
             helper.validate_registry_semantics(REPOSITORY_ROOT, registry)
         except helper.InvalidStateError as error:
             violations.append(f"canonical registry semantic validation failed: {error}")
+
+        self.assertEqual(violations, [])
+
+
+class P2MultiInstanceVerificationContractTests(unittest.TestCase):
+    def test_multi_instance_e2e_source_contracts(self):
+        self.maxDiff = None
+        violations = []
+
+        def read_source(relative_path):
+            path = REPOSITORY_ROOT / relative_path
+            if not path.is_file():
+                violations.append(f"{relative_path}: required file is missing")
+                return None
+            try:
+                return path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as error:
+                violations.append(f"{relative_path}: cannot read UTF-8 source: {error}")
+                return None
+
+        def require_fragment(relative_path, text, fragment, contract):
+            if text is not None and fragment not in text:
+                violations.append(f"{relative_path}: missing {contract}: {fragment!r}")
+
+        def require_pattern(relative_path, text, pattern, contract):
+            if text is not None and re.search(pattern, text, re.MULTILINE) is None:
+                violations.append(f"{relative_path}: missing {contract}")
+
+        umbrella_path = "scripts/e2e/verify-e2e.sh"
+        umbrella = read_source(umbrella_path)
+        if umbrella is not None:
+            require_pattern(
+                umbrella_path,
+                umbrella,
+                r'\[\s*["\']?\$#["\']?\s*-ne\s*0\s*\]',
+                "a no-argument guard",
+            )
+            single_position = umbrella.find("verify-single-instance.sh")
+            multi_position = umbrella.find("verify-multi-instance.sh")
+            if single_position < 0:
+                violations.append(f"{umbrella_path}: single-instance scenario is not invoked")
+            if multi_position < 0:
+                violations.append(f"{umbrella_path}: multi-instance scenario is not invoked")
+            if single_position >= 0 and multi_position >= 0 and single_position >= multi_position:
+                violations.append(
+                    f"{umbrella_path}: single-instance scenario must run before multi-instance"
+                )
+            for orchestration in ("docker compose", "curl ", "mysql ", "redis-cli", "kafka-"):
+                if orchestration in umbrella:
+                    violations.append(
+                        f"{umbrella_path}: thin sequencer must not contain {orchestration!r} orchestration"
+                    )
+
+        single_path = "scripts/e2e/verify-single-instance.sh"
+        single = read_source(single_path)
+        require_fragment(
+            single_path,
+            single,
+            "Docker Compose black-box E2E scenario completed.",
+            "preserved single-instance completion marker",
+        )
+        if single is not None:
+            preserved_digest = hashlib.sha256(single.encode("utf-8")).hexdigest()
+            if preserved_digest != "b359629ece3e5f4d4f25518f2a0f1c963332afb905425453a3b44ea71f8604ef":
+                violations.append(
+                    f"{single_path}: preserved single-instance source digest changed: "
+                    f"{preserved_digest}"
+                )
+
+        compose_path = "docker-compose.multi-instance.yml"
+        compose = read_source(compose_path)
+        service_blocks = {}
+        if compose is not None:
+            for match in re.finditer(
+                r"(?ms)^  (?P<name>[A-Za-z0-9_.-]+):\s*(?:#.*)?\n"
+                r"(?P<body>.*?)(?=^  [A-Za-z0-9_.-]+:\s*(?:#.*)?$|\Z)",
+                compose,
+            ):
+                service_blocks[match.group("name")] = match.group("body")
+
+            for service in ("app-1", "app-2", "nginx", "k6"):
+                if service not in service_blocks:
+                    violations.append(f"{compose_path}: service {service!r} is missing")
+
+            require_fragment(
+                compose_path, compose, "image: nginx:1.30.3-alpine", "pinned nginx image"
+            )
+            require_fragment(
+                compose_path, compose, "image: grafana/k6:2.1.0", "pinned k6 image"
+            )
+
+            expected_owners = {
+                "app-1": "OUTBOX_PUBLISHER_OWNER: app-1",
+                "app-2": "OUTBOX_PUBLISHER_OWNER: app-2",
+            }
+            for service, owner_contract in expected_owners.items():
+                body = service_blocks.get(service)
+                if body is not None and owner_contract not in body:
+                    violations.append(
+                        f"{compose_path}: {service} must contain exact owner {owner_contract!r}"
+                    )
+
+            nginx_body = service_blocks.get("nginx")
+            if nginx_body is not None:
+                if "ports:" not in nginx_body or "127.0.0.1:" not in nginx_body:
+                    violations.append(
+                        f"{compose_path}: nginx must publish a loopback-only host port"
+                    )
+            for service, body in service_blocks.items():
+                if service != "nginx" and re.search(r"(?m)^\s{4}ports:\s*$", body):
+                    violations.append(
+                        f"{compose_path}: only nginx may publish host ports; found ports on {service}"
+                    )
+
+            k6_body = service_blocks.get("k6")
+            if k6_body is not None and not re.search(
+                r"(?ms)^\s{4}profiles:\s*$.*^\s{6}-\s*[\"']?k6[\"']?\s*$",
+                k6_body,
+            ):
+                violations.append(f"{compose_path}: k6 must be profile-gated")
+
+        nginx_path = "scripts/e2e/nginx.conf"
+        nginx = read_source(nginx_path)
+        require_pattern(
+            nginx_path,
+            nginx,
+            r"add_header\s+X-Upstream-Addr\s+\$upstream_addr(?:\s+always)?\s*;",
+            "X-Upstream-Addr response header sourced from $upstream_addr",
+        )
+        require_pattern(
+            nginx_path,
+            nginx,
+            r"proxy_connect_timeout\s+1s\s*;",
+            "bounded upstream connect timeout for prompt survivor retry",
+        )
+        for upstream in ("app-1:8080", "app-2:8080"):
+            require_fragment(nginx_path, nginx, upstream, f"upstream {upstream}")
+
+        k6_path = "scripts/k6/multi-instance.js"
+        k6 = read_source(k6_path)
+        require_pattern(k6_path, k6, r"\bscenarios\s*:\s*\{", "scenario definitions")
+        if k6 is not None:
+            if len(re.findall(r"\bexecutor\s*:", k6)) < 2:
+                violations.append(f"{k6_path}: normal and contention scenarios are required")
+            if len(re.findall(r"\bduration\s*:", k6)) < 2:
+                violations.append(f"{k6_path}: each scenario must have a bounded duration")
+        require_pattern(
+            k6_path,
+            k6,
+            r"\bchecks\s*:\s*\[\s*[\"']rate\s*==\s*1[\"']\s*\]",
+            "checks threshold that fails the run",
+        )
+        require_pattern(k6_path, k6, r"\bhandleSummary\s*\(", "handleSummary output hook")
+        require_fragment(
+            k6_path,
+            k6,
+            "requestRatePerSecond",
+            "observed request throughput in the machine summary",
+        )
+        require_pattern(
+            k6_path,
+            k6,
+            r"metricValue\s*\(\s*data\s*,\s*[\"']http_reqs[\"']\s*,\s*[\"']rate[\"']\s*\)",
+            "throughput sourced from the k6 http_reqs rate",
+        )
+        require_pattern(
+            k6_path,
+            k6,
+            r"summaryTrendStats\s*:\s*\[[^\]]*[\"']med[\"'][^\]]*[\"']p\(95\)[\"'][^\]]*[\"']p\(99\)[\"'][^\]]*\]",
+            "explicit k6 trend statistics including p99",
+        )
+        require_pattern(
+            k6_path,
+            k6,
+            r"handleSummary[\s\S]*?[\"'][^\"']+\.json[\"']\s*:",
+            "machine-readable JSON summary output",
+        )
+
+        multi_path = "scripts/e2e/verify-multi-instance.sh"
+        multi = read_source(multi_path)
+        multi_patterns = (
+            (r"\btrap\b[^\n]*\bcleanup\b[^\n]*\b(?:0|EXIT)\b", "unconditional cleanup trap"),
+            (r"\brun_with_watchdog\s*\(\)", "watchdog helper"),
+            (r"down[^\n]*(?:--volumes|-v)[^\n]*--remove-orphans", "volume-removing cleanup"),
+            (r"X-Upstream-Addr", "load-balancer upstream observation"),
+            (r"sort\s+-u", "distinct upstream counting"),
+            (r"\bstop\s+app-1\b", "app-1 stop step"),
+            (r"post-stop", "post-stop success assertion"),
+            (r"APP2_UPSTREAM", "surviving app-2 upstream identity"),
+            (r"headers-current", "direct curl header capture file"),
+            (r"requestRatePerSecond", "throughput summary validation"),
+            (r"SUM\s*\([^\n]*(?:CHARGE|charge)[^\n]*(?:USE|use)", "balance/history equation"),
+            (r"FROM\s+user_points\s+WHERE\s+user_id", "fixture-scoped balance query"),
+            (r"FROM\s+point_histories\s+WHERE\s+user_id", "fixture-scoped history query"),
+            (r"FROM\s+orders\s+WHERE", "fixture-scoped order query"),
+            (r"FROM\s+payments\s+WHERE", "fixture-scoped payment query"),
+            (r"FROM\s+outbox_events\s+WHERE", "fixture-scoped Outbox query"),
+            (r"ORDER_PAID", "ORDER_PAID Outbox assertion"),
+            (r"PUBLISHED", "published Outbox assertion"),
+            (r"GROUP\s+BY\s+order_id[\s\S]{0,120}HAVING\s+COUNT\s*\(\s*\*\s*\)\s*>\s*1", "one-payment-per-order assertion"),
+            (r"processed_events", "consumer marker assertion"),
+            (r"order_paid_analytics", "analytics effect assertion"),
+            (r"kafka-console-producer", "duplicate Kafka delivery injection"),
+            (r"FLUSHALL", "Redis flush"),
+            (r"/api/v1/menus/popular", "popular-menu recovery request"),
+            (r"popular-menu:complete:", "Redis completeness marker validation"),
+            (r"for\s+marker_date\s+in\s+\$SEVEN_DATES", "seven-day marker iteration"),
+            (r"expected_total", "marker total metadata validation"),
+            (r"expected_members", "marker member metadata validation"),
+            (r"json\.load", "JSON summary parsing"),
+            (r"http_req_failed", "k6 HTTP failure summary validation"),
+            (r"\bchecks\b", "k6 checks summary validation"),
+        )
+        for pattern, contract in multi_patterns:
+            require_pattern(multi_path, multi, pattern, contract)
+        for fixture_marker in ("FIXTURE", "duplicate", "mysql_query", "summary"):
+            require_fragment(
+                multi_path, multi, fixture_marker, f"{fixture_marker} verification contract"
+            )
+        if multi is not None:
+            capture_match = re.search(
+                r"capture_upstream\s*\(\)\s*\{(?P<body>[\s\S]*?)^\}",
+                multi,
+                re.MULTILINE,
+            )
+            if capture_match is None:
+                violations.append(f"{multi_path}: capture_upstream function is missing")
+            else:
+                capture_body = capture_match.group("body")
+                if re.search(r"curl[\s\S]*?\|\s*awk", capture_body):
+                    violations.append(
+                        f"{multi_path}: capture_upstream must not hide curl failures in a pipeline"
+                    )
+                if '-D "$header_file"' not in capture_body:
+                    violations.append(
+                        f"{multi_path}: capture_upstream must capture headers after direct curl success"
+                    )
+            flush_position = multi.find("FLUSHALL")
+            recovered_popular_position = multi.find("/api/v1/menus/popular", flush_position + 1)
+            if flush_position >= 0 and recovered_popular_position < 0:
+                violations.append(
+                    f"{multi_path}: popular-menu must be requested after Redis is flushed"
+                )
+
+        registry_path = "ai/command-registry.json"
+        registry_text = read_source(registry_path)
+        registry = None
+        if registry_text is not None:
+            try:
+                registry = json.loads(registry_text)
+            except (json.JSONDecodeError, TypeError) as error:
+                violations.append(f"{registry_path}: invalid JSON: {error}")
+        if registry is not None:
+            commands = {
+                command.get("id"): command
+                for command in registry.get("commands", [])
+                if isinstance(command, dict)
+            }
+            command = commands.get("verify.e2e")
+            if command is None:
+                violations.append(f"{registry_path}: verify.e2e command is missing")
+            else:
+                if command.get("argv") != ["./scripts/e2e/verify-e2e.sh"]:
+                    violations.append(f"{registry_path}: verify.e2e argv must remain exact")
+                if command.get("classification") != "SAFE":
+                    violations.append(f"{registry_path}: verify.e2e must remain SAFE")
+                if command.get("parameters") != {"allowed": False, "schema": None}:
+                    violations.append(f"{registry_path}: verify.e2e parameters must remain disabled")
+                required_inputs = {
+                    "scripts/e2e/verify-e2e.sh",
+                    "scripts/e2e/verify-single-instance.sh",
+                    "scripts/e2e/verify-multi-instance.sh",
+                    "docker-compose.multi-instance.yml",
+                    "scripts/e2e/nginx.conf",
+                    "scripts/k6/multi-instance.js",
+                }
+                input_paths = set(command.get("inputPaths", []))
+                for missing_input in sorted(required_inputs - input_paths):
+                    violations.append(
+                        f"{registry_path}: verify.e2e inputPaths missing {missing_input!r}"
+                    )
 
         self.assertEqual(violations, [])
 

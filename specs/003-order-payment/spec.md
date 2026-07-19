@@ -133,13 +133,15 @@ Errors:
 - `payments` 추가
 - `daily_menu_sales` 증가
 - `outbox_events`에 `ORDER_PAID` 이벤트 추가
-- Redis Sorted Set score 증가
+- commit 후 해당 날짜의 현재 MySQL durable count를 Redis Sorted Set score에 절대값으로 대입하고 completeness metadata 게시
 
 ## Consistency and Concurrency
 
 주문/결제는 `point:user:{userId}` Redisson lock으로 동일 사용자 요청을 직렬화한다. lock 획득 후 MySQL 트랜잭션을 시작하고, 포인트 차감부터 Outbox 이벤트 저장까지 원자적으로 처리한다.
 
 Kafka 발행은 API 트랜잭션에서 직접 수행하지 않는다. Outbox 이벤트 저장까지만 주문 트랜잭션에 포함한다.
+
+주문 트랜잭션에서는 MySQL `daily_menu_sales.order_count`를 증가시킨다. commit 후 `ranking:date:{yyyy-MM-dd}` lock 안에서 현재 durable count와 total/member metadata를 다시 읽고, Redis `ZADD`로 score를 절대값 대입하면서 completeness metadata를 게시한다. Redis 갱신 실패는 이미 commit된 주문을 rollback하지 않으며 MySQL 집계가 복구 기준이다. 따라서 post-commit 갱신을 재시도해도 Redis snapshot 증가 방식의 중복 누적 drift가 발생하지 않는다.
 
 ## Test Cases
 
@@ -150,7 +152,9 @@ Kafka 발행은 API 트랜잭션에서 직접 수행하지 않는다. Outbox 이
 - 주문 성공 시 Outbox 이벤트 저장
 - 주문 실패 시 Outbox 이벤트 미저장
 - 일별 메뉴 집계 증가
-- Redis Sorted Set 증가
+- commit 후 Redis score 절대값 대입과 completeness metadata 게시
+- Redis 갱신 실패 시 주문 유지 및 MySQL 기준 복구
+- 동일 durable count 재시도 시 Redis score drift 방지
 - 동일 consumer group의 동일 이벤트 중복 전달 시 분석 효과 1건 유지
 - 분석 효과 저장 실패 시 processed marker 동시 rollback
 - `FAILED` Outbox 이벤트의 감사된 `READY` 복구

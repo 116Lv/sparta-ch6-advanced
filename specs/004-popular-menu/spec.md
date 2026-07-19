@@ -51,12 +51,13 @@ Acceptance Criteria:
 
 Description:
 
-Redis 조회 성능을 활용하되, MySQL 일별 집계 테이블을 기준 데이터로 유지한다.
+Redis 조회 성능을 활용하되, MySQL 일별 집계 테이블을 기준 데이터로 유지하고 Redis에는 commit 후 현재 durable 상태를 반영한다.
 
 Acceptance Criteria:
 
-- 주문 성공 시 Redis Sorted Set score가 증가한다.
-- 주문 성공 시 `daily_menu_sales.order_count`가 증가한다.
+- 주문 트랜잭션에서 `daily_menu_sales.order_count`가 증가한다.
+- commit 후 날짜별 lock 안에서 현재 MySQL durable count를 Redis Sorted Set score에 절대값 대입하고 current total/member completeness metadata를 게시한다.
+- Redis 갱신 실패는 주문을 rollback하지 않으며, 재시도는 동일 durable count를 다시 대입하여 증가 재시도의 score drift를 만들지 않는다.
 - Redis 데이터가 유실되어도 MySQL 기준으로 재구성할 수 있다.
 
 ## API Contract
@@ -121,7 +122,9 @@ Errors:
 - 동률 시 메뉴 ID 오름차순 정렬
 - Redis Sorted Set 기준 조회
 - MySQL 일별 집계 기준 복구
-- 주문 성공 시 Redis와 MySQL 집계 증가
+- 주문 트랜잭션의 MySQL 집계 증가
+- commit 후 날짜별 lock에서 Redis durable count 절대값 대입과 completeness metadata 게시
+- Redis 실패 후 MySQL 기준 복구 및 동일 durable count 재시도 시 score drift 방지
 
 ## Open Questions
 

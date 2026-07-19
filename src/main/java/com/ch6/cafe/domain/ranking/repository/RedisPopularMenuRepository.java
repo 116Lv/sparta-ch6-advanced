@@ -22,6 +22,8 @@ public class RedisPopularMenuRepository {
     private static final String TEMP_PREFIX = "popular-menu:tmp:";
     private static final Duration DAILY_TTL = Duration.ofDays(14);
     private static final Duration TEMP_TTL = Duration.ofMinutes(1);
+    // Publish the live ZSET (or delete it for an empty date) and its completeness marker in one
+    // Lua execution so readers cannot accept data from a different generation than the marker.
     private static final DefaultRedisScript<Long> REPLACE_SCRIPT = new DefaultRedisScript<>("""
             redis.call('DEL', KEYS[1])
             for index = 4, #ARGV, 2 do
@@ -73,6 +75,8 @@ public class RedisPopularMenuRepository {
             redisTemplate.expire(unionKey, TEMP_TTL);
             Set<ZSetOperations.TypedTuple<String>> tuples =
                     redisTemplate.opsForZSet().reverseRangeWithScores(unionKey, 0, -1);
+            // If the second marker read differs from the first, the union may span generations;
+            // reject it so the caller falls back to durable MySQL data.
             List<String> secondMarkers = redisTemplate.opsForValue().multiGet(markerKeys);
             if (!firstMarkers.equals(secondMarkers)
                     || !validSnapshot(dates, dailyKeys, secondMarkers, expected)) {

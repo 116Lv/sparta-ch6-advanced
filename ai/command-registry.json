@@ -2,7 +2,7 @@
   "$schema": "./schemas/command-registry.schema.json",
   "$id": "ai/command-registry.json",
   "schemaVersion": 1,
-  "updatedAt": "2026-07-16T11:06:24Z",
+  "updatedAt": "2026-07-16T19:43:00Z",
   "commands": [
     {
       "id": "dependencies.install",
@@ -178,24 +178,35 @@
         {
           "kind": "STATIC_FILE",
           "path": "scripts/e2e/verify-e2e.sh",
-          "claim": "The no-argument script defines bounded black-box assertions and unconditional isolated Compose cleanup."
+          "claim": "The no-argument script sequences the preserved single-instance scenario and the configured multi-instance/k6 scenario."
+        },
+        {
+          "kind": "STATIC_FILE",
+          "path": "docs/superpowers/specs/2026-07-17-multi-instance-k6-verification-design.md",
+          "claim": "The approved P2 design bounds the two-instance load, failure, idempotency, and Redis-recovery evidence and its non-claims."
         },
         {
           "kind": "RUNTIME_COMMAND",
           "path": ".ai-runs/verify-20260716-level5-completion-e2e-01/artifact-manifest.json",
-          "claim": "Finalized official verify.e2e run passed the Docker Compose black-box scenario with zero failures."
+          "claim": "Historical finalized evidence passed the earlier single-instance Docker Compose black-box implementation; it does not verify the newly configured multi-instance/k6 scenario."
         },
         {
           "kind": "RUNTIME_COMMAND",
           "path": "ai/work-logs/issue-20/final-verifier.md",
-          "claim": "Durable reconciliation records the finalized run identity, manifest, scenario result, and clean Ubuntu checkout HEAD."
+          "claim": "Durable reconciliation records the earlier single-instance run identity, manifest, scenario result, and clean Ubuntu checkout HEAD."
+        },
+        {
+          "kind": "RUNTIME_COMMAND",
+          "path": ".ai-runs/verify-20260717-assignment-p2-e2e-03/artifact-manifest.json",
+          "claim": "Fresh finalized official verify.e2e evidence passed the sequenced single-instance and multi-instance/k6 scenarios with exit code 0; k6 recorded 60 requests, 120 checks, and zero failed requests or checks."
         }
       ],
-      "inputPaths": ["scripts/e2e/verify-e2e.sh", "docker-compose.yml", "docker-compose.e2e.yml", "Dockerfile", "src/main/**", "src/test/**"],
-      "lastVerifiedAt": "2026-07-16T09:59:30Z",
+      "inputPaths": ["scripts/e2e/verify-e2e.sh", "scripts/e2e/verify-single-instance.sh", "scripts/e2e/verify-multi-instance.sh", "scripts/e2e/nginx.conf", "scripts/k6/multi-instance.js", "docker-compose.yml", "docker-compose.e2e.yml", "docker-compose.multi-instance.yml", "Dockerfile", "src/main/**", "src/test/**"],
+      "lastVerifiedAt": "2026-07-16T19:40:52Z",
       "notes": [
-        "The executable and isolated Compose topology are authored.",
-        "Finalized official Ubuntu-native Docker Compose runtime evidence passed for the exact registered argv."
+        "The no-argument executable, preserved single-instance scenario, and isolated multi-instance/k6 topology are configured and verified by fresh finalized Ubuntu-native evidence.",
+        "The 2026-07-16 level-5 evidence remains historical and applies only to the earlier single-instance implementation; the 2026-07-17 assignment P2 artifact verifies the changed sequencer.",
+        "Finalization verified artifact integrity with scope INTEGRITY_ONLY and completenessEvaluated false; it does not independently prove verification completeness or the documented P2 non-claims."
       ]
     },
     {

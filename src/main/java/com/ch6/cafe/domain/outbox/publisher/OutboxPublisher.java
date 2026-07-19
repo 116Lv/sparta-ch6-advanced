@@ -78,6 +78,9 @@ public class OutboxPublisher {
     private void publish(ClaimedEvent event) {
         try {
             String message = message(event);
+            // The short claim transaction has already committed, so broker I/O holds no DB row lock.
+            // Token-checked completion blocks stale owners, but the ACK/status gap can still duplicate;
+            // consumers must deduplicate by (consumer group, event ID).
             kafkaTemplate.send(TOPIC, Long.toString(event.aggregateId()), message)
                     .get(5, TimeUnit.SECONDS);
             complete(event.id(), event.token());
