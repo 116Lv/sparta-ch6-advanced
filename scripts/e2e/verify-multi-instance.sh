@@ -280,7 +280,7 @@ FIXTURE_MENU_ID=$(printf '%s\n' "$fixture" | awk 'END { print $2 }')
 # Two VUs sleep between attempts for four seconds, so this bounded balance has ample headroom.
 http_json POST "$BASE_URL/api/v1/users/$FIXTURE_USER_ID/points/charge" '{"amount":300000}' >/dev/null
 
-bounded_compose "$LOAD_TIMEOUT" --profile k6 run --rm -T \
+bounded_compose "$LOAD_TIMEOUT" --profile k6 run --no-deps --rm -T \
     -e BASE_URL=http://nginx:8080 \
     -e FIXTURE_USER_ID="$FIXTURE_USER_ID" \
     -e FIXTURE_MENU_ID="$FIXTURE_MENU_ID" k6
