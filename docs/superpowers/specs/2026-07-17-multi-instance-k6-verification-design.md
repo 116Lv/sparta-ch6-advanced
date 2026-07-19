@@ -55,7 +55,7 @@ The run does not claim publisher fairness, durable observation of every claim tr
 
 ## Load result policy
 
-k6 records throughput, request counts, error counts, and p50/p95/p99 latency as baseline observations. No TPS or latency pass target is invented. Thresholds cover only structural correctness, such as completed checks and absence of unexpected HTTP failures. Machine-readable summaries are copied to a temporary result directory, validated, and emitted into finalized runner stdout; generated load outputs are not committed.
+k6 records throughput, request counts, error counts, and p50/p95/p99 latency as baseline observations. No TPS or latency pass target is invented. Thresholds cover only structural correctness, such as completed checks and absence of unexpected HTTP failures. Machine-readable summaries are written to `build/reports/k6/<compose-project>/k6-summary.json`, validated, and emitted into finalized runner stdout; generated load outputs are not committed.
 
 ## Failure handling
 
