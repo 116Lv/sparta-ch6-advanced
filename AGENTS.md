@@ -96,6 +96,11 @@ Do not overstate later workflow phases. Phase 2A/2B do not execute product comma
 6. If behavior, contracts, requirements, or architecture changed, update their owner docs or ADRs.
 7. Before a completion claim, load and follow the applicable verification and completion documents. Late loading changes timing, not rigor.
 
+## Pull Request Workflow
+
+- Before creating or updating a pull request, read `.github/pull_request_template.md` and preserve its section structure in the PR body.
+- Unless the user explicitly requests a local-only merge, push the feature branch, create the PR, wait for required checks to pass, merge it on GitHub, and only then synchronize local `main`. Do not merge local `main` before the PR is merged.
+
 ## Delegation And Issue Workflow
 
 Only when dispatching subagents, read `ai/subagent-workflow.md` and `ai/github-issue-planning.md`, then create and maintain the required Issue-scoped work logs. Do not preload delegation documents for single-agent work.
