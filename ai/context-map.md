@@ -1,81 +1,81 @@
-# AI Workflow Context Map
+# AI 워크플로 컨텍스트 맵
 
-## Human Policy Notes
+## 사람용 정책 참고 사항
 
-`ai/context-map.json` schemaVersion 2 is the canonical source for Phase 2A route, phase, lazy-loading, and search-scope rules. JSON is canonical. Markdown is not parsed as executable state.
+`ai/context-map.json` schemaVersion 2는 Phase 2A route, phase, lazy-loading, search-scope rule의 canonical source다. JSON이 canonical이다. Markdown은 실행 가능한 상태로 파싱하지 않는다.
 
-The governing principle is: **Read late, read narrow, escalate only when the task phase requires it.** Deferred reading never permits a required document or gate to be skipped. When the selected route or phase is unknown, incomplete, or no longer matches the task, re-route; if required context still cannot be established, report `BLOCKED` rather than guessing.
+지배 원칙은 다음과 같다. **늦게 읽고, 좁게 읽으며, task phase가 요구할 때만 escalate한다.** deferred reading은 필수 document 또는 gate를 건너뛸 수 있게 하지 않는다. 선택한 route 또는 phase를 알 수 없거나 불완전하거나 더 이상 task와 일치하지 않으면 re-route한다. 그래도 필수 context를 확립할 수 없으면 추측하지 말고 `BLOCKED`를 보고한다.
 
-Product commands remain NOT RUN. Phase 2A does not evaluate verification completeness, mark registry entries `VERIFIED`, or claim host-wide interception.
+제품 명령은 계속 NOT RUN이다. Phase 2A는 verification completeness를 평가하거나 registry entry를 `VERIFIED`로 표시하거나 host-wide interception을 주장하지 않는다.
 
-## Canonical Route And Phase Model
+## 정식 경로 및 단계 모델
 
-| Route | Owning feature | Canonical phases | Default behavior |
+| Route | 소유 기능 | Canonical phase | 기본 동작 |
 |---|---|---|---|
-| `answer` | none | `answer` | Read only directly relevant material. No workflow-policy preload. |
-| `light-structure` | none (direct-document route) | `light-structure` | Use narrow files or search results; load onboarding indexes only when broad mapping is actually needed. |
-| `feature-work` | required | `feature-requirements`, `implementation`, `verification`, `completion` | Start with `specs/{feature}/spec.md`; delay plan, tasks, decisions, checklist, verification, and completion documents until their triggers. |
-| `repo-wide-ai-workflow` | none allowed | `implementation`, `verification`, `completion`, `workflow-rediscovery` | Load only phase owner documents. Rediscovery starts with the context map and activates only the selected policy or state subject. |
+| `answer` | 없음 | `answer` | 직접 관련된 material만 읽는다. workflow-policy를 미리 읽지 않는다. |
+| `light-structure` | 없음(direct-document route) | `light-structure` | 좁은 file 또는 search result를 사용한다. broad mapping이 실제로 필요할 때만 onboarding index를 로드한다. |
+| `feature-work` | 필수 | `feature-requirements`, `implementation`, `verification`, `completion` | `specs/{feature}/spec.md`로 시작한다. trigger 전까지 plan, task, decision, checklist, verification, completion document를 지연한다. |
+| `repo-wide-ai-workflow` | 없음 허용 | `implementation`, `verification`, `completion`, `workflow-rediscovery` | phase owner document만 로드한다. rediscovery는 context map으로 시작하고 선택된 policy 또는 state subject만 활성화한다. |
 
-Each phase contains these executable fields:
+각 phase는 다음 executable field를 포함한다.
 
-- `repositoryContextMode`: semantically fixed to `OPTIONAL` for `answer/answer` and `REQUIRED` for every light-structure, feature, and repository-workflow phase;
-- `requiredDocuments`: minimum documents that must already be read for the phase;
-- `deferredDocuments`: documents that remain unread until a declared trigger fires;
-- `deferredDocumentTriggers`: the trigger-to-document mapping;
-- `activityRequirements`: closed activity IDs and the canonical triggers mandatory for each activity;
-- `rediscoverySubjects`: empty outside workflow rediscovery; there it is the closed subject-to-trigger-to-document mapping;
-- `includePaths`: typed default search scopes for the route and phase;
-- `optInPaths`: globally deferred typed scopes that may be added only for the recorded trigger; and
-- `rerouteTriggers`: conditions that invalidate the current route-phase selection.
+- `repositoryContextMode`: `answer/answer`에는 의미상 고정된 `OPTIONAL`, 모든 light-structure, feature, repository-workflow phase에는 `REQUIRED`
+- `requiredDocuments`: phase에 대해 이미 읽어야 하는 최소 document
+- `deferredDocuments`: 선언된 trigger가 실행될 때까지 읽지 않는 document
+- `deferredDocumentTriggers`: trigger-to-document mapping
+- `activityRequirements`: 각 activity에 필수인 닫힌 activity ID와 canonical trigger
+- `rediscoverySubjects`: workflow rediscovery 밖에서는 비어 있고, 그 안에서는 닫힌 subject-to-trigger-to-document mapping
+- `includePaths`: route와 phase의 typed default search scope
+- `optInPaths`: 기록된 trigger에만 추가할 수 있는 전역적으로 deferred된 typed scope
+- `rerouteTriggers`: 현재 route-phase selection을 무효화하는 조건
 
-`workflow-rediscovery` requires only `ai/context-map.json` as its universal baseline. A non-BLOCKED handoff selects at least one closed subject in `rediscoverySubjects`: routing policy, cache policy, workflow-cache state, tool policy, resource budget, project state, or command registry. Each selection activates exactly its canonical trigger and exact documents; unselected subjects cannot add documents or scopes. This avoids loading the former nine-document set atomically. Answer, light structure, normal feature understanding, and non-normative wording changes do not inherit rediscovery context. Answer Mode has no deferred-document trigger; when its reroute condition fires, the destination phase supplies its own context. Light structure retains only the direct onboarding trigger for `README.md` and `docs/00-index.md`; requirement, behavior, contract, architecture, and verification-policy changes reroute before loading destination context. Answer Mode may use `repositoryContextRequired: false` only with no selected repository documents. Repository-dependent answers and every Light Route select exact documents explicitly; this records context need without inferring intent or preloading heavy policy documents.
+`workflow-rediscovery`는 universal baseline으로 `ai/context-map.json`만 요구한다. non-BLOCKED handoff는 `rediscoverySubjects`에서 routing policy, cache policy, workflow-cache state, tool policy, resource budget, project state, command registry 중 적어도 하나의 닫힌 subject를 선택한다. 각 selection은 정확히 canonical trigger와 document만 활성화한다. 선택하지 않은 subject는 document나 scope를 추가할 수 없다. 이는 이전의 9-document set을 원자적으로 로드하지 않게 한다. Answer, light structure, 일반 feature 이해, non-normative wording change는 rediscovery context를 상속하지 않는다. Answer Mode에는 deferred-document trigger가 없다. reroute condition이 실행되면 destination phase가 자신의 context를 공급한다. Light structure는 `README.md`와 `docs/00-index.md`의 direct onboarding trigger만 유지한다. requirement, behavior, contract, architecture, verification-policy change는 destination context를 로드하기 전에 reroute한다. Answer Mode는 선택된 repository document가 전혀 없을 때만 `repositoryContextRequired: false`를 사용할 수 있다. repository-dependent answer와 모든 Light Route는 exact document를 명시적으로 선택한다. 이는 intent를 추론하거나 무거운 policy document를 미리 로드하지 않고 context need를 기록한다.
 
-## Phase-Gated Feature Reading
+## 단계 게이트가 적용된 기능 읽기
 
-- Requirements starts with only the owning `spec.md`; the `specs` directory and other feature specs are not required context.
-- Implementation loads `plan.md` only while creating or executing a plan, `tasks.md` only for execution or verification handoff, and `decisions.md` only for a real decision lookup or change.
-- `PLANNING` requires the plan trigger but not the task trigger. `EXECUTION` requires plan and task context, while `VERIFICATION_HANDOFF` preserves the task gate.
-- Feature `INDEPENDENT_AUDIT` requires the applicable verification policy without requiring the implementation task record; feature `VERIFICATION_HANDOFF` requires both.
-- Feature completion makes its checklist, QA gate, done-claim, and Issue-closure triggers mandatory. Repository-wide completion makes its QA, done-claim, and Issue-closure triggers mandatory. Late loading does not weaken any gate: a non-BLOCKED completion handoff activates and reads every effective required document, while `BLOCKED` may preserve missing mandatory context explicitly.
+- Requirements는 소유 `spec.md` 하나로 시작한다. `specs` directory와 다른 feature spec은 필수 context가 아니다.
+- Implementation은 plan 생성 또는 실행 중에만 `plan.md`를, execution 또는 verification handoff에만 `tasks.md`를, 실제 decision lookup 또는 change에만 `decisions.md`를 로드한다.
+- `PLANNING`은 plan trigger가 필요하지만 task trigger는 필요하지 않다. `EXECUTION`은 plan과 task context가 필요하고 `VERIFICATION_HANDOFF`는 task gate를 유지한다.
+- Feature `INDEPENDENT_AUDIT`는 implementation task record 없이 applicable verification policy가 필요하다. feature `VERIFICATION_HANDOFF`는 둘 다 필요하다.
+- Feature completion은 checklist, QA gate, done-claim, Issue-closure trigger를 필수로 만든다. repository-wide completion은 QA, done-claim, Issue-closure trigger를 필수로 만든다. 늦은 로드는 gate를 약화하지 않는다. non-BLOCKED completion handoff는 effective required document를 모두 활성화하고 읽으며, `BLOCKED`는 누락된 mandatory context를 명시적으로 보존할 수 있다.
 
-## Deferred Paths Versus Excluded Paths
+## 유예 경로와 제외 경로
 
-`includePaths`, `optInPaths[].path`, `deferredPaths`, and `excludedPaths` use a closed `pathScope` object. The only supported kinds are `exact` (`{"kind":"exact","path":"AGENTS.md"}`), `subtree` (`{"kind":"subtree","path":"src/main"}`), `direct-children` with a simple extension suffix (`{"kind":"direct-children","path":"ai","suffix":".md"}`), and `descendant-directory` (`{"kind":"descendant-directory","name":"__pycache__"}`). Scope fields do not accept glob strings.
+`includePaths`, `optInPaths[].path`, `deferredPaths`, `excludedPaths`는 닫힌 `pathScope` object를 사용한다. 지원되는 kind는 `exact`(`{"kind":"exact","path":"AGENTS.md"}`), `subtree`(`{"kind":"subtree","path":"src/main"}`), 단순 extension suffix를 갖는 `direct-children`(`{"kind":"direct-children","path":"ai","suffix":".md"}`), `descendant-directory`(`{"kind":"descendant-directory","name":"__pycache__"}`)뿐이다. scope field는 glob string을 수락하지 않는다.
 
-`deferredPaths` are omitted from ordinary broad searches but remain available through a matching phase `optInPaths` trigger:
+`deferredPaths`는 일반 broad search에서 제외되지만 일치하는 phase `optInPaths` trigger로 사용할 수 있다.
 
-- subtree `ai/work-logs`: opt in only to the active Issue summary and current role logs;
-- subtree `ai/fixtures`: opt in for directly related workflow fixtures or fixture-backed tests;
-- subtree `ai/schemas`: opt in for a schema contract task; and
-- subtree `docs/superpowers`: opt in only to confirm a directly relevant historical design decision.
+- subtree `ai/work-logs`: active Issue summary와 current role log에만 opt in
+- subtree `ai/fixtures`: 직접 관련된 workflow fixture 또는 fixture-backed test에 opt in
+- subtree `ai/schemas`: schema contract task에 opt in
+- subtree `docs/superpowers`: 직접 관련된 historical design decision 확인에만 opt in
 
-`excludedPaths` use subtree scopes for `.ai-runs`, `.git`, `build`, `.gradle`, `.idea`, and `.worktrees`, plus the descendant-directory scope named `__pycache__`.
+`excludedPaths`는 `.ai-runs`, `.git`, `build`, `.gradle`, `.idea`, `.worktrees`의 subtree scope와 `__pycache__`라는 descendant-directory scope를 사용한다.
 
-An excluded path cannot be included or opted in. Every required document is covered by a default include scope, while no default include may cover a phase-deferred document. Opt-in paths must come from the canonical deferred set, and a handoff may materialize only exact descendant scopes after the exact canonical trigger appears in `activatedTriggers`.
+excluded path는 include 또는 opt in할 수 없다. 모든 required document는 default include scope에 포함되고 default include는 phase-deferred document를 포함할 수 없다. opt-in path는 canonical deferred set에서 와야 하고 handoff는 정확한 canonical trigger가 `activatedTriggers`에 나타난 후에만 exact descendant scope를 materialize할 수 있다.
 
-## Validation Contract
+## 검증 계약
 
-The helper validates every exact path-bearing field and typed scope. Percent signs, traversal components, glob syntax, URIs, drives, UNC paths, and backslashes cannot be represented. The `{feature}` placeholder is valid only in an exact `specs/{feature}/...` path. Route IDs must be unique, phase IDs must be unique within each route, route-phase pairs and allowed activities must be canonical, required and deferred documents must be disjoint, and `deferredDocuments` must equal the union of deferred-document trigger mappings. Reroute-only documents are loaded after rerouting into the destination phase rather than left as orphan deferred entries. Within a phase, document-trigger identities are unique, opt-in-trigger identities are unique, and the two identity sets are disjoint; each activity's mandatory triggers select canonical identities. Rediscovery subject identities and their trigger/document mappings are exact and closed.
+helper는 모든 exact path-bearing field와 typed scope를 검증한다. percent sign, traversal component, glob syntax, URI, drive, UNC path, backslash는 표현할 수 없다. `{feature}` placeholder는 exact `specs/{feature}/...` path에서만 유효하다. route ID는 고유해야 하고 phase ID는 각 route 내에서 고유해야 하며 route-phase pair와 허용 activity는 canonical이어야 하고 required/deferred document는 disjoint해야 하며 `deferredDocuments`는 deferred-document trigger mapping의 union과 같아야 한다. reroute-only document는 orphan deferred entry로 남지 않고 destination phase로 rerouting 후 로드한다. phase 안에서 document-trigger identity와 opt-in-trigger identity는 각각 고유하고 두 identity set은 disjoint이며 각 activity의 mandatory trigger는 canonical identity를 선택한다. rediscovery subject identity 및 trigger/document mapping은 exact하고 closed다.
 
-Unknown route or phase values are validation errors. `repo-intake` does not silently fall back to a heavier route.
+unknown route 또는 phase 값은 validation error다. `repo-intake`는 더 무거운 route로 조용히 fallback하지 않는다.
 
-## Subagent And Handoff Overlay
+## 하위 에이전트 및 인계 오버레이
 
-Delegation does not replace deferred reading. `ai/agent-handoff.json` records the route, task phase, closed `activityId`, any closed `rediscoverySubjects`, owning feature, unique `activatedTriggers`, read documents, documents still deferred, canonical trigger mappings, current include/deferred paths, decisions, open questions, remaining work, remaining verification evidence, and re-route triggers.
+delegation은 deferred reading을 대체하지 않는다. `ai/agent-handoff.json`은 route, task phase, closed `activityId`, 모든 closed `rediscoverySubjects`, owning feature, unique `activatedTriggers`, read document, 아직 deferred인 document, canonical trigger mapping, current include/deferred path, decision, open question, remaining work, remaining verification evidence, re-route trigger를 기록한다.
 
-The helper compares a handoff with this context map. `activityId` must be compatible with the selected route-phase, and only that activity's mandatory triggers are required. `activatedTriggers` must be a subset of canonical document and opt-in triggers. Effective required documents are base `requiredDocuments` plus documents mapped by activated document triggers; READY and PARTIAL must have read all of them. Every read document is covered by `includePaths`, no read remains deferred, selected documents are read and have matching exact scopes, and activated deferred documents gain matching exact scopes. Extra scopes are closed to phase defaults, direct exact selections, selected rediscovery subject documents, and exact paths materialized beneath activated opt-ins. READY and PARTIAL read every materialized exact path; BLOCKED may omit that read but cannot widen or use a foreign scope. `deferredDocuments` is exactly the canonical deferred set minus activated document-trigger documents. Only `BLOCKED` may omit mandatory activation or effective required reads; canonical trigger arrays and scope authorization still apply. Feature work without an owning feature is invalid; `NONE_ALLOWED` and `DIRECT_DOCUMENT` routes require `owningFeature: none`.
+helper는 handoff를 이 context map과 비교한다. `activityId`는 선택한 route-phase와 호환되어야 하고 해당 activity의 mandatory trigger만 필요하다. `activatedTriggers`는 canonical document 및 opt-in trigger의 subset이어야 한다. effective required document는 base `requiredDocuments`와 activated document trigger가 매핑한 document이며 READY와 PARTIAL은 모두 읽어야 한다. 모든 read document는 `includePaths`에 포함되고 read는 deferred 상태로 남지 않으며 selected document는 읽히고 일치하는 exact scope가 있어야 하며 activated deferred document는 일치하는 exact scope를 얻는다. extra scope는 phase default, direct exact selection, selected rediscovery subject document, activated opt-in 아래에서 materialize된 exact path로 닫힌다. READY와 PARTIAL은 materialize된 모든 exact path를 읽고, BLOCKED는 그 read를 생략할 수 있지만 scope를 넓히거나 foreign scope를 사용할 수 없다. `deferredDocuments`는 activated document-trigger document를 뺀 canonical deferred set과 정확히 같다. `BLOCKED`만 mandatory activation 또는 effective required read를 생략할 수 있으며 canonical trigger array와 scope authorization은 계속 적용된다. owning feature 없는 feature work는 invalid이고 `NONE_ALLOWED`, `DIRECT_DOCUMENT` route는 `owningFeature: none`이 필요하다.
 
-## Repository Surfaces
+## 저장소 Surface
 
-| Surface ID | Paths | Owner |
+| Surface ID | Path | Owner |
 |---|---|---|
-| `product-source` | `src/main` | product feature specs |
-| `product-tests` | `src/test` | product feature specs |
+| `product-source` | `src/main` | product feature spec |
+| `product-tests` | `src/test` | product feature spec |
 | `feature-specs` | `specs` | owning feature |
 | `ai-workflow` | `ai`, `scripts/ai` | repo-wide AI workflow |
-| `project-docs` | `docs`, `README.md` | documentation routes |
+| `project-docs` | `docs`, `README.md` | documentation route |
 
-## Phase 2A Boundary
+## Phase 2A 경계
 
-repository scripts cannot intercept every host file read, search, or external tool call before Phase 3. The map provides canonical policy, schema validation, and reviewable intake behavior; it does not technically prevent every host action or rewrite project state automatically.
+repository script는 Phase 3 이전에 모든 host file read, search, external tool call을 가로챌 수 없다. map은 canonical policy, schema validation, 검토 가능한 intake behavior를 제공하지만 모든 host action을 기술적으로 방지하거나 project state를 자동으로 재작성하지 않는다.

@@ -1,13 +1,13 @@
 ---
-issue: pending
-issue_url:
-tracking_status: pending_issue
-status: handoff_needed
+issue: 20
+issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20
+tracking_status: issue_backed
+status: done
 owning_feature: "none"
 current_owner: repository-owner
 started_at: 2026-07-15T20:47:50.5155079+09:00
-ended_at:
-last_updated: 2026-07-15T23:59:00+09:00
+ended_at: 2026-07-20T10:37:36+09:00
+last_updated: 2026-07-20T14:15:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - specs/001-menu-query/spec.md
@@ -15,8 +15,8 @@ related_files:
   - specs/003-order-payment/spec.md
   - specs/004-popular-menu/spec.md
 changed_files:
-  - ai/work-logs/no-issue/cafe-ordering-consistency-audit/README.md
-  - ai/work-logs/no-issue/cafe-ordering-consistency-audit/reviewer.md
+  - ai/work-logs/issue-20/archive/cafe-ordering-consistency-audit/README.md
+  - ai/work-logs/issue-20/archive/cafe-ordering-consistency-audit/reviewer.md
   - ai/work-logs/index.md
 commands_run:
   - git rev-parse --show-toplevel
@@ -28,15 +28,12 @@ commands_run:
   - JSON parse ai/verification-policy.json and ai/command-registry.json
   - scripts/ai/verification-gate.sh attempted through bash.exe; failed before script start because WSL /bin/bash is unavailable
 tests_run: []
-blockers:
-  - GitHub Issue creation rejected because external disclosure was not authorized
-  - Required critical-data product verification has no VERIFIED command path
-  - Static Phase 2C helper could not start because this Windows host has no WSL /bin/bash
+blockers: []
 skill_ids:
   - superpowers:subagent-driven-development
   - superpowers:requesting-code-review
   - superpowers:verification-before-completion
-handoff_state_ref: ai/work-logs/no-issue/cafe-ordering-consistency-audit/README.md
+handoff_state_ref: ai/work-logs/issue-20/archive/cafe-ordering-consistency-audit/README.md
 reusable_context_refs: []
 not_run_project_commands:
   - verify.build
@@ -46,15 +43,17 @@ not_run_project_commands:
   - verify.api-smoke
   - db.migration
   - db.seed
-github_reconciliation_status: pending_external_authorization
-reconciliation_required: true
+github_reconciliation_status: complete
+reconciliation_required: false
 issue_creation_attempted_at: 2026-07-15T20:47:50.5155079+09:00
 issue_creation_failure_reason: GitHub connector rejected external disclosure because the user had not explicitly authorized issue creation
 expected_issue_scope: Independent cross-feature audit of cafe ordering consistency implementation at 16bea34..HEAD
-migration_history: []
+migration_history: ["2026-07-20T14:15:00+09:00: Issue #20의 완료된 Level 5 검증에 흡수된 선행 감사를 no-issue fallback에서 issue-20/archive로 이관"]
 ---
 
 # Issue Summary
+
+> Archived status: 이 기록은 Issue #20의 Level 5 런타임 검증으로 대체·완료된 선행 정적 감사다. 아래의 blocker와 `NOT RUN` 문구는 당시 시점의 이력이며 현재 미완료 상태가 아니다.
 
 ## Recovery Summary
 
@@ -105,11 +104,11 @@ Tasks 1-5 completed correction and fresh static-review cycles. The final whole-b
 
 - Next role: repository-owner or supported CI/runtime operator
 - Required reading:
-  - [Menu Query spec](../../../../specs/001-menu-query/spec.md)
-  - [Point Charge spec](../../../../specs/002-point-charge/spec.md)
-  - [Order Payment spec](../../../../specs/003-order-payment/spec.md)
-  - [Popular Menu spec](../../../../specs/004-popular-menu/spec.md)
+  - [Menu Query spec](../../../../../specs/001-menu-query/spec.md)
+  - [Point Charge spec](../../../../../specs/002-point-charge/spec.md)
+  - [Order Payment spec](../../../../../specs/003-order-payment/spec.md)
+  - [Popular Menu spec](../../../../../specs/004-popular-menu/spec.md)
 - Context links:
   - [Review log](reviewer.md)
-- Remaining work: provide VERIFIED unit/integration/API-smoke/E2E execution, apply migrations and review logs through the supported evidence path, then authorize pending GitHub Issue reconciliation if desired.
-- Evidence required: accepted command-runner artifacts for required critical-data checks; real HTTP/server-log evidence; successful Phase 2C gate output on a supported shell/host.
+- Remaining work: 없음. Issue #20이 공식 unit/integration/API-smoke/E2E 실행과 Phase 2C 증거를 완료했다.
+- Evidence required: [Issue #20 요약](../../README.md)의 완료 증거를 따른다.

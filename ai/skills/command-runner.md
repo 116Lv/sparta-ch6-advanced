@@ -1,35 +1,35 @@
 # Command Runner Skill
 
-## Purpose
+## 목적
 
-Select the supported command-runner workflow contract by registry ID without bypassing the Phase 1B boundary.
+Phase 1B 경계를 우회하지 않고 레지스트리 ID로 지원되는 command-runner 워크플로 계약을 선택한다.
 
-## Required Inputs
+## 필수 입력
 
 - `ai/command-registry.json`
-- Phase 1B command-runner policy
-- Current handoff state
+- Phase 1B command-runner 정책
+- 현재 handoff 상태
 
-## Allowed Operations
+## 허용 작업
 
-- Explain that `scripts/ai/command-runner.sh` is the only supported project-command path after Phase 1B.
-- Record NOT RUN product commands for Phase 2B.
+- Phase 1B 이후 `scripts/ai/command-runner.sh`가 유일하게 지원되는 project-command 경로임을 설명한다.
+- Phase 2B의 제품 명령을 NOT RUN으로 기록한다.
 
-## Prohibited Operations
+## 금지 작업
 
-- Product commands remain NOT RUN in Phase 2B.
-- Do not execute direct shell project commands.
-- Do not execute RISKY, DESTRUCTIVE, non-POSIX, migration, seed, server, Docker, HTTP, or infrastructure commands.
+- Phase 2B에서 제품 명령은 NOT RUN으로 유지한다.
+- 직접 shell project command를 실행하지 않는다.
+- RISKY, DESTRUCTIVE, non-POSIX, migration, seed, server, Docker, HTTP 또는 infrastructure 명령을 실행하지 않는다.
 
-## Evidence Outputs
+## 증거 출력
 
-- Work-log NOT RUN entries.
-- Policy and handoff references.
+- Work-log NOT RUN 항목
+- Policy 및 handoff 참조
 
-## Handoff And Reuse
+## Handoff 및 재사용
 
-Handoffs include `skill_ids`, `handoff_state_ref`, `reusable_context_refs`, `not_run_project_commands`, and command registry refs.
+handoff에는 `skill_ids`, `handoff_state_ref`, `reusable_context_refs`, `not_run_project_commands`, 명령 레지스트리 ref를 포함한다.
 
-## Phase 2B Boundary
+## Phase 2B 경계
 
-Supported-path execution remains future or later-phase behavior for this task; Phase 2B only records the skill contract.
+지원 경로 실행은 이 작업의 향후 또는 이후 phase 동작으로 남으며 Phase 2B는 skill 계약만 기록한다.

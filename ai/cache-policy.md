@@ -1,45 +1,45 @@
-# AI Workflow Cache Policy
+# AI 워크플로 캐시 정책
 
-## Human Policy Notes
+## 사람용 정책 참고 사항
 
-`ai/workflow-cache.json` is the canonical Phase 2A cache record. This Markdown file explains freshness and invalidation policy. JSON is canonical. Markdown is not parsed as executable state.
+`ai/workflow-cache.json`은 canonical Phase 2A cache record다. 이 Markdown file은 freshness와 invalidation policy를 설명한다. JSON이 canonical이다. Markdown은 실행 가능한 상태로 파싱하지 않는다.
 
-Product commands remain NOT RUN. Phase 2A does not evaluate verification completeness and does not promote ignored local evidence into durable cross-machine proof.
+제품 명령은 계속 NOT RUN이다. Phase 2A는 verification completeness를 평가하지 않고 ignored local evidence를 durable cross-machine proof로 승격하지 않는다.
 
-## Cache Keys
+## 캐시 키
 
-File-read entries are keyed by normalized repository-relative path and SHA-256 content digest. Command evidence summaries are keyed by command ID, argv hash, working directory, declared input fingerprints, and allowlisted environment fingerprint from the supported command gateway.
+file-read entry는 normalized repository-relative path와 SHA-256 content digest로 키가 지정된다. command evidence summary는 지원 command gateway의 command ID, argv hash, working directory, declared input fingerprint, allowlisted environment fingerprint로 키가 지정된다.
 
-Every cache entry ID is globally unique. Within one path-based cache entry, each repository-relative path identity may appear only once even when competing records carry different digests. Different cache entries may legitimately bind the same general input path because their kinds and reuse purposes can differ; the stricter canonical handoff anti-spoof rule below remains the only cross-entry path exclusion.
+모든 cache entry ID는 전역적으로 고유하다. 하나의 path-based cache entry 안에서는 경쟁 record가 서로 다른 digest를 가져도 각 repository-relative path identity는 한 번만 나타날 수 있다. kind와 reuse purpose가 다를 수 있으므로 서로 다른 cache entry가 같은 일반 input path를 정당하게 bind할 수 있다. 아래의 더 엄격한 canonical handoff anti-spoof rule은 유일한 cross-entry path exclusion으로 남는다.
 
-Verification-decision entries use a distinct closed key containing task key, gate invocation ID, checked-out commit SHA, change type, entry point, verification-policy SHA-256, and the exact ordered check set that `verification_gate` consumes from the selected change type's required checks followed by optional checks. The entry point remains correlation identity and applicability input; it does not filter that consumed set. Each producer/check-indexed binding contains the verified leaf-result reference and SHA-256 plus its evidence path, SHA-256, and canonical schema. The key also binds the relevant environment fingerprint and expiry. Task and gate identifiers are mandatory lookup identity, but repo intake does not claim an external authority for them. A non-null environment fingerprint is `UNCERTAIN` until an authoritative current environment mapping exists.
+verification-decision entry는 task key, gate invocation ID, checked-out commit SHA, change type, entry point, verification-policy SHA-256, 선택된 change type의 required check 뒤 optional check를 `verification_gate`가 소비하는 정확한 ordered check set을 포함하는 distinct closed key를 사용한다. entry point는 correlation identity와 applicability input으로 남으며 consumed set을 filter하지 않는다. 각 producer/check-indexed binding에는 verified leaf-result reference와 SHA-256, evidence path, SHA-256, canonical schema가 포함된다. key는 relevant environment fingerprint와 expiry도 bind한다. task/gate identifier는 mandatory lookup identity이지만 repo intake는 이들에 대해 external authority를 주장하지 않는다. non-null environment fingerprint는 authoritative current environment mapping이 생길 때까지 `UNCERTAIN`이다.
 
-## Freshness Rules
+## 최신성 규칙
 
-A cache entry is `FRESH` only when every declared path still exists as expected and every recorded digest matches. Verification-decision reuse additionally requires the current commit and policy digest, exact ordered canonical check/producer set, every leaf-result and evidence digest, every canonical evidence schema, leaf correlation and freshness, and unexpired decision to match. Missing, extra, duplicate, reordered, wrong-producer, wrong-schema, or digest-mismatched known bindings are `STALE`; an unavailable path or unmapped classification, task/gate identity, policy/commit source, or environment input is `UNCERTAIN` unless another proven mismatch or expiry makes the entry `STALE`.
+cache entry는 모든 declared path가 예상대로 존재하고 모든 recorded digest가 일치할 때만 `FRESH`다. verification-decision reuse에는 current commit/policy digest, exact ordered canonical check/producer set, 모든 leaf-result/evidence digest, canonical evidence schema, leaf correlation/freshness, unexpired decision도 일치해야 한다. missing, extra, duplicate, reordered, wrong-producer, wrong-schema, digest-mismatched known binding은 `STALE`이다. unavailable path 또는 unmapped classification, task/gate identity, policy/commit source, environment input은 다른 proven mismatch/expiry가 entry를 `STALE`로 만들지 않는 한 `UNCERTAIN`이다.
 
-The native cache binding has additional fixed identities: `leafResultRef` must be exactly `ai/native-adapter-result.json`, while evidence must be exactly `ai/native-runtime-adapters.json` validated with `ai/schemas/native-runtime-adapters.schema.json`. A copied or arbitrary native result/evidence path is `STALE` even when its bytes and digest match. The current native result schema does not carry a durable task, gate, commit, policy, and freshness envelope, so an otherwise exact native binding remains `UNCERTAIN` and prevents a `FRESH` verification decision until that correlated durable envelope exists.
+native cache binding에는 추가 fixed identity가 있다. `leafResultRef`는 정확히 `ai/native-adapter-result.json`이어야 하고 evidence는 `ai/schemas/native-runtime-adapters.schema.json`으로 검증된 `ai/native-runtime-adapters.json`이어야 한다. byte/digest가 일치해도 복사되거나 임의의 native result/evidence path는 `STALE`이다. 현재 native result schema에는 durable task, gate, commit, policy, freshness envelope가 없으므로 다른 조건이 정확한 native binding도 해당 correlated durable envelope가 생길 때까지 `UNCERTAIN`이며 `FRESH` verification decision을 막는다.
 
-The canonical cache does not materialize a reusable verification PASS decision whose commit or short-lived expiry would become self-referential or immediately stale. Such decisions may be recorded only when every durable input is available.
+canonical cache는 commit 또는 short-lived expiry가 self-referential이거나 즉시 stale해질 reusable verification PASS decision을 materialize하지 않는다. 이 decision은 모든 durable input이 있을 때만 기록할 수 있다.
 
-## Conservative Invalidation
+## 보수적 Invalidation
 
-When dependency mapping is incomplete or ambiguous, the workflow prefers re-verification over unsafe reuse. Phase 2A repo intake may report proposal-only `projectStateRefresh` and `commandDiscoveryUpdates` records, but it does not execute commands, does not create `.ai-runs`, and does not mark a registry command `VERIFIED`.
+dependency mapping이 불완전하거나 모호하면 workflow는 unsafe reuse보다 re-verification을 선택한다. Phase 2A repo intake는 proposal-only `projectStateRefresh`, `commandDiscoveryUpdates` record를 보고할 수 있지만 command를 실행하거나 `.ai-runs`를 만들거나 registry command를 `VERIFIED`로 표시하지 않는다.
 
-Route and handoff reuse is phase-sensitive. A cached read from one phase does not make a later phase's required document optional, and a task-phase, owning-feature, activated-trigger, effective-required, or still-deferred-set change invalidates reuse until the handoff is re-routed. Deferred documents remain unread until activation, then become required context and leave the still-deferred set.
+route/handoff reuse는 phase-sensitive다. 한 phase의 cached read가 이후 phase의 required document를 optional로 만들지 않으며 task-phase, owning-feature, activated-trigger, effective-required, still-deferred-set 변경은 handoff가 re-routed될 때까지 reuse를 무효화한다. deferred document는 activation까지 unread로 남고 이후 required context가 되어 still-deferred set에서 나간다.
 
-Repo intake fails closed when a `READY` or `PARTIAL` handoff's canonical `HANDOFF_CONTEXT` entry binds `ai/agent-handoff.json` but reports `STALE` or `UNCERTAIN`: the top-level result is `BLOCKED`, status 2, with `HANDOFF_CONTEXT_CACHE_STALE` or `HANDOFF_CONTEXT_CACHE_UNCERTAIN`, and the full cache invalidation report remains in `data`. A handoff already marked `BLOCKED` is not dispatch-ready, so its cache result remains advisory and repo intake may still pass structural validation. `STALE` or `UNCERTAIN` entries of other cache kinds remain advisory.
+`READY` 또는 `PARTIAL` handoff의 canonical `HANDOFF_CONTEXT` entry가 `ai/agent-handoff.json`을 bind하지만 `STALE`/`UNCERTAIN`을 보고하면 repo intake는 fail closed한다. top-level result는 status 2, `HANDOFF_CONTEXT_CACHE_STALE` 또는 `HANDOFF_CONTEXT_CACHE_UNCERTAIN`인 `BLOCKED`이며 full cache invalidation report는 `data`에 남는다. 이미 `BLOCKED`인 handoff는 dispatch-ready가 아니므로 cache result는 advisory로 남고 repo intake는 여전히 structural validation을 통과할 수 있다. 다른 cache kind의 `STALE`/`UNCERTAIN` entry는 advisory로 남는다.
 
-The canonical handoff cache identity is closed: exactly one entry must have ID `phase-2b-handoff-context`, that entry must be `HANDOFF_CONTEXT`, and its key must bind `ai/agent-handoff.json` exactly once. A missing, duplicate, wrong-kind, or wrong-path canonical entry is invalid state. Any other `HANDOFF_CONTEXT` entry that binds the canonical handoff path is ambiguous invalid state and is rejected before freshness evaluation, so a spoof entry cannot force `BLOCKED` or authorize reuse.
+canonical handoff cache identity는 closed다. 정확히 하나의 entry가 ID `phase-2b-handoff-context`를 가져야 하고 그 entry는 `HANDOFF_CONTEXT`이며 key는 `ai/agent-handoff.json`을 정확히 한 번 bind해야 한다. missing, duplicate, wrong-kind, wrong-path canonical entry는 invalid state다. canonical handoff path를 bind하는 다른 `HANDOFF_CONTEXT` entry는 ambiguous invalid state이며 freshness evaluation 전에 거부되어 spoof entry가 `BLOCKED`를 강제하거나 reuse를 허가할 수 없다.
 
-## Evidence Boundary
+## 증거 경계
 
-Repository scripts cannot intercept every host file read, search, or external tool call before Phase 3. Cache policy therefore combines structured records, work logs, handoff notes, and review gates rather than claiming total technical interception.
+repository script는 Phase 3 이전에 모든 host file read, search, external tool call을 가로챌 수 없다. 따라서 cache policy는 total technical interception을 주장하지 않고 structured record, work log, handoff note, review gate를 결합한다.
 
-## Phase 3A Native Boundary
+## Phase 3A 네이티브 경계
 
-The current host-native adapter state is `UNSUPPORTED` with `hostVersion: null` and `versionProvenance: UNPROBED`. Native runtime snapshots and bypass-attempt references are per-invocation inputs correlated by task and gate ID; they are not reusable cached PASS results. A cached, repository-authored, digest-mismatched, correlation-mismatched, or otherwise precomputed `native-runtime-adapter` leaf cannot satisfy verification. A supported-host snapshot must be fresh, Ed25519-verified, bound to the task and a one-use gate challenge, authenticate the complete canonical bypass event set with its signed count and SHA-256, and bind current later-gate resolution event IDs exactly in signed `resolutionEventIds`; in-process replay and resolution-binding state are ephemeral, and Phase 3B owns cross-process challenge and event-set durability.
+현재 host-native adapter state는 `hostVersion: null`, `versionProvenance: UNPROBED`인 `UNSUPPORTED`다. native runtime snapshot과 bypass-attempt reference는 task/gate ID로 correlation된 per-invocation input이며 reusable cached PASS result가 아니다. cached, repository-authored, digest-mismatched, correlation-mismatched, 그 밖의 precomputed `native-runtime-adapter` leaf는 verification을 충족할 수 없다. supported-host snapshot은 fresh하고 Ed25519-verified이며 task와 one-use gate challenge에 bind되고 signed count/SHA-256으로 complete canonical bypass event set을 authenticate하며 current later-gate resolution event ID를 signed `resolutionEventIds`에 정확히 bind해야 한다. in-process replay와 resolution-binding state는 ephemeral이며 Phase 3B가 cross-process challenge와 event-set durability를 소유한다.
 
-The `FRESH` handoff cache entry uses a raw-byte SHA-256. `.gitattributes` marks `ai/agent-handoff.json` as `-text`, so Git does not rewrite line endings and the recorded digest is reproducible on LF and CRLF-default checkout hosts.
+`FRESH` handoff cache entry는 raw-byte SHA-256을 사용한다. `.gitattributes`는 `ai/agent-handoff.json`을 `-text`로 표시하므로 Git은 line ending을 재작성하지 않으며 recorded digest는 LF/CRLF-default checkout host에서 재현 가능하다.
 
-`scripts/ai/command-runner.sh` remains the only supported product-command path. Native adapters do not gain command execution authority through cache reuse. Unsupported-host verification may pass only with an explicit repository-only qualification, while supported-host faults remain completion-blocking. Phase 3B owns durable CI evidence, remote-runner cache parity, and CI adapter availability.
+`scripts/ai/command-runner.sh`는 계속 유일한 지원 product-command path다. native adapter는 cache reuse로 command execution authority를 얻지 않는다. unsupported-host verification은 explicit repository-only qualification이 있을 때만 통과할 수 있고 supported-host fault는 completion-blocking으로 남는다. Phase 3B는 durable CI evidence, remote-runner cache parity, CI adapter availability를 소유한다.

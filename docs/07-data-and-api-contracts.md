@@ -1,135 +1,135 @@
-# 07. Data and API Contracts
+# 07. 데이터 및 API 계약
 
-## Database Principles
+## 데이터베이스 원칙
 
-- MySQL is the source of truth for orders, payments, points, outbox events, and daily menu sales.
-- Redis is not the source of truth.
-- Kafka is not the source of truth.
-- All important business tables should include created/updated timestamps where appropriate.
-- Money-like values use integer types.
-- Point balance cannot be negative.
+- MySQL은 주문, 결제, 포인트, Outbox 이벤트, 일별 메뉴 판매의 정합성 기준 저장소다.
+- Redis는 정합성 기준 저장소가 아니다.
+- Kafka는 정합성 기준 저장소가 아니다.
+- 중요한 비즈니스 테이블에는 적절한 경우 생성/갱신 시각을 포함해야 한다.
+- 금액과 유사한 값에는 정수 타입을 사용한다.
+- 포인트 잔액은 음수가 될 수 없다.
 
-## Entities / Tables
+## 엔터티 / 테이블
 
 ### users
 
-| Column | Type | Constraint | Description |
+| 열 | 타입 | 제약 조건 | 설명 |
 |---|---|---|---|
-| id | bigint | PK | User ID |
-| created_at | datetime | not null | Created time |
-| updated_at | datetime | not null | Updated time |
+| id | bigint | PK | 사용자 ID |
+| created_at | datetime | not null | 생성 시각 |
+| updated_at | datetime | not null | 갱신 시각 |
 
 ### menus
 
-| Column | Type | Constraint | Description |
+| 열 | 타입 | 제약 조건 | 설명 |
 |---|---|---|---|
-| id | bigint | PK | Menu ID |
-| name | varchar(100) | not null | Menu name |
-| price | bigint | not null | Price |
+| id | bigint | PK | 메뉴 ID |
+| name | varchar(100) | not null | 메뉴 이름 |
+| price | bigint | not null | 가격 |
 | status | varchar(20) | not null | `ON_SALE`, `SOLD_OUT`, `DELETED` |
-| created_at | datetime | not null | Created time |
-| updated_at | datetime | not null | Updated time |
+| created_at | datetime | not null | 생성 시각 |
+| updated_at | datetime | not null | 갱신 시각 |
 
 ### user_points
 
-| Column | Type | Constraint | Description |
+| 열 | 타입 | 제약 조건 | 설명 |
 |---|---|---|---|
-| id | bigint | PK | Point account ID |
-| user_id | bigint | unique, not null | User ID |
-| balance | bigint | not null | Current balance |
-| version | bigint | not null | Version/change tracking |
-| created_at | datetime | not null | Created time |
-| updated_at | datetime | not null | Updated time |
+| id | bigint | PK | 포인트 계정 ID |
+| user_id | bigint | unique, not null | 사용자 ID |
+| balance | bigint | not null | 현재 잔액 |
+| version | bigint | not null | 버전/변경 추적 |
+| created_at | datetime | not null | 생성 시각 |
+| updated_at | datetime | not null | 갱신 시각 |
 
 ### point_histories
 
-| Column | Type | Constraint | Description |
+| 열 | 타입 | 제약 조건 | 설명 |
 |---|---|---|---|
-| id | bigint | PK | History ID |
-| user_id | bigint | not null | User ID |
+| id | bigint | PK | 이력 ID |
+| user_id | bigint | not null | 사용자 ID |
 | type | varchar(20) | not null | `CHARGE`, `USE` |
-| amount | bigint | not null | Changed amount |
-| balance_after | bigint | not null | Balance after change |
-| reason | varchar(100) | not null | Change reason |
-| created_at | datetime | not null | Created time |
+| amount | bigint | not null | 변경 금액 |
+| balance_after | bigint | not null | 변경 후 잔액 |
+| reason | varchar(100) | not null | 변경 사유 |
+| created_at | datetime | not null | 생성 시각 |
 
 ### orders
 
-| Column | Type | Constraint | Description |
+| 열 | 타입 | 제약 조건 | 설명 |
 |---|---|---|---|
-| id | bigint | PK | Order ID |
-| user_id | bigint | not null | User ID |
-| menu_id | bigint | not null | Menu ID |
-| order_price | bigint | not null | Menu price at order time |
+| id | bigint | PK | 주문 ID |
+| user_id | bigint | not null | 사용자 ID |
+| menu_id | bigint | not null | 메뉴 ID |
+| order_price | bigint | not null | 주문 시점 메뉴 가격 |
 | status | varchar(20) | not null | `PAID`, `CANCELED` |
-| ordered_at | datetime | not null | Ordered time |
+| ordered_at | datetime | not null | 주문 시각 |
 
 ### payments
 
-| Column | Type | Constraint | Description |
+| 열 | 타입 | 제약 조건 | 설명 |
 |---|---|---|---|
-| id | bigint | PK | Payment ID |
-| order_id | bigint | unique, not null | Order ID |
-| user_id | bigint | not null | User ID |
-| amount | bigint | not null | Payment amount |
+| id | bigint | PK | 결제 ID |
+| order_id | bigint | unique, not null | 주문 ID |
+| user_id | bigint | not null | 사용자 ID |
+| amount | bigint | not null | 결제 금액 |
 | status | varchar(20) | not null | `SUCCESS`, `FAILED` |
-| paid_at | datetime | not null | Paid time |
+| paid_at | datetime | not null | 결제 시각 |
 
 ### outbox_events
 
-| Column | Type | Constraint | Description |
+| 열 | 타입 | 제약 조건 | 설명 |
 |---|---|---|---|
-| id | bigint | PK | Event ID |
-| aggregate_type | varchar(50) | not null | Example: `ORDER` |
-| aggregate_id | bigint | not null | Order ID |
-| event_type | varchar(100) | not null | Example: `ORDER_PAID` |
+| id | bigint | PK | 이벤트 ID |
+| aggregate_type | varchar(50) | not null | 예: `ORDER` |
+| aggregate_id | bigint | not null | 주문 ID |
+| event_type | varchar(100) | not null | 예: `ORDER_PAID` |
 | payload | json | not null | Kafka payload |
 | status | varchar(20) | not null | `READY`, `PROCESSING`, `PUBLISHED`, `FAILED` |
-| retry_count | int | not null | Retry count |
-| claim_token | varchar(100) | nullable | Unique token for the current publisher claim |
-| claim_owner | varchar(100) | nullable | Publisher instance identifier for observability |
-| claimed_at | datetime | nullable | Claim start time |
-| claim_until | datetime | nullable | Deadline after which an unfinished claim is recoverable |
-| last_error | varchar(1000) | nullable | Most recent publish failure summary without sensitive payload data |
-| created_at | datetime | not null | Created time |
-| updated_at | datetime | not null | Last state-change time |
-| published_at | datetime | nullable | Published time |
+| retry_count | int | not null | 재시도 횟수 |
+| claim_token | varchar(100) | nullable | 현재 Publisher claim을 위한 고유 token |
+| claim_owner | varchar(100) | nullable | 관측성을 위한 Publisher 인스턴스 식별자 |
+| claimed_at | datetime | nullable | claim 시작 시각 |
+| claim_until | datetime | nullable | 미완료 claim을 복구할 수 있는 마감 시각 |
+| last_error | varchar(1000) | nullable | 민감한 payload 데이터 없이 기록한 최근 발행 실패 요약 |
+| created_at | datetime | not null | 생성 시각 |
+| updated_at | datetime | not null | 마지막 상태 변경 시각 |
+| published_at | datetime | nullable | 발행 시각 |
 
-Outbox state rules:
+Outbox 상태 규칙:
 
-- The order transaction inserts `READY`; it never publishes directly to Kafka.
-- A Publisher claims at most one row in a short transaction immediately before its publish attempt, changes it to `PROCESSING` with a new `claim_token` and `claim_until`, commits, publishes, and repeats up to the configured cycle size.
-- Only the current `claim_token` may complete or retry a claim. This prevents a stale worker from updating a row after its expired claim was reassigned.
-- A `PROCESSING` row whose `claim_until` has passed can be reclaimed with a new token.
-- Kafka acknowledgement changes the matching claim to `PUBLISHED`. A retryable failure increments `retry_count` and returns the row to `READY`; exhausted retries become `FAILED` until the audited recovery service is invoked.
-- Clearing claim metadata is part of every transition out of `PROCESSING`.
+- 주문 트랜잭션은 `READY`를 삽입하며 Kafka에 직접 발행하지 않는다.
+- Publisher는 발행 시도 직전에 짧은 트랜잭션으로 최대 하나의 행을 claim하고, 새 `claim_token`과 `claim_until`을 사용해 `PROCESSING`으로 변경한 뒤 커밋하고 발행하며, 설정된 주기 크기만큼 반복한다.
+- 현재 `claim_token`만 claim을 완료하거나 재시도할 수 있다. 이 규칙은 만료된 claim이 재배정된 뒤 오래된 worker가 행을 갱신하는 일을 막는다.
+- `claim_until`이 지난 `PROCESSING` 행은 새 token으로 재claim할 수 있다.
+- Kafka 확인은 일치하는 claim을 `PUBLISHED`로 변경한다. 재시도 가능한 실패는 `retry_count`를 증가시키고 행을 `READY`로 되돌린다. 재시도가 소진되면 감사 복구 service를 호출할 때까지 `FAILED`가 된다.
+- claim 메타데이터 삭제는 `PROCESSING`에서 나가는 모든 전환의 일부다.
 
 ### daily_menu_sales
 
-| Column | Type | Constraint | Description |
+| 열 | 타입 | 제약 조건 | 설명 |
 |---|---|---|---|
-| id | bigint | PK | Aggregate ID |
-| sales_date | date | unique with menu_id, not null | Sales date |
-| menu_id | bigint | unique with sales_date, not null | Menu ID |
-| order_count | bigint | not null | Order count |
-| created_at | datetime | not null | Created time |
-| updated_at | datetime | not null | Updated time |
+| id | bigint | PK | 집계 ID |
+| sales_date | date | unique with menu_id, not null | 판매 날짜 |
+| menu_id | bigint | unique with sales_date, not null | 메뉴 ID |
+| order_count | bigint | not null | 주문 횟수 |
+| created_at | datetime | not null | 생성 시각 |
+| updated_at | datetime | not null | 갱신 시각 |
 
-## API Style
+## API 스타일
 
-- Use REST-style JSON APIs.
-- Use `/api/v1` prefix.
-- Use clear resource names.
-- Return consistent error response bodies.
+- REST 스타일 JSON API를 사용한다.
+- `/api/v1` 접두사를 사용한다.
+- 명확한 리소스 이름을 사용한다.
+- 일관된 오류 응답 본문을 반환한다.
 
-## Request / Response Rules
+## 요청 / 응답 규칙
 
-- Request body should be JSON.
-- Response body should be JSON.
-- Numeric IDs are represented as numbers unless project conventions decide otherwise.
-- Money/point amounts are integer values.
+- 요청 본문은 JSON이어야 한다.
+- 응답 본문은 JSON이어야 한다.
+- 숫자 ID는 프로젝트 관례가 달리 정하지 않는 한 숫자로 표현한다.
+- 금액/포인트 값은 정수 값이다.
 
-## Error Format
+## 오류 형식
 
 ```json
 {
@@ -141,71 +141,63 @@ Outbox state rules:
 }
 ```
 
-## Status Code Rules
+## 상태 코드 규칙
 
-| Code | Status | Meaning |
+| 코드 | 상태 | 의미 |
 |---|---:|---|
-| INVALID_REQUEST | 400 | Invalid request format or value |
-| UNAUTHORIZED | 401 | Authentication required |
-| FORBIDDEN | 403 | Permission denied |
-| MENU_NOT_FOUND | 404 | Menu not found |
-| MENU_NOT_AVAILABLE | 409 | Menu is not available |
-| INSUFFICIENT_POINT | 409 | Not enough point balance |
-| LOCK_TIMEOUT | 409 | User-level lock acquisition failed |
-| INTERNAL_ERROR | 500 | Unexpected server error |
+| INVALID_REQUEST | 400 | 잘못된 요청 형식 또는 값 |
+| UNAUTHORIZED | 401 | 인증 필요 |
+| FORBIDDEN | 403 | 권한 거부 |
+| MENU_NOT_FOUND | 404 | 메뉴를 찾을 수 없음 |
+| MENU_NOT_AVAILABLE | 409 | 메뉴를 이용할 수 없음 |
+| INSUFFICIENT_POINT | 409 | 포인트 잔액 부족 |
+| LOCK_TIMEOUT | 409 | 사용자 단위 락 획득 실패 |
+| INTERNAL_ERROR | 500 | 예상하지 못한 서버 오류 |
 
-## API Contracts
+## API 계약
 
-Detailed feature API contracts are owned by:
+세부 기능 API 계약은 다음 문서가 소유한다.
 
 - `specs/001-menu-query/spec.md`
 - `specs/002-point-charge/spec.md`
 - `specs/003-order-payment/spec.md`
 - `specs/004-popular-menu/spec.md`
 
-## User Identifier Rule
+## 사용자 식별자 규칙
 
-This assignment does not include login.
+이 과제에는 로그인이 포함되지 않는다.
 
-`userId` is used as an explicit request value to identify the point account owner. This is not an authentication mechanism. It is an assignment-level simplification so point charge and order/payment APIs can be tested without implementing login.
+`userId`는 포인트 계정 소유자를 식별하는 명시적 요청 값으로 사용한다. 이는 인증 메커니즘이 아니다. 로그인 구현 없이 포인트 충전과 주문/결제 API를 테스트할 수 있도록 한 과제 수준의 단순화다.
 
-If authentication is added later, request `userId` must be replaced or verified against the authenticated principal.
+추후 인증을 추가하면 요청 `userId`를 인증된 principal로 대체하거나, 인증된 principal과 일치하는지 검증해야 한다.
 
-## Data Retention Rules
+## 데이터 보존 규칙
 
-- Point histories should not be deleted.
-- Orders and payments should not be hard-deleted by default.
-- Outbox events may be archived after successful publication and retention period.
+- 포인트 이력은 삭제하지 않아야 한다.
+- 주문과 결제는 기본적으로 hard-delete하지 않아야 한다.
+- Outbox 이벤트는 발행 성공 및 보존 기간 후 아카이브할 수 있다.
 
-## Open Questions
+## 미해결 질문
 
-- Open Question: What is the exact outbox retention period?
+- 미해결 질문: 정확한 outbox 보존 기간은 얼마인가?
 
-## Popular Menu Cache Contract
+## 인기 메뉴 캐시 계약
 
-`GET /api/v1/menus/popular` accepts only `days=7&limit=3`. The inclusive range is the application
-clock's current date and the preceding six dates. Results order by `orderCount DESC, menuId ASC`.
+`GET /api/v1/menus/popular`은 `days=7&limit=3`만 허용한다. 포함 범위는 애플리케이션 clock의 현재 날짜와 그 이전 6일이다. 결과는 `orderCount DESC, menuId ASC`로 정렬한다.
 
-MySQL `daily_menu_sales` is authoritative. A Redis range is usable only when every date marker's
-generation, durable total, and durable member count agree with lightweight MySQL metadata and the
-daily ZSET's cardinality/score sum. Marker generations must not change during the union read.
-Daily data and marker keys expire after 14 days;
-one-minute temporary union/rebuild keys are always cleaned up. Incomplete, unavailable, or
-unresolvable cache data falls back to MySQL and triggers a full-range rebuild including empty
-dates.
+MySQL `daily_menu_sales`가 정합성 기준이다. Redis 범위는 모든 날짜 marker의 generation, 영속 총계, 영속 member 수가 경량 MySQL 메타데이터 및 일별 ZSET의 cardinality/score 합계와 일치할 때만 사용할 수 있다. union 읽기 중에 marker generation이 변경되어서는 안 된다. 일별 데이터와 marker key는 14일 후 만료한다. 1분짜리 임시 union/rebuild key는 항상 정리한다. 불완전하거나 사용할 수 없거나 해석할 수 없는 캐시 데이터는 MySQL로 대체하고 빈 날짜를 포함하는 전체 범위를 재구성한다.
 
-## Implemented Event Consumption Contract
+## 구현된 이벤트 소비 계약
 
 ### processed_events
 
-| Column | Type | Constraint | Description |
+| 열 | 타입 | 제약 조건 | 설명 |
 |---|---|---|---|
 | consumer_group | varchar(100) | PK with event_id | Kafka consumer group |
-| event_id | bigint | PK with consumer_group | Immutable Outbox event ID |
-| processed_at | datetime | not null | First accepted delivery time |
+| event_id | bigint | PK with consumer_group | 불변 Outbox 이벤트 ID |
+| processed_at | datetime | not null | 최초 수락된 전달 시각 |
 
-The Kafka topic is `coffee.order.paid`. The producer uses `aggregate_id` as the partition key,
-so ordering is limited to one aggregate key and global ordering is not assumed. The message is:
+Kafka topic은 `coffee.order.paid`다. producer는 `aggregate_id`를 partition key로 사용하므로 순서는 aggregate key 하나로 제한되며 전역 순서를 가정하지 않는다. 메시지는 다음과 같다.
 
 ```json
 {
@@ -216,37 +208,32 @@ so ordering is limited to one aggregate key and global ordering is not assumed. 
 }
 ```
 
-Each consumer group inserts `(consumer_group, event_id)` with `INSERT IGNORE` and writes its
-`order_paid_analytics` effect in the same transaction. A redelivery therefore creates neither a
-second marker nor a second effect. An analytics write failure rolls back the marker.
+각 consumer group은 `INSERT IGNORE`로 `(consumer_group, event_id)`를 삽입하고 동일 트랜잭션에서 `order_paid_analytics` 효과를 기록한다. 따라서 재전달은 두 번째 마커나 두 번째 효과를 만들지 않는다. 분석 쓰기 실패는 마커를 롤백한다.
 
 ### order_paid_analytics
 
-| Column | Type | Constraint | Description |
+| 열 | 타입 | 제약 조건 | 설명 |
 |---|---|---|---|
 | consumer_group | varchar(100) | PK with event_id | Kafka consumer group |
-| event_id | bigint | PK with consumer_group, positive | Immutable Outbox event ID |
-| aggregate_id | bigint | unique with consumer_group, positive | Order ID |
-| user_id | bigint | positive, not null | Ordering user ID |
-| menu_id | bigint | positive, not null | Ordered menu ID |
-| payment_amount | bigint | positive, not null | Paid amount |
-| processed_at | datetime | not null | Durable effect time |
+| event_id | bigint | PK with consumer_group, positive | 불변 Outbox 이벤트 ID |
+| aggregate_id | bigint | unique with consumer_group, positive | 주문 ID |
+| user_id | bigint | positive, not null | 주문 사용자 ID |
+| menu_id | bigint | positive, not null | 주문한 메뉴 ID |
+| payment_amount | bigint | positive, not null | 결제 금액 |
+| processed_at | datetime | not null | 내구성 있는 효과 시각 |
 
-An index on `(consumer_group, processed_at)` supports consumer-group-owned scans.
+`(consumer_group, processed_at)` 인덱스는 consumer-group 소유 스캔을 지원한다.
 
 ### outbox_recovery_audits
 
-| Column | Type | Constraint | Description |
+| 열 | 타입 | 제약 조건 | 설명 |
 |---|---|---|---|
-| id | bigint | PK, auto increment | Audit ID |
-| event_id | bigint | FK to outbox_events, not null | Recovered Outbox event |
-| operator_name | varchar(100) | nonblank, not null | Authorized operator identity |
-| reason | varchar(500) | nonblank, not null | Recovery reason |
-| previous_retry_count | int | nonnegative, not null | Retry count before recovery |
-| previous_error | varchar(1000) | nullable | Last error before recovery |
-| recovered_at | datetime | not null | Recovery time |
+| id | bigint | PK, auto increment | 감사 ID |
+| event_id | bigint | FK to outbox_events, not null | 복구된 Outbox 이벤트 |
+| operator_name | varchar(100) | nonblank, not null | 인가된 운영자 식별자 |
+| reason | varchar(500) | nonblank, not null | 복구 사유 |
+| previous_retry_count | int | nonnegative, not null | 복구 전 재시도 횟수 |
+| previous_error | varchar(1000) | nullable | 복구 전 마지막 오류 |
+| recovered_at | datetime | not null | 복구 시각 |
 
-The table has an index on `(event_id, recovered_at)`. `OutboxRecoveryService.requeueFailed`
-locks the event, appends the immutable audit, and performs `FAILED -> READY` with retry count zero
-and cleared error/claim metadata in one transaction. Missing or non-`FAILED` events are rejected
-without an audit. Direct unaudited SQL requeue is prohibited.
+이 테이블에는 `(event_id, recovered_at)` 인덱스가 있다. `OutboxRecoveryService.requeueFailed`는 이벤트를 lock하고 불변 감사를 추가한 뒤 하나의 트랜잭션으로 재시도 횟수 0 및 삭제된 오류/claim 메타데이터와 함께 `FAILED -> READY`를 수행한다. 이벤트가 없거나 `FAILED`가 아닌 이벤트는 감사 없이 거부한다. 감사 없는 직접 SQL requeue는 금지한다.

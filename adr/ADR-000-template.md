@@ -1,38 +1,37 @@
-# ADR-000: [Title]
+# ADR-000: [제목]
 
-## Status
+## 상태
 
 Proposed / Accepted / Deprecated / Superseded
 
-## Context
+## 배경
 
-What problem or decision does this ADR address?
+이 ADR은 어떤 문제 또는 결정을 다루는가?
 
-## Decision
+## 결정
 
-What decision was made?
+어떤 결정을 내렸는가?
 
-## Alternatives Considered
+## 검토한 대안
 
-- Option A:
-- Option B:
-- Option C:
+- 옵션 A:
+- 옵션 B:
+- 옵션 C:
 
-## Consequences
+## 결과
 
-### Positive
-
-- ...
-
-### Negative
+### 긍정적 결과
 
 - ...
 
-### Neutral / Trade-offs
+### 부정적 결과
 
 - ...
 
-## Follow-up
+### 중립적 결과 / 트레이드오프
 
 - ...
 
+## 후속 조치
+
+- ...

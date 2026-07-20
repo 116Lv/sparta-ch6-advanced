@@ -1,121 +1,121 @@
-# Document Routing
+# 문서 라우팅
 
-## Purpose
+## 목적
 
-Choose the minimum owner documents and feature files required by the current task phase.
+현재 작업 단계에 필요한 최소 소유 문서와 기능 파일을 선택한다.
 
-> Read late, read narrow, escalate only when the task phase requires it.
+> 늦게 읽고, 좁게 읽으며, 작업 단계가 요구할 때만 확장한다.
 
-This rule reduces reading scope and timing; it does not reduce verification, evidence, or completion standards.
+이 규칙은 읽기 범위와 시점을 줄이는 것이지, 검증·증거·완료 기준을 줄이는 것이 아니다.
 
-## Step 1: Choose The Smallest Safe Route
+## 1단계: 가장 작은 안전 경로 선택
 
-### Answer Mode
+### 답변 모드
 
-Use Answer Mode for a small question or explanation that makes no repository change, establishes no new requirement or decision, performs no verification, and makes no completion claim.
+저장소 변경을 만들지 않고, 새 요구사항이나 결정을 세우지 않으며, 검증 또는 완료 주장을 수행하지 않는 작은 질문이나 설명에는 Answer Mode를 사용한다.
 
-- Read only a file or section directly referenced by the question or strictly required to answer it.
-- Do not load `README.md`, `docs/00-index.md`, every feature spec, workflow state, or completion documents by default.
-- Owning-feature recording is not required unless the answer turns into normative feature work, review, or verification.
+- 질문에서 직접 참조했거나 답변에 엄격히 필요한 파일 또는 섹션만 읽는다.
+- 기본적으로 `README.md`, `docs/00-index.md`, 모든 기능 명세, 워크플로 상태, 완료 문서를 읽지 않는다.
+- 답변이 규범적 기능 작업·검토·검증으로 바뀌지 않는 한 기능 소유 기록은 필요하지 않다.
 
-### Light Route
+### 경량 경로
 
-Use Light Route for focused structure discovery, first-pass orientation, or non-normative wording/index maintenance.
+집중된 구조 탐색, 최초 방향 파악 또는 비규범적 문구/색인 유지보수에는 Light Route를 사용한다.
 
-- Inspect only the relevant directory, file, or narrow search result.
-- Use `README.md` and `docs/00-index.md` for first-time onboarding or broad project mapping, not as per-task prerequisites.
-- For non-normative wording, read only the directly affected document.
-- Re-route to Work Route if the task starts changing requirements, behavior, contracts, architecture, authentication, verification policy, or completion criteria.
+- 관련 디렉터리, 파일 또는 좁은 검색 결과만 살핀다.
+- 최초 온보딩이나 광범위한 프로젝트 맵이 필요할 때 `README.md`, `docs/00-index.md`를 사용하며 작업별 사전 조건으로 사용하지 않는다.
+- 비규범적 문구에는 직접 영향을 받는 문서만 읽는다.
+- 작업이 요구사항, 동작, 계약, 아키텍처, 인증, 검증 정책 또는 완료 기준을 변경하기 시작하면 Work Route로 다시 라우팅한다.
 
-### Work Route
+### 작업 경로
 
-Use Work Route for implementation, implementation planning, normative documentation, feature decisions, review, verification, or completion work.
+구현, 구현 계획, 규범적 문서, 기능 결정, 검토, 검증 또는 완료 작업에는 Work Route를 사용한다.
 
-Before subject-specific work:
+주제별 작업 전에 다음을 수행한다.
 
-1. Determine the owning feature.
-2. Record `Owning feature: specs/{feature}` or `Owning feature: none`.
-3. If feature-owned, read `specs/{feature}/spec.md` first.
-4. Read only the subject owner documents selected below.
+1. 소유 기능을 결정한다.
+2. `Owning feature: specs/{feature}` 또는 `Owning feature: none`을 기록한다.
+3. 기능 소유인 경우 먼저 `specs/{feature}/spec.md`를 읽는다.
+4. 아래에서 선택한 주제 소유 문서만 읽는다.
 
-Use `Owning feature: none` only for genuinely repo-wide policy, ADR-only architecture work, or non-feature maintenance. Do not force a feature owner for global contributor guidance.
+`Owning feature: none`은 실제로 저장소 전체 정책, ADR 전용 아키텍처 작업 또는 비기능 유지보수일 때만 사용한다. 전역 기여자 지침에 기능 소유자를 억지로 지정하지 않는다.
 
-## Step 2: Escalate By Task Phase
+## 2단계: 작업 단계별 확장
 
-For an owning `specs/{feature}/` directory, load each file independently:
+소유 `specs/{feature}/` 디렉터리에서는 각 파일을 독립적으로 읽는다.
 
-| File | Earliest required phase |
+| 파일 | 가장 이른 필수 단계 |
 |---|---|
-| `spec.md` | Before feature requirements, planning, implementation, normative documentation, review, or verification. |
-| `plan.md` | When creating an implementation plan or entering plan execution. |
-| `tasks.md` | When executing tracked work or preparing/receiving a verification handoff. |
-| `decisions.md` | When an existing decision must be confirmed or a new feature decision is required. |
-| `checklist.md` | Immediately before evaluating or making a completion claim. |
+| `spec.md` | 기능 요구사항, 계획, 구현, 규범적 문서, 검토 또는 검증 이전 |
+| `plan.md` | 구현 계획을 만들거나 계획 실행에 들어갈 때 |
+| `tasks.md` | 추적된 작업을 실행하거나 검증 핸드오프를 준비할 때 |
+| `decisions.md` | 기존 결정을 확인하거나 새 기능 결정이 필요할 때 |
+| `checklist.md` | 완료 주장을 평가하거나 하기 직전 |
 
-Do not read all five at route entry. A later file may link backward to earlier context, but an earlier phase does not preload later files.
+경로 진입 시 다섯 파일을 모두 읽지 않는다. 이후 파일이 이전 컨텍스트로 연결될 수 있으나, 이전 단계가 이후 파일을 미리 읽게 하지는 않는다.
 
-## Step 3: Select Subject Owners
+## 3단계: 주제 소유자 선택
 
-| Trigger | Minimum owner documents | Add only when applicable |
+| 트리거 | 최소 소유 문서 | 적용할 때만 추가 |
 |---|---|---|
-| Product scope, goals, non-goals | `docs/01-product-vision.md`, `docs/05-functional-requirements.md`, owning `spec.md` | Acceptance-criteria owners linked by the spec. |
-| Auth, permission, identity, principal, account ownership, `userId` semantics | `docs/02-users-and-permissions.md`, owning `spec.md` | Contract doc when request or response semantics change. |
-| Domain rules, entities, invariants | `docs/03-domain-model.md`, owning `spec.md` | `docs/04-user-flows.md` for flow effects; requirements doc only when requirements change. |
-| Architecture, layers, module boundaries | `docs/06-system-architecture.md` | Existing `decisions.md` or relevant ADR only when a decision is involved. |
-| DB schema, API request/response, errors, events | `docs/07-data-and-api-contracts.md`, owning `spec.md` | Permission doc when identity/auth semantics are involved. |
-| UI behavior or client flow | `docs/08-ui-and-frontend-guidelines.md`, owning `spec.md` | User-flow and permission owners when applicable. |
-| Testing, security, release, verification rules | `docs/09-quality-operations-and-rules.md` plus the directly relevant verification policy | `checklist.md` and completion documents only at completion evaluation. |
-| AI context, cache, tool limits, resource budgets, repo intake | Only the directly relevant file among `ai/context-map.md`, `ai/cache-policy.md`, `ai/tool-call-policy.md`, `ai/resource-budget.md`, `ai/workflow-cache.md` | Canonical JSON only when facts must be rediscovered or validated. |
-| Skill selection, delegation, reusable handoff | The applicable skill or handoff owner | Catalog/cache/work-log documents only when needed for selection or reuse. |
-| Verification completeness, gate behavior, native adapter state | The directly relevant verification policy or executable gate source | QA/work-log/completion documents only when the verification or completion phase requires them. |
-| Non-normative wording, index, report text | Only the directly affected document | Re-route by subject if semantics change. |
+| 제품 범위, 목표, 비목표 | `docs/01-product-vision.md`, `docs/05-functional-requirements.md`, 소유 `spec.md` | 명세가 연결한 수락 기준 소유자 |
+| 인증, 권한, 식별, principal, 계정 소유, `userId` 의미 | `docs/02-users-and-permissions.md`, 소유 `spec.md` | 요청 또는 응답 의미가 바뀌면 계약 문서 |
+| 도메인 규칙, 엔터티, 불변식 | `docs/03-domain-model.md`, 소유 `spec.md` | 흐름 영향이 있으면 `docs/04-user-flows.md`, 요구사항 변경 시에만 요구사항 문서 |
+| 아키텍처, 계층, 모듈 경계 | `docs/06-system-architecture.md` | 결정이 관련될 때만 기존 `decisions.md` 또는 ADR |
+| DB 스키마, API 요청/응답, 오류, 이벤트 | `docs/07-data-and-api-contracts.md`, 소유 `spec.md` | 식별/인증 의미가 관련되면 권한 문서 |
+| UI 동작 또는 클라이언트 흐름 | `docs/08-ui-and-frontend-guidelines.md`, 소유 `spec.md` | 적용할 때 사용자 흐름 및 권한 소유자 |
+| 테스트, 보안, 릴리스, 검증 규칙 | `docs/09-quality-operations-and-rules.md`와 직접 관련된 검증 정책 | 완료 평가 시에만 `checklist.md`, 완료 문서 |
+| AI 컨텍스트, cache, 도구 제한, 리소스 예산, 저장소 intake | `ai/context-map.md`, `ai/cache-policy.md`, `ai/tool-call-policy.md`, `ai/resource-budget.md`, `ai/workflow-cache.md` 중 직접 관련 파일만 | 사실을 재탐색 또는 검증할 때만 기준 JSON |
+| Skill 선택, 위임, 재사용 가능한 handoff | 적용되는 skill 또는 handoff 소유자 | 선택 또는 재사용에 필요할 때만 카탈로그/cache/작업 로그 문서 |
+| 검증 완전성, gate 동작, native adapter 상태 | 직접 관련된 검증 정책 또는 실행 가능한 gate source | 검증 또는 완료 단계에서만 QA/작업 로그/완료 문서 |
+| 비규범적 문구, 색인, 보고서 텍스트 | 직접 영향을 받는 문서만 | 의미가 바뀌면 주제별로 다시 라우팅 |
 
-## Conditional Canonical State
+## 조건부 기준 상태
 
-Read `ai/project-state.json` and `ai/command-registry.json` only when the task needs to rediscover or validate repository structure, commands, ports, environments, helper runtime, or verification capability.
+저장소 구조, 명령, 포트, 환경, helper runtime 또는 검증 capability를 재탐색하거나 검증해야 할 때만 `ai/project-state.json`, `ai/command-registry.json`을 읽는다.
 
-- JSON is canonical when loaded.
-- Markdown summaries provide human policy and explanation but do not override JSON.
-- Do not load cache, tool-call, resource-budget, skill-catalog, or handoff files unless their subject is active.
-- Prefer a known current fact or narrow lookup over broad rediscovery, subject to cache freshness rules.
+- 읽을 때 JSON이 기준 문서다.
+- Markdown 요약은 사람을 위한 정책과 설명을 제공하지만 JSON을 재정의하거나 모순되어서는 안 된다.
+- cache, tool-call, resource-budget, skill-catalog, handoff 문서는 주제가 활성화되지 않는 한 읽지 않는다.
+- cache 최신성 규칙을 따르는 범위에서 광범위한 재탐색보다 알려진 현재 사실 또는 좁은 조회를 선호한다.
 
-## Verification And Completion Escalation
+## 검증 및 완료 확장
 
-Heavy verification documents are late-phase controls:
+무거운 검증 문서는 이후 단계의 제어 장치다.
 
-- Read relevant verification policy when verification is planned, executed, reviewed, or reported.
-- Read `tasks.md` for verification handoff, not for initial feature understanding.
-- Read `checklist.md` immediately before judging feature completion.
-- Read `ai/issue-completion-checklist.md`, `ai/qa-gate.md`, and `ai/done-claim-template.md` only when entering their respective pre-QA, QA, done-claim, or closure steps.
-- Read `ai/lazycodex-runbook.md` when an AI completion claim lacks evidence or a reviewer must correct verification-avoidance behavior.
+- 검증을 설계, 실행, 검토 또는 보고할 때 관련 검증 정책을 읽는다.
+- 초기 기능 이해가 아니라 검증 handoff 때 `tasks.md`를 읽는다.
+- 기능 완료를 판단하기 직전에 `checklist.md`를 읽는다.
+- 각각의 QA 전, QA, 완료 주장 또는 종료 단계에 들어갈 때만 `ai/issue-completion-checklist.md`, `ai/qa-gate.md`, `ai/done-claim-template.md`를 읽는다.
+- AI 완료 주장이 증거를 갖추지 못했거나 검토자가 검증 회피 행동을 바로잡아야 할 때 `ai/lazycodex-runbook.md`를 읽는다.
 
-Late loading never authorizes skipping a required gate. It prevents the gate documents from being loaded before they can be acted on.
+늦게 읽는다고 해서 필수 gate를 건너뛸 권한이 생기지 않는다. gate 문서를 실행할 수 있는 때보다 먼저 읽는 일을 막을 뿐이다.
 
-## Documentation Changes
+## 문서 변경
 
-### Feature-Owned Normative Change
+### 기능 소유 규범 변경
 
-1. Record the owning feature.
-2. Read its `spec.md` first.
-3. Read only the additional subject owners required by the change.
-4. Update the narrowest canonical owner.
-5. Load phase-specific files only if the task enters their phase.
+1. 소유 기능을 기록한다.
+2. 먼저 해당 `spec.md`를 읽는다.
+3. 변경에 필요한 추가 주제 소유 문서만 읽는다.
+4. 가장 좁은 기준 소유 문서를 업데이트한다.
+5. 작업 단계에 진입할 때만 단계별 파일을 읽는다.
 
-### Repo-Wide Or Non-Normative Change
+### 저장소 전체 또는 비규범 변경
 
-Record `Owning feature: none` for repo-wide normative work and state why. For Answer Mode or a Light Route non-normative edit, ownership recording is optional until the task escalates.
+저장소 전체 규범 작업에는 `Owning feature: none`을 기록하고 이유를 밝힌다. Answer Mode 또는 Light Route의 비규범 편집에서는 작업이 확장될 때까지 소유 기록을 생략할 수 있다.
 
-## Delegation Route
+## 위임 경로
 
-Only when dispatching subagents, load `ai/subagent-workflow.md`, `ai/github-issue-planning.md`, and the handoff/work-log records required for that delegation. Every handoff should contain the owning feature, files already read, decisions, open questions, and remaining evidence. Single-agent work does not preload delegation policy.
+하위 에이전트를 배정할 때만 `ai/subagent-workflow.md`, `ai/github-issue-planning.md`, 위임에 필요한 handoff/작업 로그 레코드를 읽는다. 모든 handoff에는 소유 기능, 이미 읽은 파일, 결정, 미해결 질문, 남은 증거를 담아야 한다. 단일 에이전트 작업은 위임 정책을 미리 읽지 않는다.
 
-## Re-Routing Rule
+## 재라우팅 규칙
 
-Stop and re-route when scope changes. Typical escalations include:
+범위가 바뀌면 계속하기 전에 멈추고 다시 라우팅한다. 일반적인 확장 사례는 다음과 같다.
 
-- Answer Mode becomes a repository change.
-- A Light Route wording edit changes a normative rule.
-- A domain change also changes an API contract.
-- Implementation reaches verification or completion.
+- Answer Mode가 저장소 변경으로 바뀜
+- Light Route 문구 편집이 규범적 규칙을 변경함
+- 도메인 변경이 API 계약도 변경함
+- 구현이 검증 또는 완료에 도달함
 
-Keep already loaded context only when it remains relevant; do not use re-routing as a reason to load every possible downstream document.
+이미 읽은 컨텍스트는 계속 관련 있을 때만 유지한다. 다시 라우팅한다는 이유로 가능한 모든 이후 문서를 읽지 않는다.

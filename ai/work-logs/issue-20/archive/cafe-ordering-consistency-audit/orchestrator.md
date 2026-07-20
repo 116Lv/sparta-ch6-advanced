@@ -1,32 +1,30 @@
 ---
-issue: pending
-issue_url:
+issue: 20
+issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20
 agent: orchestrator
-tracking_status: pending_issue
-status: handoff_needed
+tracking_status: issue_backed
+status: done
 owning_feature: "none"
 current_owner: repository-owner
 started_at: 2026-07-15T20:47:50.5155079+09:00
 ended_at: 2026-07-15T23:59:00+09:00
-last_updated: 2026-07-15T23:59:00+09:00
+last_updated: 2026-07-20T14:15:00+09:00
 branch: codex/implement-cafe-features
 related_files:
-  - ai/work-logs/no-issue/cafe-ordering-consistency-audit/README.md
+  - ai/work-logs/issue-20/archive/cafe-ordering-consistency-audit/README.md
 changed_files:
-  - ai/work-logs/no-issue/cafe-ordering-consistency-audit/README.md
-  - ai/work-logs/no-issue/cafe-ordering-consistency-audit/implementer.md
-  - ai/work-logs/no-issue/cafe-ordering-consistency-audit/reviewer.md
-  - ai/work-logs/no-issue/cafe-ordering-consistency-audit/orchestrator.md
+  - ai/work-logs/issue-20/archive/cafe-ordering-consistency-audit/README.md
+  - ai/work-logs/issue-20/archive/cafe-ordering-consistency-audit/implementer.md
+  - ai/work-logs/issue-20/archive/cafe-ordering-consistency-audit/reviewer.md
+  - ai/work-logs/issue-20/archive/cafe-ordering-consistency-audit/orchestrator.md
 commands_run: []
 tests_run: []
-blockers:
-  - GitHub Issue reconciliation requires explicit external-disclosure authorization
-  - Product verification is blocked because no VERIFIED product command exists
+blockers: []
 skill_ids:
   - superpowers:subagent-driven-development
   - superpowers:requesting-code-review
   - superpowers:verification-before-completion
-handoff_state_ref: ai/work-logs/no-issue/cafe-ordering-consistency-audit/README.md
+handoff_state_ref: ai/work-logs/issue-20/archive/cafe-ordering-consistency-audit/README.md
 reusable_context_refs: []
 not_run_project_commands:
   - verify.build
@@ -36,12 +34,12 @@ not_run_project_commands:
   - verify.api-smoke
   - db.migration
   - db.seed
-github_reconciliation_status: pending_external_authorization
-reconciliation_required: true
+github_reconciliation_status: complete
+reconciliation_required: false
 issue_creation_attempted_at: 2026-07-15T20:47:50.5155079+09:00
 issue_creation_failure_reason: GitHub connector rejected external disclosure because the user had not explicitly authorized issue creation
 expected_issue_scope: Independent cross-feature audit of cafe ordering consistency implementation at 16bea34..HEAD
-migration_history: []
+migration_history: ["2026-07-20T14:15:00+09:00: Issue #20 archive로 이관"]
 ---
 
 # Orchestration Record

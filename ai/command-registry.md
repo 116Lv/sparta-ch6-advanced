@@ -1,22 +1,22 @@
 # AI Workflow Command Registry
 
-## Human Policy Notes
+## 사람용 정책 메모
 
-`ai/command-registry.json` is the canonical source of truth for command capability state. This Markdown file explains the policy and summarizes that JSON; it is never parsed as executable state and cannot override the JSON.
+`ai/command-registry.json`은 명령 capability 상태의 기준 문서다. 이 Markdown 파일은 정책을 설명하고 JSON을 요약하며, 실행 가능한 상태로 파싱하지 않고 JSON을 재정의할 수 없다.
 
-- Update canonical JSON before refreshing the generated summary.
-- Do not edit content between generated markers independently of canonical JSON.
-- `NOT_APPLICABLE` is displayed as `N/A`; executable JSON never stores `N/A`.
-- A command is executable only through the Phase 1B gateway after that gateway exists. Phase 1A defines state contracts only.
-- `VERIFIED` requires successful execution of the exact registered argv plus recorded Phase 1B runtime evidence. Human manual command output does not satisfy this rule.
-- Native `gradlew.bat` execution is future scope and remains `NOT_CONFIGURED`.
-- schemaVersion 1 executable argv is allowlisted to begin with `./gradlew`, except that `verify.e2e` may use only the exact no-argument argv `["./scripts/e2e/verify-e2e.sh"]`. Phase 1B rejects every other executable or E2E argument as `INVALID_STATE` before execution.
-- Token-level safeguards remain defense in depth: backslashes, shell control operators, pipelines, redirection, separators, newlines, dollar expressions, and `eval` expressions are invalid.
-- Enabled parameters use a bounded, closed object schema with named string properties and required string patterns; arbitrary embedded schemas are invalid.
-- Repository paths are relative, forward-slash-only paths without URI schemes or `..` segments. The canonical registry uses `./schemas/command-registry.schema.json`; static fixtures may use `ai/schemas/command-registry.schema.json`.
-- Timestamps use a strict UTC shape. Phase 1B must enable Python `jsonschema` `FormatChecker` for semantic date-time validation.
-- `uniqueItems` applies to whole command objects, not `commands[*].id`. Phase 1B semantic validation must reject exact duplicate IDs as `INVALID_STATE` before lookup or execution.
-- Draft 2020-12 cannot compare dynamic required and properties key sets. Before execution, Phase 1B semantic validation must require required names to exactly match properties keys and reject any mismatch as INVALID_STATE.
+- 생성 요약을 새로 고치기 전에 기준 JSON을 갱신한다.
+- 생성 marker 사이 콘텐츠를 기준 JSON과 독립적으로 편집하지 않는다.
+- `NOT_APPLICABLE`은 `N/A`로 표시하며 실행 가능한 JSON에는 `N/A`를 저장하지 않는다.
+- 명령은 Phase 1B gateway가 존재한 뒤 해당 gateway를 통해서만 실행할 수 있다. Phase 1A는 상태 계약만 정의한다.
+- `VERIFIED`에는 정확히 등록된 argv의 성공 실행과 기록된 Phase 1B 런타임 증거가 필요하다. 사람 수동 명령 출력은 이 규칙을 충족하지 않는다.
+- 네이티브 `gradlew.bat` 실행은 향후 범위이며 `NOT_CONFIGURED`로 유지한다.
+- schemaVersion 1 실행 argv는 `./gradlew`로 시작하도록 allowlist한다. 단 `verify.e2e`는 정확한 무인수 argv `["./scripts/e2e/verify-e2e.sh"]`만 사용할 수 있다. Phase 1B는 다른 모든 실행 argv 또는 E2E 인자를 실행 전에 `INVALID_STATE`로 거부한다.
+- token 수준 safeguard는 심층 방어로 유지한다. backslash, shell 제어 연산자, pipeline, redirection, separator, newline, dollar expression, `eval` expression은 유효하지 않다.
+- 활성 parameter는 이름 있는 문자열 property와 필수 문자열 pattern을 가진 제한된 닫힌 객체 schema를 사용한다. 임의의 포함 schema는 유효하지 않다.
+- 저장소 path는 URI scheme나 `..` segment가 없는 상대 forward-slash 전용 path다. 기준 registry는 `./schemas/command-registry.schema.json`을 사용하며 정적 fixture는 `ai/schemas/command-registry.schema.json`을 사용할 수 있다.
+- timestamp는 엄격한 UTC 형태를 사용한다. Phase 1B는 의미 date-time 검증에 Python `jsonschema` `FormatChecker`를 활성화해야 한다.
+- `uniqueItems`는 `commands[*].id`가 아닌 전체 command 객체에 적용한다. Phase 1B 의미 검증은 조회 또는 실행 전에 정확히 중복된 ID를 `INVALID_STATE`로 거부해야 한다.
+- Draft 2020-12는 동적 required와 properties key 집합을 비교할 수 없다. 실행 전에 Phase 1B 의미 검증은 required name이 properties key와 정확히 일치하도록 요구하고 모든 불일치를 INVALID_STATE로 거부해야 한다.
 
 <!-- GENERATED:START source=ai/command-registry.json -->
 ## Generated State Summary

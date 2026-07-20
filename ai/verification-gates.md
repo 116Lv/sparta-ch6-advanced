@@ -1,51 +1,51 @@
-# AI Workflow Verification Gates
+# AI 워크플로 검증 게이트
 
-## Human Policy Notes
+## 사람용 정책 참고 사항
 
-`ai/verification-policy.json` is the canonical Phase 2C source for verification completeness, task/change applicability, workflow entry points, and result mapping. This Markdown file explains the policy for agents and reviewers. JSON is canonical. Markdown is not parsed as executable state.
+`ai/verification-policy.json`은 verification completeness, task/change applicability, workflow entry point, result mapping을 위한 canonical Phase 2C source다. 이 Markdown file은 agent와 reviewer에게 policy를 설명한다. JSON이 canonical이다. Markdown은 실행 가능한 상태로 파싱하지 않는다.
 
-Product commands remain NOT RUN for Phase 2C helper/static verification. `scripts/ai/verification-gate.sh` evaluates only static/helper/contract inputs and must not launch Gradle, build, product/unit project tests, server, Docker Compose, HTTP/curl/API, database, migration, seed, or infrastructure commands.
+Phase 2C helper/static verification에서 제품 명령은 계속 NOT RUN이다. `scripts/ai/verification-gate.sh`는 static/helper/contract input만 평가하며 Gradle, build, product/unit project test, server, Docker Compose, HTTP/curl/API, database, migration, seed, infrastructure 명령을 실행해서는 안 된다.
 
-## Entry Points
+## 진입점
 
-- `verification-level`: maps a change type to required verification checks.
-- `api-smoke`: maps real API smoke requiredness for API-visible work.
-- `failure-triage`: records failed or blocked leaf status before rerun or continuation.
-- `review`: checks independent review and delegated-work readiness.
-- `done-claim`: checks whether completion evidence is applicable before a done claim.
+- `verification-level`: change type을 required verification check에 매핑한다.
+- `api-smoke`: API-visible work의 real API smoke requiredness를 매핑한다.
+- `failure-triage`: rerun 또는 continuation 전 failed/blocked leaf status를 기록한다.
+- `review`: independent review와 delegated-work readiness를 검사한다.
+- `done-claim`: done claim 전 completion evidence가 applicable한지 검사한다.
 
-## Task/Change Applicability
+## 작업/변경 적용 가능성
 
-Phase 2C defines task/change applicability by change type in `ai/verification-policy.json`. The supported change types are `documentation-only`, `static-workflow`, `domain-logic`, `db-api`, `auth-permission`, `critical-data`, and `user-flow`.
+Phase 2C는 `ai/verification-policy.json`에서 change type별 task/change applicability를 정의한다. 지원되는 change type은 `documentation-only`, `static-workflow`, `domain-logic`, `db-api`, `auth-permission`, `critical-data`, `user-flow`이다.
 
-Verification completeness means every required check for the selected change type has an allowed mapped result and every inapplicable check is explicitly mapped with a reason. While `tracking_status` remains `pending_issue`, implementation QA may pass with a complete fallback, but issue-backed closure, reconciliation-complete, and unqualified overall DONE remain blocked.
+verification completeness는 선택된 change type의 모든 required check에 allowed mapped result가 있고 every inapplicable check가 reason과 함께 explicit하게 mapped됨을 뜻한다. `tracking_status`가 `pending_issue`인 동안 complete fallback으로 implementation QA가 통과할 수 있지만 issue-backed closure, reconciliation-complete, unqualified overall DONE은 계속 차단된다.
 
-## Result Mapping
+## 결과 매핑
 
-- `NOT_CONFIGURED` on a required check maps to `BLOCKED`.
-- `NOT_CONFIGURED` on an irrelevant or optional check maps to `NOT_APPLICABLE`.
-- A missing non-native leaf is `NOT_CONFIGURED`; canonical policy describes configuration and applicability but never supplies leaf `PASS` evidence.
-- Caller-supplied `NOT_APPLICABLE` is allowed only when the selected change type appears in that check's canonical `notApplicableFor` array. Otherwise it maps to `BLOCKED`, including for required checks.
-- The internal native adapter's canonical unsupported-host result remains the sole non-caller exception and keeps the explicit repository-only qualification.
-- `BLOCKED` on a required check remains `BLOCKED`.
-- `FAIL` remains visible as `FAIL` for required and optional checks, and takes precedence over `BLOCKED` in the aggregate result.
+- required check의 `NOT_CONFIGURED`는 `BLOCKED`로 매핑된다.
+- irrelevant 또는 optional check의 `NOT_CONFIGURED`는 `NOT_APPLICABLE`로 매핑된다.
+- missing non-native leaf는 `NOT_CONFIGURED`다. canonical policy는 configuration과 applicability를 설명하지만 leaf `PASS` evidence를 공급하지 않는다.
+- caller-supplied `NOT_APPLICABLE`은 선택된 change type이 해당 check의 canonical `notApplicableFor` array에 있을 때만 허용된다. 그렇지 않으면 required check를 포함해 `BLOCKED`로 매핑된다.
+- internal native adapter의 canonical unsupported-host result는 유일한 non-caller exception이며 explicit repository-only qualification을 유지한다.
+- required check의 `BLOCKED`는 `BLOCKED`로 남는다.
+- `FAIL`은 required/optional check 모두에서 `FAIL`로 보이며 aggregate result에서 `BLOCKED`보다 우선한다.
 
-`NOT_APPLICABLE` may be displayed as `N/A` in Markdown summaries, but executable JSON stores `NOT_APPLICABLE`.
+`NOT_APPLICABLE`은 Markdown summary에서 `N/A`로 표시할 수 있지만 executable JSON은 `NOT_APPLICABLE`을 저장한다.
 
-Every check output carries the same five leaf-identity keys in one of two closed shapes. A verified external or native check requires all five to be non-null. A missing, synthesized, or policy-derived check requires all five to be null and cannot report raw or mapped `PASS` or `FAIL`; it therefore cannot validate as verified evidence. For an external leaf, `leafResultSha256` is derived from the exact bounded bytes that the loader parsed and accepted, without reopening the leaf path, and `evidenceRef` points to the bound evidence artifact when present. The internal native leaf records `ai/native-adapter-result.json`, the SHA-256 of that canonical in-process result, the canonical producer, checked-out commit, and canonical policy digest. One gate evaluation bounded-reads `ai/verification-policy.json` exactly once; strict parsing, schema validation, SHA-256 derivation, native identity, and all external leaf checks use the same recursively immutable snapshot, so a replacement race cannot mix policy semantics and identity.
+모든 check output은 두 closed shape 중 하나로 같은 다섯 leaf-identity key를 가진다. verified external/native check는 다섯 key가 모두 non-null이어야 한다. missing, synthesized, policy-derived check는 다섯 key가 모두 null이어야 하며 raw 또는 mapped `PASS`/`FAIL`을 보고할 수 없으므로 verified evidence로 validation될 수 없다. external leaf의 `leafResultSha256`은 loader가 path를 다시 열지 않고 parse/accept한 exact bounded byte에서 파생되며 `evidenceRef`는 존재할 때 bound evidence artifact를 가리킨다. internal native leaf는 `ai/native-adapter-result.json`, 해당 canonical in-process result의 SHA-256, canonical producer, checked-out commit, canonical policy digest를 기록한다. 한 gate evaluation은 `ai/verification-policy.json`을 정확히 한 번 bounded-read한다. strict parsing, schema validation, SHA-256 derivation, native identity, external leaf check는 같은 recursively immutable snapshot을 사용하므로 replacement race가 policy semantic과 identity를 섞을 수 없다.
 
-## Native Runtime Adapter Leaf
+## 네이티브 런타임 어댑터 말단
 
-`native-runtime-adapter` is an internal-only required check for every change type. `scripts/ai/verification-gate.sh` requires `--task-key` and `--gate-invocation-id` and may forward `--runtime-snapshot` and `--bypass-attempts` directly to the in-process evaluator for diagnosis. Those repository inputs cannot supply immutable external `HostNativeTrust` and cannot promote the public path above the canonical unsupported host. The public `native-adapter-gate` CLI accepts no host descriptor, probe, trust anchor, ledger, policy, snapshot, or bypass fixture capable of producing supported-host PASS. The gate never accepts a precomputed native adapter result. Ordinary `--leaf-results-file` input containing this check ID is forged state and returns `INVALID_STATE` with `NATIVE_ADAPTER_LEAF_FORGED` before leaf lookup.
+`native-runtime-adapter`는 모든 change type의 internal-only required check다. `scripts/ai/verification-gate.sh`는 `--task-key`, `--gate-invocation-id`를 요구하며 진단을 위해 `--runtime-snapshot`, `--bypass-attempts`를 in-process evaluator에 직접 전달할 수 있다. 이 repository input은 immutable external `HostNativeTrust`를 제공하거나 public path를 canonical unsupported host 이상으로 승격할 수 없다. public `native-adapter-gate` CLI는 supported-host PASS를 만들 수 있는 host descriptor, probe, trust anchor, ledger, policy, snapshot, bypass fixture를 수락하지 않는다. gate는 precomputed native adapter result를 절대로 수락하지 않는다. 이 check ID를 포함하는 일반 `--leaf-results-file` input은 forged state이며 leaf lookup 전에 `NATIVE_ADAPTER_LEAF_FORGED`와 함께 `INVALID_STATE`를 반환한다.
 
-The verification loop invokes `native_adapter_phase2c_leaf()` with the current correlation. That helper calls `native_adapter_gate()` against canonical `ai/native-runtime-adapters.json`; the check never reaches the static `registryCommandId: null` PASS fallback. Invalid task or gate correlation fails closed.
+verification loop는 current correlation으로 `native_adapter_phase2c_leaf()`를 호출한다. 이 helper는 canonical `ai/native-runtime-adapters.json`에 대해 `native_adapter_gate()`를 호출한다. check는 static `registryCommandId: null` PASS fallback에 도달하지 않는다. invalid task/gate correlation은 fail closed한다.
 
-The current host version is `null`/`UNPROBED` and the host is `UNSUPPORTED`. Adapter result `UNSUPPORTED` maps to raw and mapped `NOT_APPLICABLE` with reason `HOST_UNSUPPORTED`; an overall PASS is qualified as `REPOSITORY_ONLY_HOST_UNSUPPORTED` and proves only the repository gate. Supported-host matching requires an authoritative `PROBED` version. For a supported host, missing authenticated enforcement is `NOT_CONFIGURED` or `BLOCKED`; producer/key/signature/freshness/challenge/replay/callback/crypto, redaction, correlation, or bypass faults remain `BLOCKED` or `FAIL`.
+현재 host version은 `null`/`UNPROBED`이고 host는 `UNSUPPORTED`다. adapter result `UNSUPPORTED`는 `HOST_UNSUPPORTED` reason과 함께 raw/mapped `NOT_APPLICABLE`로 매핑된다. overall PASS는 `REPOSITORY_ONLY_HOST_UNSUPPORTED`로 qualified되며 repository gate만 증명한다. supported-host matching에는 authoritative `PROBED` version이 필요하다. supported host에서 missing authenticated enforcement은 `NOT_CONFIGURED` 또는 `BLOCKED`다. producer/key/signature/freshness/challenge/replay/callback/crypto, redaction, correlation, bypass fault는 `BLOCKED` 또는 `FAIL`로 남는다.
 
-The result keeps `claimedSurfaces` separate from `trustedSurfaces`. Policy surfaces are baseline-only and cannot declare runtime `ENFORCED`. Missing or rejected snapshots retain trusted `NOT_CONFIGURED` surfaces. Only immutable external host trust plus a closed, fresh, Ed25519 snapshot with signed callback proof and atomic consumption in the external durable replay ledger can emit trusted `ENFORCED`; the process-local replay set is defense in depth. All four trusted surfaces plus no unresolved bypass are required for native adapter `PASS`. A later-gate `RESOLVED` event must bind exactly one prior detection by event ID, task, original gate invocation, deduplication key, and canonical detection digest before every current resolution event ID is compared with the bounded unique `resolutionEventIds` array inside the signed snapshot bytes. Missing, unrelated, multiple, later, or digest-mismatched detections and missing, mismatched, duplicate, oversized, or extra signed resolution IDs block, as do resolution claims on the canonical unsupported host or without a trusted snapshot. Canonical `supportedHosts` remains empty, so this supported path is exercised only with temporary external host trust, keys, and ledgers and creates no durable repository evidence.
+result는 `claimedSurfaces`와 `trustedSurfaces`를 구분한다. policy surface는 baseline 전용이며 runtime `ENFORCED`를 선언할 수 없다. missing/rejected snapshot은 trusted `NOT_CONFIGURED` surface를 유지한다. immutable external host trust와 closed, fresh, Ed25519 snapshot, signed callback proof, external durable replay ledger의 atomic consumption만 trusted `ENFORCED`를 발행할 수 있다. process-local replay set은 defense in depth뿐이다. 네 trusted surface와 unresolved bypass 부재가 native adapter `PASS`에 모두 필요하다. later-gate `RESOLVED` event는 current resolution event ID를 signed snapshot byte 안의 bounded unique `resolutionEventIds` array와 비교하기 전에 event ID, task, original gate invocation, deduplication key, canonical detection digest로 prior detection 하나에 정확히 bind되어야 한다. missing, unrelated, multiple, later, digest-mismatched detection과 missing, mismatched, duplicate, oversized, extra signed resolution ID는 canonical unsupported host에서의 resolution claim 또는 trusted snapshot 없는 claim처럼 차단한다. canonical `supportedHosts`는 비어 있으므로 이 supported path는 temporary external host trust, key, ledger로만 실행되며 durable repository evidence를 만들지 않는다.
 
-`scripts/ai/command-runner.sh` remains the only supported product-command path. Native adapters do not execute product commands. Phase 3B owns CI adapter installation, remote-runner guarantees, durable CI evidence, CI ledger provisioning and retention, and cross-host parity.
+`scripts/ai/command-runner.sh`는 계속 유일한 지원 product-command path다. native adapter는 product command를 실행하지 않는다. Phase 3B는 CI adapter installation, remote-runner guarantee, durable CI evidence, CI ledger provisioning/retention, cross-host parity를 소유한다.
 
-## Evidence Boundary
+## 증거 경계
 
-Phase 2C and Phase 3A static/helper gates do not create repository `.ai-runs`, artifact manifests, finalized `run.json`, registry `VERIFIED` transitions, issue-backed closure claims, reconciliation-complete claims, or unqualified overall DONE claims. Phase 1B-3 remains `completenessEvaluated: false` with scope `INTEGRITY_ONLY`. Real project verification remains NOT RUN unless the supported command-runner evidence path is explicitly used.
+Phase 2C 및 Phase 3A static/helper gate는 repository `.ai-runs`, artifact manifest, finalized `run.json`, registry `VERIFIED` transition, issue-backed closure claim, reconciliation-complete claim, unqualified overall DONE claim을 만들지 않는다. Phase 1B-3은 scope `INTEGRITY_ONLY`와 함께 `completenessEvaluated: false`로 남는다. real project verification은 supported command-runner evidence path가 명시적으로 사용되지 않는 한 계속 NOT RUN이다.

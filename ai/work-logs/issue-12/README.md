@@ -2,11 +2,12 @@
 issue: 12
 issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/12
 tracking_status: issue_backed
-status: in_progress
+status: done
 owning_feature: none
 current_owner: main-agent
 started_at: 2026-07-13T23:30:00+09:00
-last_updated: 2026-07-14T01:17:40+09:00
+ended_at: 2026-07-14T19:50:14+09:00
+last_updated: 2026-07-20T14:05:00+09:00
 branch: codex/phase-3b-ci-gates-durable-evidence
 related_files:
   - docs/superpowers/specs/2026-07-13-ai-workflow-phase-3b-ci-gates-durable-evidence-design.md
@@ -14,6 +15,8 @@ related_files:
 ---
 
 # Issue Summary
+
+> Current status: GitHub Issue #12는 2026-07-14에 종료됐다. 아래의 `pending`, `NOT_CONFIGURED`, 재실행 필요 문구는 종료 전 시점의 검증 이력이며 현재 Issue 진행 상태가 아니다.
 
 Issue #12 tracks Phase 3B CI gates and durable CI evidence after PR #11 merged.
 The work preserves approved Phase 1A through Phase 3A decisions. The current

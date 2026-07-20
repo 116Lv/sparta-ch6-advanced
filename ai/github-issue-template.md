@@ -1,13 +1,13 @@
 # GitHub Issue Template
 
-Copy this body when the Orchestrator creates a dispatchable issue. Replace every placeholder before dispatch.
+Orchestrator가 배정 가능한 issue를 만들 때 이 본문을 복사한다. 배정 전에 모든 placeholder를 대체한다.
 
 ```md
 # Task
 
 <Short, action-oriented issue title>
 
-## Purpose
+## 목적
 
 <Why this dispatchable unit exists and the expected outcome.>
 
@@ -55,4 +55,4 @@ Copy this body when the Orchestrator creates a dispatchable issue. Replace every
 - <Question, or `None`>
 ```
 
-For an approved `pending_issue` fallback, use `local_log_path: ai/work-logs/no-issue/{work-key}/`, set `reconciliation_required: true`, and state the GitHub creation failure in **Open Questions**. Do not use that variation unless the Orchestrator has recorded a failed creation attempt.
+승인된 `pending_issue` fallback에는 `local_log_path: ai/work-logs/no-issue/{work-key}/`를 사용하고 `reconciliation_required: true`를 설정하며 GitHub 생성 실패를 **Open Questions**에 명시한다. Orchestrator가 실패한 생성 시도를 기록하지 않았다면 이 변형을 사용하지 않는다.

@@ -1,94 +1,93 @@
-# GitHub Issue Planning
+# GitHub Issue 계획
 
-## Purpose
+## 목적
 
-Use GitHub Issues as the external task-tracking record for dispatched agent work. Use repository work logs as the durable execution and recovery record. This document defines the Orchestrator's required flow before, during, and after dispatch.
+dispatch된 agent 작업의 외부 task-tracking record로 GitHub Issue를 사용한다. 내구성 있는 execution 및 recovery record로 저장소 work log를 사용한다. 이 문서는 dispatch 전, 중, 후 Orchestrator의 필수 흐름을 정의한다.
 
-`ai/document-routing.md` remains the first gate. An issue never replaces feature specifications, owner documents, ADRs, verification evidence, or the QA gate.
+`ai/document-routing.md`는 계속 첫 gate다. issue는 feature specification, owner document, ADR, verification evidence, QA gate를 대체하지 않는다.
 
-## Ownership
+## 소유권
 
-The Orchestrator owns all GitHub Issue state:
+Orchestrator는 모든 GitHub Issue state를 소유한다.
 
-- routing the work and recording the owning feature outcome;
-- splitting work into dispatchable issues;
-- creating, assigning, commenting on, reconciling, and closing issues; and
-- setting the final issue and work-log status after reviewing required evidence.
+- 작업을 routing하고 owning feature outcome 기록
+- 작업을 dispatch 가능한 issue로 분할
+- issue 생성, 할당, comment, reconciliation, close, required evidence 검토 후 final issue/work-log status 설정
 
-Workers own their role-specific log only. A worker may report progress, blockers, decisions, and evidence, but must not create, assign, reconcile, close, or set the final status of an issue.
+worker는 자신의 role-specific log만 소유한다. worker는 progress, blocker, decision, evidence를 보고할 수 있지만 issue를 생성, 할당, reconcile, close하거나 final status를 설정해서는 안 된다.
 
-## Executable Flow
+## 실행 흐름
 
-1. **Route**: Run `ai/document-routing.md` and record `Owning feature: specs/{feature}` or `Owning feature: none`. For feature-owned work, read `specs/{feature}/spec.md` before subject-specific dispatch.
-2. **Define Issue Boundaries**: Divide the work into cohesive, independently closable items with a shared purpose and shared acceptance criteria. Keep multiple subagents or roles under one Issue when their scopes contribute to that same closure decision. Split scopes only when each can be accepted and closed independently, not merely because multiple agents participate.
-3. **Create GitHub Issue**: The Orchestrator creates one Issue per cohesive work item using [github-issue-template.md](github-issue-template.md). The Issue body must include the routing outcome, required reading, acceptance criteria, evidence required, suggested roles, and expected work-log path.
-4. **Initialize Issue Directory**: Create `ai/work-logs/issue-{number}/README.md`, add an entry to `ai/work-logs/index.md`, and initialize each assigned role log from [work-log-template.md](work-log-template.md). Set `issue`, `issue_url`, `tracking_status: issue_backed`, workflow `status`, `owning_feature`, `current_owner`, and `last_updated` before dispatch.
-5. **Dispatch**: Give the worker the issue number, issue URL, work-log path, routing outcome, links to files already read and phase-gated files to read, scope, open questions, and evidence required. Include context links to the issue summary and relevant prior role logs. The Orchestrator records the assignment in the issue and issue summary.
-6. **Update Incrementally**: Workers update only their role log after meaningful work, decisions, command results, verification attempts, or blockers. The Orchestrator keeps the issue summary, index, and GitHub Issue comments aligned with the worker logs.
-7. **Pause, Block, Or Resume**: Before pausing, set the role-log status to `handoff_needed` or `blocked`, record the exact recovery point and next handoff, and notify the Orchestrator. The Orchestrator updates the issue summary, comments on the GitHub Issue, and assigns or resumes the next role. On resume, read the issue summary and latest role log before making changes.
-8. **Review And Evidence Ready**: A Review Agent checks routing, scope, changed files, required evidence, unresolved blockers, and consistency with the Issue acceptance criteria. Record the review evidence in a role log and set the Issue summary to `status: in_review` when it is ready for the completion sequence.
-9. **Pre-QA Checklist**: Complete the pre-QA sections of `ai/issue-completion-checklist.md`. This stage verifies evidence readiness and must not require a done claim.
-10. **QA Gate**: Run `ai/qa-gate.md` and record `implementation_status` from actual verification evidence. When it is `PASS`, set the Issue summary and completed role logs to workflow `status: done` before creating the done claim.
-11. **Done Claim**: After QA, create the completion report from `ai/done-claim-template.md`.
-12. **Closure Checklist And Issue Closure**: After the done claim exists, complete the closure sections of `ai/issue-completion-checklist.md`. The Orchestrator reconciles all role logs and review evidence, comments on the Issue with the evidence summary, and closes the Issue only when every closure condition passes.
+1. **Route**: `ai/document-routing.md`를 실행하고 `Owning feature: specs/{feature}` 또는 `Owning feature: none`을 기록한다. feature-owned 작업은 subject-specific dispatch 전에 `specs/{feature}/spec.md`를 읽는다.
+2. **Issue 경계 정의**: shared purpose와 shared acceptance criteria를 가진 cohesive하고 independently closable한 item으로 작업을 나눈다. 여러 subagent/role의 scope가 같은 closure decision에 기여하면 하나의 Issue 아래에 유지한다. 여러 agent가 참여한다는 이유만으로 분할하지 말고 각 scope를 독립적으로 accept하고 close할 수 있을 때만 분할한다.
+3. **GitHub Issue 생성**: Orchestrator는 [github-issue-template.md](github-issue-template.md)를 사용해 cohesive work item마다 Issue 하나를 만든다. Issue body에는 routing outcome, required reading, acceptance criteria, required evidence, suggested role, expected work-log path가 포함되어야 한다.
+4. **Issue Directory 초기화**: `ai/work-logs/issue-{number}/README.md`를 만들고 `ai/work-logs/index.md`에 entry를 추가하며 각 assigned role log를 [work-log-template.md](work-log-template.md)에서 초기화한다. dispatch 전 `issue`, `issue_url`, `tracking_status: issue_backed`, workflow `status`, `owning_feature`, `current_owner`, `last_updated`를 설정한다.
+5. **Dispatch**: worker에게 issue number, issue URL, work-log path, routing outcome, 이미 읽은 file과 읽을 phase-gated file 링크, scope, open question, required evidence를 준다. issue summary와 relevant prior role log의 context link를 포함한다. Orchestrator는 assignment를 issue와 issue summary에 기록한다.
+6. **점진적 업데이트**: worker는 meaningful work, decision, command result, verification attempt, blocker 후 자신의 role log만 업데이트한다. Orchestrator는 issue summary, index, GitHub Issue comment를 worker log와 정렬한다.
+7. **Pause, Block 또는 Resume**: pause 전 role-log status를 `handoff_needed` 또는 `blocked`로 설정하고 exact recovery point와 next handoff를 기록하여 Orchestrator에 알린다. Orchestrator는 issue summary를 업데이트하고 GitHub Issue에 comment하며 다음 role을 assign/resume한다. resume 시 변경 전 issue summary와 latest role log를 읽는다.
+8. **Review 및 Evidence 준비**: Review Agent는 routing, scope, changed file, required evidence, unresolved blocker, Issue acceptance criteria와의 일관성을 검사한다. review evidence를 role log에 기록하고 completion sequence 준비가 되면 Issue summary를 `status: in_review`로 설정한다.
+9. **Pre-QA Checklist**: `ai/issue-completion-checklist.md`의 pre-QA section을 완료한다. 이 단계는 evidence readiness를 검증하며 done claim을 요구해서는 안 된다.
+10. **QA Gate**: `ai/qa-gate.md`를 실행하고 actual verification evidence의 `implementation_status`를 기록한다. `PASS`일 때 done claim을 만들기 전에 Issue summary와 완료 role log를 workflow `status: done`으로 설정한다.
+11. **Done Claim**: QA 후 `ai/done-claim-template.md`에서 completion report를 만든다.
+12. **Closure Checklist 및 Issue Closure**: done claim이 존재한 후 `ai/issue-completion-checklist.md`의 closure section을 완료한다. Orchestrator는 모든 role log와 review evidence를 reconcile하고 evidence summary를 Issue에 comment하며 모든 closure condition이 통과할 때만 Issue를 닫는다.
 
-## Issue Planning Rules
+## Issue 계획 규칙
 
-- Create Issues before dispatch whenever work is split into trackable units.
-- One Issue is one cohesive, independently closable work item with a shared purpose and acceptance criteria.
-- Multiple subagents and roles may work under the same Issue and must keep separate role logs.
-- Split into separate Issues when scopes can be accepted and closed independently, not merely because multiple agents participate.
-- Use one Issue number per Issue directory. Do not group unrelated work under one directory.
-- Keep `ai/work-logs/index.md` current whenever an issue starts, pauses, blocks, resumes, or reaches a final status.
-- A status of `done` means the role completed its assigned work; it does not authorize issue closure. Only the Orchestrator may set final issue status and close the issue.
-- Do not set `done` or close an issue without the evidence required by its issue body and applicable repository verification rules.
+- 작업이 추적 가능한 unit으로 분할될 때는 dispatch 전에 Issue를 만든다.
+- 하나의 Issue는 shared purpose와 acceptance criteria를 가진 하나의 cohesive하고 independently closable한 work item이다.
+- 여러 subagent와 role은 같은 Issue에서 작업할 수 있으며 별도의 role log를 유지해야 한다.
+- 여러 agent가 참여한다는 이유만으로 분할하지 않고 scope를 독립적으로 accept/close할 수 있을 때 별도 Issue로 나눈다.
+- Issue directory마다 Issue number 하나를 사용한다. 관련 없는 작업을 한 directory 아래에 묶지 않는다.
+- issue 시작, pause, block, resume, final status 도달 시마다 `ai/work-logs/index.md`를 최신으로 유지한다.
+- `done` status는 role이 assigned work를 완료했음을 뜻한다. issue closure를 허가하지 않는다. Orchestrator만 final issue status를 설정하고 issue를 닫을 수 있다.
+- issue body와 applicable repository verification rule이 요구한 evidence 없이 `done`을 설정하거나 issue를 닫지 않는다.
 
-## Tracking And Workflow Status Values
+## Tracking 및 Workflow Status 값
 
-Tracking availability and workflow progress are orthogonal. Use both fields in every Issue summary and role log.
+tracking availability와 workflow progress는 직교한다. 모든 Issue summary와 role log에서 두 field를 사용한다.
 
-| `tracking_status` | Meaning | Owner |
+| `tracking_status` | 의미 | Owner |
 |---|---|---|
-| `issue_backed` | A real GitHub Issue number and URL back the work. | Orchestrator |
-| `pending_issue` | A documented temporary fallback exists after Issue creation failed. | Orchestrator |
+| `issue_backed` | 실제 GitHub Issue number와 URL이 작업을 뒷받침한다. | Orchestrator |
+| `pending_issue` | Issue 생성 실패 후 문서화된 temporary fallback이 있다. | Orchestrator |
 
-| `status` | Meaning | Owner |
+| `status` | 의미 | Owner |
 |---|---|---|
-| `planned` | Work is defined but is not assigned or dispatched. | Orchestrator |
-| `in_progress` | Assigned work is actively being performed. | Assigned role for its log; Orchestrator for issue summary |
-| `handoff_needed` | Work paused with a defined next role or recovery point. | Assigned role proposes; Orchestrator confirms |
-| `blocked` | Progress cannot continue until a recorded blocker is resolved. | Assigned role proposes; Orchestrator confirms |
-| `in_review` | Work is under independent review or has review evidence ready for QA. | Orchestrator |
-| `done` | Assigned work or the issue has satisfied its defined criteria. | Orchestrator sets final issue status |
+| `planned` | 작업은 정의되었지만 assigned/dispatched되지 않았다. | Orchestrator |
+| `in_progress` | assigned 작업이 능동적으로 수행 중이다. | 자신의 log에는 assigned role, issue summary에는 Orchestrator |
+| `handoff_needed` | 정의된 next role 또는 recovery point와 함께 작업이 pause되었다. | assigned role이 제안, Orchestrator가 확인 |
+| `blocked` | 기록된 blocker가 해소될 때까지 progress를 계속할 수 없다. | assigned role이 제안, Orchestrator가 확인 |
+| `in_review` | 작업이 독립 review 중이거나 QA 준비 review evidence가 있다. | Orchestrator |
+| `done` | assigned work 또는 issue가 정의된 criteria를 충족했다. | Orchestrator가 final issue status 설정 |
 
-## Strict `pending_issue` Fallback
+## 엄격한 `pending_issue` Fallback
 
-Use `tracking_status: pending_issue` only when GitHub Issue creation was attempted and is unavailable because of an external failure, such as authentication, authorization, GitHub outage, or network failure. The Orchestrator must set `issue_creation_attempted_at`, `issue_creation_failure_reason`, `expected_issue_scope`, `migration_history`, and `reconciliation_required: true` in the temporary Issue summary and every role log.
+`tracking_status: pending_issue`는 GitHub Issue 생성이 시도되었으나 authentication, authorization, GitHub outage, network failure 같은 external failure로 사용할 수 없을 때만 사용한다. Orchestrator는 temporary Issue summary와 모든 role log에 `issue_creation_attempted_at`, `issue_creation_failure_reason`, `expected_issue_scope`, `migration_history`, `reconciliation_required: true`를 설정해야 한다.
 
-The temporary directory must be exactly `ai/work-logs/no-issue/{work-key}/`; `{work-key}` must be stable and descriptive. The directory preserves exactly one intended future Issue boundary. Its Issue summary and role logs use `issue: pending`, an empty `issue_url`, `tracking_status: pending_issue`, and the actual workflow `status`. Do not create a date-only Issue directory, invent an Issue number, overload `status`, or use the fallback for convenience.
+temporary directory는 정확히 `ai/work-logs/no-issue/{work-key}/`여야 한다. `{work-key}`는 stable하고 descriptive해야 한다. directory는 의도된 future Issue boundary 하나만 보존한다. Issue summary와 role log는 `issue: pending`, 빈 `issue_url`, `tracking_status: pending_issue`, 실제 workflow `status`를 사용한다. date-only Issue directory를 만들거나 Issue number를 발명하거나 `status`를 overload하거나 convenience를 위해 fallback을 사용하지 않는다.
 
-A complete fallback with valid metadata, all required role logs, and all applicable verification evidence may pass implementation QA with `implementation_status: PASS`. While `tracking_status` remains `pending_issue`, it still blocks an unqualified overall `DONE`, any claim that the work is issue-backed, reconciliation completion, and GitHub Issue closure. Missing or invalid fallback metadata, role logs, or evidence is an implementation-QA blocker.
+유효한 metadata, 모든 required role log, 모든 applicable verification evidence를 갖춘 complete fallback은 `implementation_status: PASS`로 implementation QA를 통과할 수 있다. `tracking_status`가 `pending_issue`인 동안 unqualified overall `DONE`, issue-backed 작업 주장, reconciliation completion, GitHub Issue closure는 계속 차단된다. 누락되었거나 invalid한 fallback metadata, role log, evidence는 implementation-QA blocker다.
 
-When GitHub access is restored, the Orchestrator must:
+GitHub access가 복구되면 Orchestrator는 다음을 수행해야 한다.
 
-1. Create the GitHub Issue from the original scope and current evidence.
-2. Move the entire temporary directory to `ai/work-logs/issue-{number}/` without discarding history. Linking the old directory or copying selected files is not reconciliation.
-3. Append the move timestamp, prior `no-issue` path, and final `issue-{number}` path to `migration_history` in the Issue summary and every role log.
-4. Update `issue`, `issue_url`, `tracking_status: issue_backed`, `last_updated`, and `reconciliation_required: false` in the Issue summary and every role log. Preserve workflow `status` and the Issue-creation attempt fields.
-5. Replace the `no-issue` index entry with the `issue-{number}` entry and preserve the temporary path in the migration record.
-6. Add a GitHub Issue comment linking the migrated log directory and summarizing work completed before Issue creation.
+1. original scope와 current evidence에서 GitHub Issue를 만든다.
+2. history를 버리지 않고 temporary directory 전체를 `ai/work-logs/issue-{number}/`로 옮긴다. old directory 연결이나 selected file 복사는 reconciliation이 아니다.
+3. Issue summary와 모든 role log의 `migration_history`에 move timestamp, 이전 `no-issue` path, final `issue-{number}` path를 추가한다.
+4. Issue summary와 모든 role log의 `issue`, `issue_url`, `tracking_status: issue_backed`, `last_updated`, `reconciliation_required: false`를 업데이트한다. workflow `status`와 Issue-creation attempt field는 보존한다.
+5. `no-issue` index entry를 `issue-{number}` entry로 교체하고 temporary path를 migration record에 보존한다.
+6. migrated log directory를 연결하고 Issue 생성 전 완료된 작업을 요약하는 GitHub Issue comment를 추가한다.
 
-The fallback is not fully reconciled until all six steps are complete. Until then, the work must not be reported as issue-backed or closed.
+여섯 단계가 모두 완료될 때까지 fallback은 완전히 reconciled되지 않는다. 그때까지 작업은 issue-backed 또는 closed로 보고해서는 안 된다.
 
-## Required Dispatch Fields
+## 필수 Dispatch Field
 
-Every dispatch must contain:
+모든 dispatch에는 다음이 포함되어야 한다.
 
-- `tracking_status` plus `issue` and `issue_url`, or the complete `pending_issue` fallback metadata;
-- `owning_feature` and the routing files read;
-- Markdown document links to required and phase-gated reading;
-- context links to the issue summary and relevant prior role logs;
-- role, scope, acceptance criteria, and out-of-scope boundaries;
-- decisions already made and open questions;
-- work-log path and current workflow `status`; and
-- evidence required for handoff and review.
+- `tracking_status`와 `issue`, `issue_url`, 또는 complete `pending_issue` fallback metadata
+- `owning_feature`와 읽은 routing file
+- required 및 phase-gated reading의 Markdown document link
+- issue summary와 relevant prior role log의 context link
+- role, scope, acceptance criteria, out-of-scope boundary
+- 이미 내린 decision과 open question
+- work-log path 및 current workflow `status`
+- handoff 및 review에 필요한 evidence
