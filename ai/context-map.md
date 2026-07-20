@@ -66,16 +66,26 @@ delegation은 deferred reading을 대체하지 않는다. `ai/agent-handoff.json
 
 helper는 handoff를 이 context map과 비교한다. `activityId`는 선택한 route-phase와 호환되어야 하고 해당 activity의 mandatory trigger만 필요하다. `activatedTriggers`는 canonical document 및 opt-in trigger의 subset이어야 한다. effective required document는 base `requiredDocuments`와 activated document trigger가 매핑한 document이며 READY와 PARTIAL은 모두 읽어야 한다. 모든 read document는 `includePaths`에 포함되고 read는 deferred 상태로 남지 않으며 selected document는 읽히고 일치하는 exact scope가 있어야 하며 activated deferred document는 일치하는 exact scope를 얻는다. extra scope는 phase default, direct exact selection, selected rediscovery subject document, activated opt-in 아래에서 materialize된 exact path로 닫힌다. READY와 PARTIAL은 materialize된 모든 exact path를 읽고, BLOCKED는 그 read를 생략할 수 있지만 scope를 넓히거나 foreign scope를 사용할 수 없다. `deferredDocuments`는 activated document-trigger document를 뺀 canonical deferred set과 정확히 같다. `BLOCKED`만 mandatory activation 또는 effective required read를 생략할 수 있으며 canonical trigger array와 scope authorization은 계속 적용된다. owning feature 없는 feature work는 invalid이고 `NONE_ALLOWED`, `DIRECT_DOCUMENT` route는 `owningFeature: none`이 필요하다.
 
-## 저장소 Surface
+## Repository Surfaces
 
-| Surface ID | Path | Owner |
+| Surface ID | Paths | Owner |
 |---|---|---|
-| `product-source` | `src/main` | product feature spec |
-| `product-tests` | `src/test` | product feature spec |
+| `product-source` | `src/main` | product feature specs |
+| `product-tests` | `src/test` | product feature specs |
 | `feature-specs` | `specs` | owning feature |
 | `ai-workflow` | `ai`, `scripts/ai` | repo-wide AI workflow |
-| `project-docs` | `docs`, `README.md` | documentation route |
+| `project-docs` | `docs`, `README.md` | documentation routes |
 
 ## Phase 2A 경계
 
 repository script는 Phase 3 이전에 모든 host file read, search, external tool call을 가로챌 수 없다. map은 canonical policy, schema validation, 검토 가능한 intake behavior를 제공하지만 모든 host action을 기술적으로 방지하거나 project state를 자동으로 재작성하지 않는다.
+
+## Machine-contract 리터럴
+
+다음 문구는 repository contract test가 검사하는 호환성 리터럴이므로 번역하지 않는다.
+
+- `JSON is canonical`
+- `Markdown is not parsed as executable state`
+- `repository scripts cannot intercept every host file read, search, or external tool call before Phase 3`
+- `Product commands remain NOT RUN`
+- `Phase 2A does not evaluate verification completeness`

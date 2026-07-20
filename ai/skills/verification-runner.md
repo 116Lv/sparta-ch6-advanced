@@ -1,38 +1,40 @@
 # 검증 실행기 스킬
 
-## 목적
+## Purpose
 
 검증 완전성을 주장하지 않으면서 검증 계약을 선택하고 무엇을 실행했거나 실행하지 않았는지 기록한다.
 
-## 필수 입력
+## Required Inputs
 
 - `ai/verification-levels.md`
 - `ai/command-registry.json`
 - 현재 인계 상태
 
-## 허용 작업
+## Allowed Operations
 
 - current phase가 허용하는 static/helper/contract check를 선택한다.
 - 명시적 NOT RUN item을 기록한다.
 
-## 금지 작업
+## Prohibited Operations
 
 - 제품 명령은 Phase 2B에서 계속 NOT RUN이다.
 - verification completeness를 주장하지 않는다.
 - `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, `FAIL`을 PASS로 변환하지 않는다.
 
-## 증거 출력
+## Evidence Outputs
 
 - verification command name과 observed result
 - 명시적 NOT RUN 목록
 
-## 인계 및 재사용
+## Handoff And Reuse
 
 handoff에는 `skill_ids`, `handoff_state_ref`, `reusable_context_refs`, `not_run_project_commands`, verification evidence ref를 포함한다.
 
-## Phase 2B 경계
+## Phase 2B Boundary
 
 Phase 2B는 static/helper/contract artifact만 검증하며 full task applicability를 평가하지 않는다.
+
+Machine-contract literal: `Product commands remain NOT RUN in Phase 2B`.
 
 ## Phase 2C 진입점
 

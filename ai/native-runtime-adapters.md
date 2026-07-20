@@ -31,7 +31,7 @@ supported-host 스냅샷은 `ai/schemas/native-runtime-snapshot.schema.json`으�
 
 - 현재 정책에 일치하는 supported host와 `PROBED` 권위 host version이 있다.
 - producer, host, host version, adapter range, `gateInvocationId`가 일치한다.
-- `observedAt`은 미래가 아니며 300초 이내다.
+- `observedAt`은 미래가 아니며 300초(`300 seconds`) 이내다.
 - 제공된 공개 키는 서명된 fingerprint 및 정책에 고정된 공개 키 fingerprint 모두와 hash가 일치한다.
 - `cryptography.hazmat` Ed25519 검증이 분리된 signature를 수락한다.
 - 모든 `ENFORCED` 표면에는 callback이 실행 전 작업을 관찰하고 같은 challenge에 `BLOCKED`를 반환했다는 서명된 증거가 있다.
@@ -41,7 +41,7 @@ supported-host 스냅샷은 `ai/schemas/native-runtime-snapshot.schema.json`으�
 
 선택 crypto 의존성은 fail-closed다. Ed25519 지원을 사용할 수 없으면 `BLOCKED`다. evaluator는 private key를 수락하지 않는다. 안전한 handle-relative ledger 게시와 directory durability가 필요하며, 안전한 backend를 사용할 수 없거나 write, sync, close, cleanup이 불확실하면 fail-closed한다. test는 임시 외부 ledger, key, fixture만 만들며 key material, replay 상태, runtime 증거를 내구성 저장소 상태에 쓰지 않는다.
 
-## 주장된 상태와 신뢰 상태
+## 주장된 상태와 신뢰 상태 (Claimed And Trusted Status)
 
 `claimedSurfaces`는 닫힌 스냅샷의 선언을 기록한다. `trustedSurfaces`는 완전한 trust chain을 통과한 내용만 기록한다. 누락된 스냅샷은 supported 정책의 `NOT_CONFIGURED` 기준선을 사용한다. malformed, 거부, stale, replayed 또는 검증 불가 스냅샷은 닫힌 주장을 표시할 수 있지만, trusted surface는 승격되지 않은 기준선으로 유지하며 절대 `ENFORCED`가 되지 않는다.
 
@@ -49,7 +49,7 @@ supported-host 정책 표면은 `NOT_CONFIGURED`로 제한되며 저장소 파�
 
 ## 기준 서명 바이트
 
-signature encoder는 RFC 8785 호환 제한 부분집합을 사용한다. 서명 데이터에는 ASCII 문자열 key 객체, 배열, ASCII 문자열, boolean, null, 상호 운용 범위 `[-9007199254740991, 9007199254740991]`의 정수만 포함할 수 있다. float, 비ASCII key 또는 값, 다른 Python type은 거부한다. ASCII key는 Python `sort_keys` 순서를 RFC 8785 key 순서와 byte-identical하게 하며, compact UTF-8 JSON에는 중요하지 않은 whitespace가 없다.
+signature encoder는 RFC 8785 호환 제한 부분집합(`RFC 8785-compatible restricted subset`)을 사용한다. 서명 데이터에는 ASCII 문자열 key 객체, 배열, ASCII 문자열, boolean, null, 상호 운용 범위 `[-9007199254740991, 9007199254740991]`의 정수만 포함할 수 있다. float, 비ASCII key 또는 값, 다른 Python type은 거부한다. ASCII key는 Python `sort_keys` 순서를 RFC 8785 key 순서와 byte-identical하게 하며, compact UTF-8 JSON에는 중요하지 않은 whitespace가 없다.
 
 정규화 전 알려진 vector:
 

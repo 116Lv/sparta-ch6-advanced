@@ -1,5 +1,7 @@
 # AI 워크플로 검증 게이트
 
+Machine-contract 경계: `scripts/ai/command-runner.sh` is the `only supported product-command path`.
+
 ## 사람용 정책 참고 사항
 
 `ai/verification-policy.json`은 verification completeness, task/change applicability, workflow entry point, result mapping을 위한 canonical Phase 2C source다. 이 Markdown file은 agent와 reviewer에게 policy를 설명한다. JSON이 canonical이다. Markdown은 실행 가능한 상태로 파싱하지 않는다.

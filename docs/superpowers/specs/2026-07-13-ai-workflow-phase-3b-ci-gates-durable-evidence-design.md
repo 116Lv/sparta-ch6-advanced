@@ -1,5 +1,15 @@
 # AI 워크플로 단계 3B CI 게이트 및 영속적 CI 증거 설계
 
+## Machine-contract 리터럴
+
+다음 문구는 repository contract test가 검사하는 호환성 리터럴이므로 번역하지 않는다.
+
+- `phase-3b-repository-contract` is `CONFIGURED_UNVERIFIED`.
+- `phase-3b-native-enforcement` remains `NOT_CONFIGURED`.
+- A green repository contract does not imply native enforcement `PASS`.
+- Production authority requires an external GitHub/Sigstore verifier.
+- The entry point runs the full `scripts.ai.tests.test_workflow_helper` module exactly once through `scripts/ai/tests/run-contract-tests.sh`.
+
 ## 상태 및 범위
 
 단계 3B는 병합된 PR #11 및 Issue #12를 따른다. 저장소 계약 검사 `phase-3b-repository-contract`는 `CONFIGURED_UNVERIFIED`이며, 체크인된 헬퍼 및 셸 계약을 검증하지만 네이티브 강제 검사(Enforcement check)는 아니다. `phase-3b-native-enforcement`는 `NOT_CONFIGURED`로 남아 있으며 `requiredCheckConfigured: false`다. 저장소 계약이 green이라고 해서 네이티브 강제가 `PASS`임을 뜻하지 않는다.

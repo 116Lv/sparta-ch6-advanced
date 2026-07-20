@@ -1,5 +1,17 @@
 # Phase 3B CI 게이트 및 내구성 증거
 
+## Machine-contract 리터럴
+
+다음 문구는 repository contract test가 검사하는 호환성 리터럴이므로 번역하지 않는다.
+
+- Repository contract check `phase-3b-repository-contract` is `CONFIGURED_UNVERIFIED`.
+- Native enforcement check `phase-3b-native-enforcement` is `NOT_CONFIGURED` with `requiredCheckConfigured: false`.
+- The production gate remains unconditionally `NOT_CONFIGURED`.
+- Provenance and `retainedRun` claims must independently match the trusted context.
+- Production artifact members require a safe POSIX handle-relative backend.
+- non-POSIX production hosts fail closed.
+- The repository gateway owns registered-command authority and cannot promote registry `VERIFIED` from CI evidence alone.
+
 Phase 3B는 PR #11이 commit `400c00f35f9d21cbeec44b0f40f49dac564a4bb6`에서 `main`으로 병합된 뒤 시작한다. 승인된 Phase 1A, 1B, 2A, 2B, 2C, 3A 기준선을 보존하며 native adapter trust를 재설계하지 않는다. Phase 1B-3은 `completenessEvaluated: false`인 `INTEGRITY_ONLY`로 유지한다.
 
 ## 검토한 접근 방식
