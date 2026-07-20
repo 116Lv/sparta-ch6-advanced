@@ -1,56 +1,55 @@
-# 08. UI and Frontend Guidelines
+# 08. UI 및 프런트엔드 가이드라인
 
-## Design Principles
+## 설계 원칙
 
-TODO: This project currently appears to be backend/API-centered. If frontend is added, define concrete UI principles here.
+TODO: 이 프로젝트는 현재 백엔드/API 중심으로 보인다. 프런트엔드가 추가되면 구체적인 UI 원칙을 여기에 정의한다.
 
-General principles:
+일반 원칙:
 
-- Make primary actions clear.
-- Show loading, error, and empty states.
-- Do not hide server errors behind generic success messages.
-- Avoid UI-only permission enforcement.
+- 주요 행동을 명확히 표시한다.
+- 로딩, 오류, 빈 상태를 표시한다.
+- 일반적인 성공 메시지 뒤에 서버 오류를 숨기지 않는다.
+- UI만으로 권한을 강제하지 않는다.
 
-## Layout Rules
+## 레이아웃 규칙
 
-TODO: Define if a frontend application is added.
+TODO: 프런트엔드 애플리케이션이 추가되면 정의한다.
 
-## Component Rules
+## 컴포넌트 규칙
 
-- Buttons should show loading state when submitting.
-- Destructive actions require clear confirmation.
-- Reusable UI components should not contain domain business rules.
+- 버튼은 제출 중일 때 로딩 상태를 표시해야 한다.
+- 파괴적 작업에는 명확한 확인이 필요하다.
+- 재사용 가능한 UI 컴포넌트에 도메인 비즈니스 규칙을 넣지 않는다.
 
-## Form Rules
+## 폼 규칙
 
-- Required fields must be visible.
-- Client validation is helpful but server validation is mandatory.
-- Field errors and global errors should be visually distinct.
+- 필수 필드는 보여야 한다.
+- 클라이언트 검증은 도움이 되지만 서버 검증은 필수다.
+- 필드 오류와 전역 오류는 시각적으로 구분해야 한다.
 
-## Table Rules
+## 테이블 규칙
 
-- Tables should define empty state.
-- Sorting and pagination rules should be explicit.
-- Numeric values should be aligned consistently.
+- 테이블은 빈 상태를 정의해야 한다.
+- 정렬 및 페이지네이션 규칙은 명시적이어야 한다.
+- 숫자 값은 일관되게 정렬해야 한다.
 
-## Loading / Error / Empty States
+## 로딩/오류/빈 상태
 
-- Loading state should prevent duplicate submission.
-- Error state should show a recoverable message where possible.
-- Empty state should explain what is missing and what the user can do next.
+- 로딩 상태는 중복 제출을 막아야 한다.
+- 오류 상태는 가능한 경우 복구 가능한 메시지를 보여야 한다.
+- 빈 상태는 무엇이 없고 사용자가 다음에 무엇을 할 수 있는지 설명해야 한다.
 
-## State Management
+## 상태 관리
 
-TODO: Choose state management only if frontend exists.
+TODO: 프런트엔드가 있는 경우에만 상태 관리를 선택한다.
 
-## Accessibility
+## 접근성
 
-- Interactive controls should be keyboard accessible.
-- Form inputs should have labels.
-- Error messages should be associated with the relevant field.
+- 상호작용 컨트롤은 키보드로 접근할 수 있어야 한다.
+- 폼 입력에는 레이블이 있어야 한다.
+- 오류 메시지는 관련 필드와 연결되어야 한다.
 
-## Open Questions
+## 미해결 질문
 
-- Open Question: Will this project include frontend UI?
-- Open Question: If frontend exists, what framework will be used?
-
+- 미해결 질문: 이 프로젝트에 프런트엔드 UI가 포함되는가?
+- 미해결 질문: 프런트엔드가 있다면 어떤 프레임워크를 사용할 것인가?

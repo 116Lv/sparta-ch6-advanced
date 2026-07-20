@@ -1,115 +1,112 @@
-# ADR-002: Use Transactional Outbox and Kafka for Order Events
+# ADR-002: 주문 이벤트에 Transactional Outbox와 Kafka 사용
 
-## Status
+## 상태
 
 Accepted
 
-## Context
+## 배경
 
-The assignment requires order history to be sent to a data collection platform in real time.
+과제는 주문 이력을 데이터 수집 플랫폼으로 실시간 전송해야 한다.
 
-Publishing directly to Kafka inside the order API flow creates consistency risks:
+주문 API 흐름 안에서 Kafka에 직접 발행하면 일관성 위험이 생긴다.
 
-- DB commit may succeed but Kafka publish may fail.
-- Kafka publish may succeed but DB transaction may roll back.
-- Network latency can make the order API unstable.
-- Failed publish attempts need retry and observability.
+- DB 커밋은 성공하지만 Kafka 발행은 실패할 수 있다.
+- Kafka 발행은 성공하지만 DB 트랜잭션은 롤백될 수 있다.
+- 네트워크 지연으로 주문 API가 불안정해질 수 있다.
+- 실패한 발행 시도에는 재시도와 관측 가능성이 필요하다.
 
-## Decision 1: Transactional Outbox
+## 결정 1: Transactional Outbox
 
-Use the Transactional Outbox pattern.
+Transactional Outbox 패턴을 사용한다.
 
-During the order/payment transaction, save:
+주문/결제 트랜잭션 중 다음을 저장한다.
 
-- order
-- payment
-- point history
-- daily menu aggregate
-- outbox event
+- 주문
+- 결제
+- 포인트 이력
+- 일별 메뉴 집계
+- Outbox 이벤트
 
-Then stateless Outbox Publisher workers claim and publish events independently from the order API.
+그런 다음 상태 비저장 Outbox Publisher 워커가 주문 API와 독립적으로 이벤트를 점유하고 발행한다.
 
-Claim protocol:
+점유 프로토콜:
 
-1. In a short MySQL transaction, select at most one claimable row with row locking and skip rows already claimed by another worker.
-2. Change that row to `PROCESSING`, record a unique claim token, claim owner, `claimed_at`, and `claim_until`, and commit the claim transaction.
-3. Publish outside the claim transaction so a broker delay does not hold DB row locks or pre-lease later unstarted rows.
-4. After Kafka acknowledges the record, mark it `PUBLISHED` only if the current claim token still matches. On a publish failure, use the same token check, increment retry metadata, and return the row to a retryable state according to the retry policy.
-5. Repeat claim and publish up to the configured cycle size. An expired `PROCESSING` row is claimable with a new token after an instance failure.
+1. 짧은 MySQL 트랜잭션에서 행 락으로 점유 가능한 행을 최대 하나 선택하고 다른 워커가 이미 점유한 행은 건너뛴다.
+2. 해당 행을 `PROCESSING`으로 변경하고, 고유 점유 토큰, 점유 소유자, `claimed_at`, `claim_until`을 기록한 후 점유 트랜잭션을 커밋한다.
+3. 브로커 지연이 DB 행 락을 유지하거나 아직 시작하지 않은 후속 행을 사전 임대하지 않도록 점유 트랜잭션 밖에서 발행한다.
+4. Kafka가 레코드를 확인한 후 현재 점유 토큰이 계속 일치하는 경우에만 `PUBLISHED`로 표시한다. 발행 실패 시에도 같은 토큰 검사를 사용하고, 재시도 메타데이터를 증가시키며, 재시도 정책에 따라 행을 재시도 가능한 상태로 되돌린다.
+5. 구성된 사이클 크기까지 점유와 발행을 반복한다. 인스턴스 장애 후 만료된 `PROCESSING` 행은 새 토큰으로 점유할 수 있다.
 
-Row claiming prevents two healthy workers from intentionally publishing the same row at the same time. It does not provide exactly-once delivery: a worker can publish successfully and fail before recording `PUBLISHED`. Consumers must use the immutable Outbox event ID as an idempotency key.
+행 점유는 두 정상 워커가 같은 행을 동시에 발행하려는 것을 방지한다. 이는 정확히 한 번 전송을 제공하지 않는다. 워커는 성공적으로 발행한 뒤 `PUBLISHED` 기록 전에 실패할 수 있다. 소비자는 불변 Outbox 이벤트 ID를 멱등성 키로 사용해야 한다.
 
-## Decision 2: Kafka
+## 결정 2: Kafka
 
-Use Kafka as the event transport after an Outbox row is claimed.
+Outbox 행을 점유한 후 이벤트 전송 수단으로 Kafka를 사용한다.
 
-Kafka is selected independently from the Outbox reliability pattern because the expected integration benefits from:
+기대되는 통합이 다음의 이점을 필요로 하므로 Kafka는 Outbox 신뢰성 패턴과 독립적으로 선택된다.
 
-- retained events that can be replayed after consumer repair or new consumer onboarding
-- multiple consumer groups reading the same order-event stream independently
-- partition-based parallel processing
-- ordering within a partition for records that use the same partition key
+- 소비자 복구 또는 새 소비자 온보딩 후 재생할 수 있는 보존 이벤트
+- 같은 주문 이벤트 스트림을 독립적으로 읽는 여러 소비자 그룹
+- 파티션 기반 병렬 처리
+- 같은 파티션 키를 사용하는 레코드의 파티션 내 순서 보장
 
-The topic is partitioned and consumers run in consumer groups. Kafka assigns each partition to at most one consumer in a group at a time. When a consumer instance stops or joins, group rebalancing dynamically reassigns partitions to active instances. Different consumer groups receive their own logical copy of the stream.
+토픽은 파티션으로 나뉘며 소비자는 소비자 그룹에서 실행된다. Kafka는 그룹 내에서 각 파티션을 한 번에 최대 하나의 소비자에게 할당한다. 소비자 인스턴스가 중단되거나 참여하면 그룹 리밸런싱이 파티션을 활성 인스턴스에 동적으로 재할당한다. 서로 다른 소비자 그룹은 각자 논리적 스트림 사본을 받는다.
 
-Use a stable business key as the partition key wherever per-key ordering is required. Kafka does not guarantee global ordering across partitions.
+키별 순서 보장이 필요한 경우 안정적인 비즈니스 키를 파티션 키로 사용한다. Kafka는 파티션 간 전역 순서를 보장하지 않는다.
 
-Kafka topic:
+Kafka 토픽:
 
 ```txt
 coffee.order.paid
 ```
 
-## Transactional Outbox Alternatives
+## Transactional Outbox 대안
 
-- Direct Kafka publish in the order service: simple, but DB/Kafka consistency is weak.
-- Direct Mock HTTP API call in the order transaction: simple for assignment demos, but couples external latency and failure to order success.
-- Polling the orders table directly: avoids outbox table, but makes event status, retry, and deduplication less explicit.
+- 주문 서비스에서 Kafka 직접 발행: 단순하지만 DB/Kafka 일관성이 약하다.
+- 주문 트랜잭션에서 Mock HTTP API 직접 호출: 과제 데모에는 단순하지만 외부 지연과 실패를 주문 성공에 결합한다.
+- orders 테이블 직접 폴링: outbox 테이블은 피하지만 이벤트 상태, 재시도, 중복 제거를 덜 명시적으로 만든다.
 
-## Messaging Alternatives
+## 메시징 대안
 
-- RabbitMQ or another work queue is preferable when the primary need is low-latency task dispatch, per-message routing, acknowledgements, priorities, or short-lived messages that are removed after consumption, and replay or multiple independent consumer groups are not requirements.
-- A synchronous HTTP integration is preferable when the caller needs an immediate response from one downstream service and can deliberately couple its availability and latency to the request.
-- Database-only polling can be sufficient for a small single-consumer integration when introducing and operating a broker is not justified.
+- RabbitMQ 또는 다른 작업 큐는 주된 필요가 저지연 작업 디스패치, 메시지별 라우팅, 확인 응답, 우선순위 또는 소비 후 제거되는 단기 메시지이고 재생 또는 여러 독립 소비자 그룹이 요구 사항이 아닐 때 더 적합하다.
+- 호출자가 하나의 다운스트림 서비스에서 즉시 응답을 받아야 하고 그 가용성과 지연을 요청에 의도적으로 결합할 수 있을 때 동기 HTTP 통합이 더 적합하다.
+- 브로커의 도입과 운영이 정당화되지 않는 소규모 단일 소비자 통합에는 데이터베이스 전용 폴링으로 충분할 수 있다.
 
-Kafka adds broker and partition operations, consumer-lag monitoring, and replay/idempotency responsibilities. It is not selected merely because the Outbox pattern is used.
+Kafka는 브로커 및 파티션 운영, 소비자 지연 모니터링, 재생/멱등성 책임을 추가한다. Outbox 패턴을 사용한다는 이유만으로 선택하지 않는다.
 
-## Consequences
+## 결과
 
-### Positive
+### 긍정적 결과
 
-- Order success and event-to-publish persistence are committed together.
-- Kafka failure does not force order API failure after DB commit.
-- Retry is possible using Outbox event state.
-- Event publishing becomes observable.
-- Multiple publisher instances can share work through row claims.
-- Kafka retains events for replay and supports independent consumer groups.
+- 주문 성공과 발행할 이벤트의 영속성이 함께 커밋된다.
+- DB 커밋 후 Kafka 실패가 주문 API 실패를 강제하지 않는다.
+- Outbox 이벤트 상태를 사용해 재시도할 수 있다.
+- 이벤트 발행이 관측 가능해진다.
+- 여러 publisher 인스턴스가 행 점유를 통해 작업을 공유할 수 있다.
+- Kafka는 이벤트를 재생을 위해 보존하고 독립 소비자 그룹을 지원한다.
 
-### Negative
+### 부정적 결과
 
-- Requires an additional table and publisher process.
-- Duplicate publish can occur if publisher fails after Kafka publish but before status update.
-- Consumers should treat event ID as idempotency key.
-- Stale claims require a deadline and recovery process.
-- Kafka partition count bounds in-group parallelism and must be planned with the ordering key.
+- 추가 테이블과 publisher 프로세스가 필요하다.
+- publisher가 Kafka 발행 후 상태 업데이트 전에 실패하면 중복 발행이 발생할 수 있다.
+- 소비자는 이벤트 ID를 멱등성 키로 처리해야 한다.
+- 오래된 점유에는 기한과 복구 프로세스가 필요하다.
+- Kafka 파티션 수는 그룹 내 병렬성을 제한하며 순서 키에 맞게 계획해야 한다.
 
-### Neutral / Trade-offs
+### 중립적 결과 / 트레이드오프
 
-- This pattern provides practical reliability, not a global distributed transaction.
-- Real-time means near-real-time asynchronous delivery, not synchronous external delivery inside the user request.
-- Delivery is at least once across the DB-to-Kafka boundary; consumer idempotency is mandatory.
+- 이 패턴은 전역 분산 트랜잭션이 아니라 실용적 신뢰성을 제공한다.
+- 실시간은 사용자 요청 내부의 동기 외부 전송이 아니라 거의 실시간의 비동기 전송을 뜻한다.
+- DB-to-Kafka 경계에서 전송은 최소 한 번이며 소비자 멱등성은 필수다.
 
-## Follow-up
+## 후속 조치
 
-- The implementation polls every 1 second, claims at most 50 rows with a 30-second deadline,
-  waits up to 5 seconds for the Kafka acknowledgement, and moves an event to `FAILED` after
-  5 failed publication attempts.
-- Claim selection uses a MySQL pessimistic row lock in a short transaction. A new UUID token is
-  assigned to each row, and completion/retry takes the row lock again and verifies that token.
-- `FAILED` is the audited-recovery boundary; automatic publication does not claim it. The application-owned recovery service records operator, reason, previous retry/error, and recovery time before atomically requeueing to `READY`. Direct unaudited SQL requeue is prohibited.
-- Consumer idempotency is persisted by the composite key `(consumer_group, event_id)`, and the marker plus local `order_paid_analytics` effect commit atomically. An effect failure rolls back the marker.
-- Add tests for Outbox saved on order success and not saved on order failure.
-- Add tests for publisher success/failure state transitions.
-- Add tests for competing publisher workers, process failure after claim, stale-claim recovery, and publish-acknowledged/status-update-failed duplicate delivery.
-- Verify consumer idempotency, consumer-group rebalance after instance failure, partition parallelism, and same-key ordering.
-- Measure Outbox residence time, backlog size, publish error rate, retry count, and Kafka consumer lag under normal load and an accumulated backlog.
+- 구현은 1초마다 폴링하고, 30초 기한으로 최대 50개 행을 점유하며, Kafka 확인을 최대 5초 기다리고, 발행 시도 5회 실패 후 이벤트를 `FAILED`로 옮긴다.
+- 점유 선택은 짧은 트랜잭션에서 MySQL 비관적 행 락을 사용한다. 각 행에 새 UUID 토큰을 할당하며, 완료/재시도는 다시 행 락을 잡고 해당 토큰을 검증한다.
+- `FAILED`는 감사된 복구 경계이며 자동 발행은 이를 점유하지 않는다. 애플리케이션 소유 복구 서비스는 `READY`로 원자적으로 재대기열하기 전에 운영자, 사유, 이전 재시도/오류 및 복구 시간을 기록한다. 감사되지 않은 직접 SQL 재대기열은 금지된다.
+- 소비자 멱등성은 복합 키 `(consumer_group, event_id)`로 영속화하며, 마커와 로컬 `order_paid_analytics` 효과는 원자적으로 커밋된다. 효과 실패는 마커를 롤백한다.
+- 주문 성공 시 Outbox가 저장되고 주문 실패 시 저장되지 않는 테스트를 추가한다.
+- publisher 성공/실패 상태 전환 테스트를 추가한다.
+- 경쟁 publisher 워커, 점유 후 프로세스 실패, 오래된 점유 복구, 발행 확인됨/상태 업데이트 실패 후 중복 전송 테스트를 추가한다.
+- 소비자 멱등성, 인스턴스 장애 후 소비자 그룹 리밸런싱, 파티션 병렬성 및 동일 키 순서를 검증한다.
+- 정상 부하와 누적된 백로그에서 Outbox 체류 시간, 백로그 크기, 발행 오류율, 재시도 횟수 및 Kafka 소비자 지연을 측정한다.

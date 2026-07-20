@@ -1,17 +1,17 @@
-# AI Workflow Project State
+# AI 워크플로 프로젝트 상태
 
-## Human Policy Notes
+## 사람용 정책 참고 사항
 
-`ai/project-state.json` is the canonical source of truth for stable project facts, confidence, environments, helper runtimes, and ports. This Markdown file contains policy explanation and a reviewable summary only.
+`ai/project-state.json`은 stable project fact, confidence, environment, helper runtime, port의 canonical source of truth다. 이 Markdown file에는 policy explanation과 review 가능한 summary만 포함된다.
 
-- Update canonical JSON before refreshing the generated summary.
-- Do not edit content between generated markers independently of canonical JSON.
-- Confidence and capability values use the closed enums defined by the Phase 1A schemas.
-- `NOT_APPLICABLE` is displayed as `N/A`; executable JSON never stores `N/A`.
-- Phase 1A bootstrapped project state from static evidence only and did not run Python, Gradle, the application, Docker, HTTP requests, migrations, seeds, or infrastructure commands.
-- Phase 1B may record scrubbed environment-local Python helper evidence through the supported preflight transaction and mark only the matching LOCAL helper runtime and environment `VERIFIED`.
-- Recorded helper-runtime evidence does not authorize or prove any project command. Gradle, product tests, the application, Docker, HTTP/API, database, migration, seed, and infrastructure commands remain `NOT RUN` until a later supported execution gateway records their evidence.
-- Application port 8080 remains an inference until runtime evidence is produced through a later supported workflow.
+- generated summary를 새로 고치기 전에 canonical JSON을 업데이트한다.
+- canonical JSON과 독립적으로 generated marker 사이의 content를 수정하지 않는다.
+- confidence와 capability value는 Phase 1A schema가 정의한 closed enum을 사용한다.
+- `NOT_APPLICABLE`은 `N/A`로 표시하며 executable JSON은 `N/A`를 절대로 저장하지 않는다.
+- Phase 1A는 static evidence에서만 project state를 bootstrap했고 Python, Gradle, application, Docker, HTTP request, migration, seed, infrastructure command를 실행하지 않았다.
+- Phase 1B는 지원되는 preflight transaction을 통해 scrubbed environment-local Python helper evidence를 기록하고 일치하는 LOCAL helper runtime/environment만 `VERIFIED`로 표시할 수 있다.
+- 기록된 helper-runtime evidence는 어떤 project command도 authorize하거나 prove하지 않는다. Gradle, product test, application, Docker, HTTP/API, database, migration, seed, infrastructure command는 이후 지원 execution gateway가 evidence를 기록할 때까지 계속 `NOT RUN`이다.
+- application port 8080은 이후 지원 workflow가 runtime evidence를 만들 때까지 inference로 남는다.
 
 <!-- GENERATED:START source=ai/project-state.json -->
 ## Generated State Summary

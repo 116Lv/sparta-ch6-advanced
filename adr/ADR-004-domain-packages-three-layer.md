@@ -1,18 +1,18 @@
-# ADR-004: Use Domain Packages with a Three-Layer Structure
+# ADR-004: 3계층 구조의 도메인 패키지 사용
 
-## Status
+## 상태
 
 Accepted
 
-## Context
+## 배경
 
-The previous plans mixed `api`, `application`, `domain`, and `infrastructure` as top-level concepts inside every feature. For this assignment, those boundaries add naming and navigation overhead without independent modules or ports-and-adapters contracts to justify them.
+이전 계획은 모든 기능 내부에 `api`, `application`, `domain`, `infrastructure`를 최상위 개념으로 혼합했다. 이 과제에서 이러한 경계는 이를 정당화할 독립 모듈이나 포트와 어댑터 계약 없이 명명 및 탐색 오버헤드만 더한다.
 
-The project needs one structure that keeps related feature code together, makes transaction ownership obvious, and remains simple enough for the current scope.
+프로젝트에는 관련 기능 코드를 함께 유지하고, 트랜잭션 소유권을 명확하게 하며, 현재 범위에 충분히 단순한 하나의 구조가 필요하다.
 
-## Decision
+## 결정
 
-Use domain-first packaging with a three-layer dependency direction inside each domain:
+각 도메인 내부에서 3계층 의존성 방향을 가진 도메인 우선 패키징을 사용한다.
 
 ```txt
 com.ch6.cafe
@@ -29,7 +29,7 @@ com.ch6.cafe
    └─ outbox
 ```
 
-Create only the subpackages required by implemented classes. A normal domain may use:
+구현된 클래스에 필요한 하위 패키지만 만든다. 일반적인 도메인은 다음을 사용할 수 있다.
 
 ```txt
 controller
@@ -41,48 +41,48 @@ dto/response
 exception
 ```
 
-The dependency direction is:
+의존성 방향은 다음과 같다.
 
 ```txt
 controller -> service -> repository
 ```
 
-- Controllers map and validate HTTP input and output. They do not own business rules.
-- Services own business rules, use-case orchestration, distributed-lock orchestration, and transaction boundaries.
-- Repositories own persistence access. Entities and DTOs are used by the layer that needs them without introducing an additional architectural layer.
-- Cross-domain infrastructure configuration, shared error responses, and distributed-lock utilities belong under `global`.
-- Kafka publishing belongs in `domain/outbox/publisher`.
-- Payment belongs inside `domain/order` because it has no independent lifecycle in the current scope.
+- Controller는 HTTP 입력과 출력을 매핑하고 검증한다. 비즈니스 규칙을 소유하지 않는다.
+- Service는 비즈니스 규칙, 유스케이스 오케스트레이션, 분산 락 오케스트레이션 및 트랜잭션 경계를 소유한다.
+- Repository는 영속성 접근을 소유한다. Entity와 DTO는 추가 아키텍처 계층을 도입하지 않고 필요한 계층에서 사용한다.
+- 도메인 간 인프라 구성, 공유 오류 응답 및 분산 락 유틸리티는 `global` 아래에 둔다.
+- Kafka 발행은 `domain/outbox/publisher`에 둔다.
+- 현재 범위에서는 독립적인 수명 주기가 없으므로 결제는 `domain/order` 내부에 둔다.
 
-Do not create empty packages, package-info placeholders, `.gitkeep` files, or placeholder classes merely to mirror the tree.
+트리를 모방하기 위해 빈 패키지, package-info 자리표시자, `.gitkeep` 파일 또는 자리표시자 클래스만 만들지 않는다.
 
-## Alternatives Considered
+## 검토한 대안
 
-- Package by technical layer across the whole application: simple layer visibility, but scatters each feature across the repository and increases cross-feature coupling.
-- Domain packages with `api/application/domain/infrastructure`: useful when enforcing ports and adapters or a richer domain model, but unnecessary indirection for the current assignment.
-- Separate payment domain: appropriate when payment gains its own lifecycle, external provider integration, refunds, or independent policies; not justified now.
+- 전체 애플리케이션을 기술 계층별로 패키지화: 계층 가시성은 단순하지만 각 기능을 저장소 전반에 흩어 놓고 기능 간 결합을 늘린다.
+- `api/application/domain/infrastructure`를 갖는 도메인 패키지: 포트와 어댑터 또는 더 풍부한 도메인 모델을 강제할 때 유용하지만 현재 과제에는 불필요한 간접화다.
+- 별도 결제 도메인: 결제가 자체 수명 주기, 외부 제공자 통합, 환불 또는 독립 정책을 갖게 되면 적절하지만 현재는 정당화되지 않는다.
 
-## Consequences
+## 결과
 
-### Positive
+### 긍정적 결과
 
-- Feature code is colocated and easier to navigate.
-- Controller, service, and repository responsibilities are explicit.
-- Business rules and transactions have one clear owner: the service layer.
-- The structure can add subpackages incrementally without empty scaffolding.
+- 기능 코드가 함께 위치하여 탐색하기 쉽다.
+- Controller, service, repository의 책임이 명확하다.
+- 비즈니스 규칙과 트랜잭션에는 하나의 명확한 소유자, 즉 service 계층이 있다.
+- 빈 스캐폴딩 없이 하위 패키지를 점진적으로 추가할 수 있다.
 
-### Negative
+### 부정적 결과
 
-- Domain entities can remain aware of JPA because there is no separate persistence adapter layer.
-- Cross-domain service calls require discipline to avoid cycles.
-- A future move to ports and adapters would require an explicit migration rather than only renaming packages.
+- 별도의 영속성 어댑터 계층이 없으므로 도메인 entity는 JPA를 인식한 상태로 남을 수 있다.
+- 도메인 간 service 호출은 순환을 피하기 위한 규율이 필요하다.
+- 이후 포트와 어댑터로 이동하려면 패키지 이름 변경만이 아니라 명시적 마이그레이션이 필요하다.
 
-### Neutral / Trade-offs
+### 중립적 결과 / 트레이드오프
 
-- This ADR decides package and dependency boundaries, not the number of classes in each domain.
-- If payment later gains an independent lifecycle, a new ADR may extract it from `order`.
+- 이 ADR은 각 도메인의 클래스 수가 아니라 패키지 및 의존성 경계를 결정한다.
+- 이후 결제가 독립 수명 주기를 갖게 되면 새 ADR에서 이를 `order`에서 분리할 수 있다.
 
-## Follow-up
+## 후속 조치
 
-- Keep feature plans aligned with the decided paths.
-- Add package dependency checks when production code exists and a supported static workflow can enforce them.
+- 기능 계획을 결정된 경로에 맞춘다.
+- 프로덕션 코드가 존재하고 지원되는 정적 워크플로가 이를 강제할 수 있을 때 패키지 의존성 검사를 추가한다.

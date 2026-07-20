@@ -1,56 +1,56 @@
-# 04. User Flows
+# 04. 사용자 흐름
 
-## Flow Template
+## 흐름 템플릿
 
-Each flow should define:
+각 흐름은 다음을 정의해야 한다.
 
-- Goal
-- Actors
-- Preconditions
-- Steps
-- Success State
-- Failure States
-- Edge Cases
+- 목표
+- 행위자
+- 사전 조건
+- 단계
+- 성공 상태
+- 실패 상태
+- 예외 사례
 
-## Core Flows
+## 핵심 흐름
 
-### Flow 1: 메뉴 목록 조회
+### 흐름 1: 메뉴 목록 조회
 
-Goal:
+목표:
 
 사용자가 주문 가능한 커피 메뉴를 확인한다.
 
-Actors:
+행위자:
 
-- API Client
-- User
+- API 클라이언트
+- 사용자
 
-Steps:
+단계:
 
 1. 클라이언트가 `GET /api/v1/menus`를 호출한다.
 2. 서버는 판매 중인 메뉴를 조회한다.
 3. 서버는 메뉴 ID, 이름, 가격을 반환한다.
 
-Success State:
+성공 상태:
 
 - 클라이언트는 주문 가능한 메뉴 목록을 받는다.
 
-Failure States:
+실패 상태:
 
 - 예상하지 못한 서버 오류는 `500`으로 반환된다.
 
-### Flow 2: 포인트 충전
+### 흐름 2: 포인트 충전
 
-Goal:
+목표:
 
 사용자가 주문에 사용할 포인트를 충전한다.
 
-Actors:
+행위자:
 
-- API Client
-- User
+- API 클라이언트
+- 사용자
 
-Steps:
+단계:
 
 1. 클라이언트가 사용자 식별값과 충전 금액을 전달한다.
 2. 서버는 충전 금액이 양수인지 검증한다.
@@ -59,28 +59,28 @@ Steps:
 5. 서버는 포인트 충전 이력을 저장한다.
 6. 서버는 lock을 해제하고 충전 후 잔액을 반환한다.
 
-Success State:
+성공 상태:
 
 - 포인트 잔액이 증가한다.
 - 충전 이력이 남는다.
 
-Failure States:
+실패 상태:
 
 - 충전 금액이 0 이하이면 `400`.
 - lock 획득 실패 시 `409`.
 
-### Flow 3: 커피 주문/결제
+### 흐름 3: 커피 주문/결제
 
-Goal:
+목표:
 
 사용자가 메뉴를 주문하고 포인트로 결제한다.
 
-Actors:
+행위자:
 
-- API Client
-- User
+- API 클라이언트
+- 사용자
 
-Steps:
+단계:
 
 1. 클라이언트가 사용자 식별값과 메뉴 ID를 전달한다.
 2. 서버는 사용자 단위 Redisson lock을 획득한다.
@@ -95,32 +95,32 @@ Steps:
 11. 서버는 Redis Sorted Set을 갱신한다.
 12. 서버는 주문 결과를 반환한다.
 
-Success State:
+성공 상태:
 
 - 주문과 결제가 생성된다.
 - 포인트가 차감된다.
 - Outbox 이벤트가 생성된다.
 - 인기 메뉴 집계가 반영된다.
 
-Failure States:
+실패 상태:
 
 - 메뉴가 없으면 `404`.
 - 판매 중이 아니면 `409`.
 - 잔액이 부족하면 `409`.
 - lock 획득 실패 시 `409`.
 
-### Flow 4: 인기 메뉴 조회
+### 흐름 4: 인기 메뉴 조회
 
-Goal:
+목표:
 
 사용자가 최근 7일간 인기 있는 메뉴 3개를 확인한다.
 
-Actors:
+행위자:
 
-- API Client
-- User
+- API 클라이언트
+- 사용자
 
-Steps:
+단계:
 
 1. 클라이언트가 `GET /api/v1/menus/popular?days=7&limit=3`을 호출한다.
 2. 서버는 최근 7일 Redis Sorted Set을 union한다.
@@ -128,15 +128,15 @@ Steps:
 4. 서버는 메뉴 상세 정보를 MySQL에서 조회한다.
 5. 서버는 메뉴 정보와 주문 횟수를 반환한다.
 
-Success State:
+성공 상태:
 
 - 최근 7일 기준 인기 메뉴 TOP 3가 반환된다.
 
-Failure States:
+실패 상태:
 
-- Redis 조회 실패 시 MySQL 일별 집계 fallback 또는 복구 전략을 사용한다.
+- Redis 조회 실패 시 MySQL 일별 집계 대체 경로 또는 복구 전략을 사용한다.
 
-## Edge Cases
+## 예외 사례
 
 - 같은 사용자가 동시에 여러 주문을 요청한다.
 - 충전과 주문이 동시에 요청된다.
@@ -144,11 +144,10 @@ Failure States:
 - Redis 랭킹 데이터가 유실된다.
 - 메뉴 가격이 주문 직전에 변경된다.
 
-## Failure States
+## 실패 상태
 
-Failure handling details are owned by `docs/07-data-and-api-contracts.md#error-format` and `docs/09-quality-operations-and-rules.md`.
+실패 처리 세부 사항은 `docs/07-data-and-api-contracts.md#error-format`과 `docs/09-quality-operations-and-rules.md`가 소유한다.
 
-## Open Questions
+## 해결된 결정
 
-- Open Question: Redis 갱신 실패를 주문 API 응답에 반영할 것인가, 보정 대상으로만 남길 것인가?
-
+- Redis 갱신 실패는 이미 커밋된 주문 API 성공을 변경하지 않는다. MySQL 일별 집계를 복구 기준으로 유지하고 이후 조회에서 Redis를 재구성한다.

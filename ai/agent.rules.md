@@ -1,19 +1,19 @@
-# Agent Rules
+# 에이전트 규칙
 
-## Document Routing
+## 문서 라우팅
 
-- Start with `ai/document-routing.md`.
-- Identify the owning feature/spec before planning.
-- Read `specs/{feature}/spec.md` before subject-specific planning, implementation, verification, review, or normative documentation work.
-- Read `specs/{feature}/plan.md` before implementation planning or execution.
-- Read `specs/{feature}/tasks.md` before execution or verification handoff.
-- Read `specs/{feature}/decisions.md` when prior feature decisions exist or when new decisions are made.
-- Read `specs/{feature}/checklist.md` before completion claims.
-- If auth, permission, role, user identity, principal, account ownership, or `userId` semantics are touched, read and update `docs/02-users-and-permissions.md`.
-- The documentation-only route applies only to non-normative wording, index, status, or report edits. Otherwise route by the thing being changed.
-- Main Dev Agent coordinates and does final consistency checks. Role agents may draft, implement, test, verify, document, or review within their lane.
+- `ai/document-routing.md`부터 시작한다.
+- 계획 전에 소유 기능/spec을 식별한다.
+- 주제별 계획, 구현, 검증, 검토 또는 규범적 문서 작업 전에 `specs/{feature}/spec.md`를 읽는다.
+- 구현 계획 또는 실행 전에 `specs/{feature}/plan.md`를 읽는다.
+- 실행 또는 검증 handoff 전에 `specs/{feature}/tasks.md`를 읽는다.
+- 기존 기능 결정이 있거나 새 결정을 만들 때 `specs/{feature}/decisions.md`를 읽는다.
+- 완료 주장 전에 `specs/{feature}/checklist.md`를 읽는다.
+- 인증, 권한, 역할, 사용자 식별, principal, 계정 소유권 또는 `userId` 의미를 다루면 `docs/02-users-and-permissions.md`를 읽고 갱신한다.
+- 문서 전용 경로는 비규범적 문구, 색인, 상태 또는 보고서 편집에만 적용한다. 그 외에는 변경하는 대상에 따라 라우팅한다.
+- Main Dev Agent는 조정과 최종 일관성 검사를 수행한다. 역할 에이전트는 자신의 lane에서 초안, 구현, test, 검증, 문서화 또는 검토를 수행할 수 있다.
 
-## Core Rule
+## 핵심 규칙
 
 AI는 문서에 없는 요구사항을 임의로 추가하지 않는다.
 
@@ -21,7 +21,7 @@ AI는 테스트를 실행하지 않았다면 실행했다고 말하지 않는다
 
 AI는 실제 검증 증거 없이 완료를 주장하지 않는다.
 
-## Required Behavior
+## 필수 동작
 
 - 작업 전 관련 문서를 읽는다.
 - 모호한 부분은 질문으로 남긴다.
@@ -31,7 +31,7 @@ AI는 실제 검증 증거 없이 완료를 주장하지 않는다.
 - 완료 전 `ai/qa-gate.md`를 통과해야 한다.
 - 완료 주장은 `ai/done-claim-template.md` 형식을 따른다.
 
-## Forbidden Behavior
+## 금지 동작
 
 - 테스트하지 않고 "테스트 완료"라고 말하기
 - mock 테스트만 하고 실제 API 검증했다고 말하기
@@ -43,7 +43,7 @@ AI는 실제 검증 증거 없이 완료를 주장하지 않는다.
 - 문서와 다른 구현을 조용히 추가하기
 - 실패한 테스트를 요구사항 변경으로 우회하기
 
-## Evidence Rule
+## 증거 규칙
 
 검증 결과는 반드시 실행 명령, 결과, 실패 여부, 실행하지 못한 이유를 포함해야 한다.
 

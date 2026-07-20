@@ -1,6 +1,6 @@
-# Agent Mistakes
+# 에이전트 실수
 
-## Common Mistakes
+## 흔한 실수
 
 ### 1. 테스트를 실행하지 않고 실행했다고 말함
 

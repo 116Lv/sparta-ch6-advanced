@@ -1,134 +1,134 @@
-# AI Workflow Enforcement Phase 1A Written Specification
+# AI 워크플로 강제 적용 Phase 1A 문서화 명세
 
-## Status
+## 상태
 
-- Specification status: Approved for Phase 1A implementation planning
+- 명세 상태: Phase 1A 구현 계획 수립 승인됨
 - Owning feature: none
 - Baseline: `docs/superpowers/specs/2026-07-10-ai-workflow-enforcement-design.md`
 - Scope: Phase 1A-1, Phase 1A-2, and Phase 1A-3 only
-- Verification level for this specification: Level 0 document review
+- 이 명세의 검증 레벨: Level 0 문서 검토
 
-## Goal
+## 목표
 
-Create the written contract for the machine-readable workflow state that Phase 1A will add. Phase 1A establishes schemas, canonical JSON skeletons, human-readable summaries, repository integration, and static fixtures. It does not execute project commands or implement a command gateway.
+Phase 1A가 추가할 기계 판독 가능 워크플로 상태의 문서화 계약을 만든다. Phase 1A는 스키마, 정식 JSON 골격, 사람이 읽을 수 있는 요약, 저장소 통합 및 정적 fixture를 확립한다. 프로젝트 명령을 실행하거나 command gateway를 구현하지 않는다.
 
-## Global Constraints
+## 전역 제약 조건
 
-1. JSON is canonical for executable workflow state.
-2. Markdown contains human policy and a summary of canonical JSON; it is not an independent source of truth.
-3. All executable JSON uses JSON Schema Draft 2020-12, `schemaVersion: 1`, repository-relative forward-slash paths, and `additionalProperties: false` unless this specification explicitly allows extension data.
-4. Timestamps use ISO-8601 UTC strings.
-5. Phase 1A performs static file inspection only. It does not execute Gradle, application, database, infrastructure, API, migration, seed, lint, test, or helper-runtime commands.
-6. No capability is marked `VERIFIED` without successful execution evidence.
-7. The command gateway, command runner, hook scripts, evidence capture, automatic Markdown generation, and automatic schema validation are Phase 1B or later.
-8. Phase 1B targets Python 3 with the `jsonschema` library and Draft 2020-12 validation, but Phase 1A does not execute Python or assume that it is installed.
-9. Phase 1A and Phase 1B support only POSIX/Bash Gradle argv such as `["./gradlew", "test"]`; native `gradlew.bat` support is future scope and `NOT_CONFIGURED`.
-10. AI agents do not execute project build, test, server, Docker, HTTP, migration, seed, or infrastructure commands until the Phase 1B gateway records runtime evidence.
-11. Static file inspection, document editing, and host-approved version-control operations needed to author and review Phase 1A are administrative workflow operations, not project-command verification evidence.
+1. 실행 가능한 워크플로 상태의 정식 출처는 JSON이다.
+2. Markdown에는 사람을 위한 정책과 정식 JSON의 요약이 포함되며, 독립적인 기준 문서가 아니다.
+3. 모든 실행 가능한 JSON은 JSON Schema Draft 2020-12, `schemaVersion: 1`, 저장소 상대 forward-slash 경로 및 이 명세가 확장 데이터를 명시적으로 허용하지 않는 한 `additionalProperties: false`를 사용한다.
+4. 타임스탬프는 ISO-8601 UTC 문자열을 사용한다.
+5. Phase 1A는 정적 파일 검사만 수행한다. Gradle, 애플리케이션, 데이터베이스, 인프라, API, migration, seed, lint, test 또는 helper-runtime 명령을 실행하지 않는다.
+6. 성공적인 실행 증거 없이는 어떤 기능도 `VERIFIED`로 표시하지 않는다.
+7. command gateway, command runner, hook 스크립트, 증거 수집, 자동 Markdown 생성 및 자동 schema 검증은 Phase 1B 이후 범위다.
+8. Phase 1B는 `jsonschema` 라이브러리와 Draft 2020-12 검증을 사용하는 Python 3를 대상으로 하지만, Phase 1A는 Python을 실행하거나 설치되어 있다고 가정하지 않는다.
+9. Phase 1A 및 Phase 1B는 `["./gradlew", "test"]`와 같은 POSIX/Bash Gradle argv만 지원한다. 네이티브 `gradlew.bat` 지원은 미래 범위이며 `NOT_CONFIGURED`이다.
+10. Phase 1B gateway가 runtime 증거를 기록하기 전까지 AI 에이전트는 프로젝트 build, test, server, Docker, HTTP, migration, seed 또는 infrastructure 명령을 실행하지 않는다.
+11. Phase 1A의 작성 및 검토에 필요한 정적 파일 검사, 문서 편집 및 호스트 승인 버전 관리 작업은 관리 워크플로 작업이며 프로젝트 명령 검증 증거가 아니다.
 
-## Phase Boundaries
+## 단계 경계
 
-### Phase 1A-1: Schemas And Canonical State
+### Phase 1A-1: 스키마 및 정식 상태
 
-Define closed schemas and create the initial canonical command registry and project state.
+닫힌 스키마를 정의하고 초기 기준 명령 레지스트리와 프로젝트 상태를 만든다.
 
-### Phase 1A-2: Human-Readable Summaries
+### Phase 1A-2: 사람이 읽을 수 있는 요약
 
-Define human-editable policy sections, generated-summary ownership markers, bootstrap summary rules, and display mappings.
+사람이 편집할 수 있는 정책 섹션, 생성 요약 소유 marker, bootstrap 요약 규칙, 표시 매핑을 정의한다.
 
-### Phase 1A-3: Repository Integration
+### Phase 1A-3: 저장소 통합
 
-Ignore local run evidence, connect `AGENTS.md` to the new state contract, and add static fixture documents for later automated validation.
+로컬 실행 증거를 무시하고 `AGENTS.md`를 새 상태 계약에 연결하며 이후 자동 검증을 위한 정적 fixture 문서를 추가한다.
 
-## Files To Create
+## 생성할 파일
 
-### Specification Artifact
+### 명세 아티팩트
 
-| Path | Responsibility |
+| 경로 | 책임 |
 |---|---|
-| `docs/superpowers/specs/2026-07-10-ai-workflow-phase-1a-spec.md` | Approved Phase 1A state and registry contract |
+| `docs/superpowers/specs/2026-07-10-ai-workflow-phase-1a-spec.md` | 승인된 Phase 1A 상태 및 레지스트리 계약 |
 
-### Schemas
+### 스키마
 
-| Path | Responsibility |
+| 경로 | 책임 |
 |---|---|
-| `ai/schemas/command-registry.schema.json` | Validate command and unavailable-capability records |
-| `ai/schemas/project-state.schema.json` | Validate project facts, paths, ports, environments, and runtime availability |
-| `ai/schemas/run.schema.json` | Define the future per-run evidence index |
-| `ai/schemas/command-result.schema.json` | Define future command execution results |
-| `ai/schemas/done-claim.schema.json` | Define future machine-readable completion claims |
-| `ai/schemas/approval-record.schema.json` | Define future approval audit records |
-| `ai/schemas/policy-violation.schema.json` | Define future policy-violation events |
+| `ai/schemas/command-registry.schema.json` | 명령 및 사용 불가 capability 레코드 검증 |
+| `ai/schemas/project-state.schema.json` | 프로젝트 사실, 경로, 포트, 환경, 런타임 가용성 검증 |
+| `ai/schemas/run.schema.json` | 향후 실행별 증거 색인 정의 |
+| `ai/schemas/command-result.schema.json` | 향후 명령 실행 결과 정의 |
+| `ai/schemas/done-claim.schema.json` | 향후 기계 판독 가능한 완료 주장 정의 |
+| `ai/schemas/approval-record.schema.json` | 향후 승인 감사 레코드 정의 |
+| `ai/schemas/policy-violation.schema.json` | 향후 정책 위반 이벤트 정의 |
 
-### Canonical State And Human Summaries
+### 정식 상태 및 사람이 읽는 요약
 
-| Path | Responsibility |
+| 경로 | 책임 |
 |---|---|
-| `ai/command-registry.json` | Canonical command capability registry |
-| `ai/project-state.json` | Canonical project state and static intake facts |
-| `ai/command-registry.md` | Human policy notes and command-registry summary |
-| `ai/project-state.md` | Human policy notes and project-state summary |
+| `ai/command-registry.json` | 기준 명령 capability 레지스트리 |
+| `ai/project-state.json` | 기준 프로젝트 상태 및 정적 intake 사실 |
+| `ai/command-registry.md` | 사람용 정책 메모 및 명령 레지스트리 요약 |
+| `ai/project-state.md` | 사람용 정책 메모 및 프로젝트 상태 요약 |
 
-### Static Validation Fixtures
+### 정적 검증 fixture
 
-| Path | Expected Use |
+| 경로 | 예상 용도 |
 |---|---|
-| `ai/fixtures/phase-1a/valid/command-registry.json` | Valid registry fixture |
-| `ai/fixtures/phase-1a/valid/project-state.json` | Valid project-state fixture |
-| `ai/fixtures/phase-1a/valid/run.json` | Valid future run-index fixture |
-| `ai/fixtures/phase-1a/valid/command-result.json` | Valid future command-result fixture |
-| `ai/fixtures/phase-1a/valid/done-claim.json` | Valid future done-claim fixture |
-| `ai/fixtures/phase-1a/valid/approval-record.json` | Valid future approval audit fixture |
-| `ai/fixtures/phase-1a/valid/policy-violation.json` | Valid future policy-violation fixture |
-| `ai/fixtures/phase-1a/invalid/command-registry-invalid-enum.json` | Reject unknown status values |
-| `ai/fixtures/phase-1a/invalid/command-registry-raw-command.json` | Reject a raw command string in place of argv |
-| `ai/fixtures/phase-1a/invalid/command-registry-unknown-version.json` | Reject unsupported schema versions |
-| `ai/fixtures/phase-1a/invalid/project-state-missing-required.json` | Reject missing required state |
-| `ai/fixtures/phase-1a/invalid/project-state-invalid-confidence.json` | Reject invented confidence values |
-| `ai/fixtures/phase-1a/invalid/run-invalid-result.json` | Reject invented workflow results |
-| `ai/fixtures/phase-1a/invalid/command-result-missing-process-exit.json` | Reject incomplete execution evidence |
-| `ai/fixtures/phase-1a/invalid/approval-record-missing-reference.json` | Reject an approval claim without its audit reference field |
-| `ai/fixtures/phase-1a/invalid/policy-violation-invalid-type.json` | Reject invented policy-violation types |
-| `ai/fixtures/phase-1a/generated-summary/command-registry-stale.md` | Future validator must detect stale generated content |
-| `ai/fixtures/phase-1a/generated-summary/project-state-stale.md` | Future validator must detect contradictory generated content |
+| `ai/fixtures/phase-1a/valid/command-registry.json` | 유효한 레지스트리 fixture |
+| `ai/fixtures/phase-1a/valid/project-state.json` | 유효한 프로젝트 상태 fixture |
+| `ai/fixtures/phase-1a/valid/run.json` | 유효한 향후 run-index fixture |
+| `ai/fixtures/phase-1a/valid/command-result.json` | 유효한 향후 command-result fixture |
+| `ai/fixtures/phase-1a/valid/done-claim.json` | 유효한 향후 done-claim fixture |
+| `ai/fixtures/phase-1a/valid/approval-record.json` | 유효한 향후 승인 감사 fixture |
+| `ai/fixtures/phase-1a/valid/policy-violation.json` | 유효한 향후 정책 위반 fixture |
+| `ai/fixtures/phase-1a/invalid/command-registry-invalid-enum.json` | 알 수 없는 상태 값 거부 |
+| `ai/fixtures/phase-1a/invalid/command-registry-raw-command.json` | argv 대신 원시 명령 문자열 거부 |
+| `ai/fixtures/phase-1a/invalid/command-registry-unknown-version.json` | 지원하지 않는 스키마 버전 거부 |
+| `ai/fixtures/phase-1a/invalid/project-state-missing-required.json` | 필수 상태 누락 거부 |
+| `ai/fixtures/phase-1a/invalid/project-state-invalid-confidence.json` | 임의로 만든 confidence 값 거부 |
+| `ai/fixtures/phase-1a/invalid/run-invalid-result.json` | 임의로 만든 워크플로 결과 거부 |
+| `ai/fixtures/phase-1a/invalid/command-result-missing-process-exit.json` | 불완전한 실행 증거 거부 |
+| `ai/fixtures/phase-1a/invalid/approval-record-missing-reference.json` | 감사 참조 필드 없는 승인 주장 거부 |
+| `ai/fixtures/phase-1a/invalid/policy-violation-invalid-type.json` | 임의로 만든 정책 위반 유형 거부 |
+| `ai/fixtures/phase-1a/generated-summary/command-registry-stale.md` | 향후 validator가 오래된 생성 콘텐츠를 감지해야 함 |
+| `ai/fixtures/phase-1a/generated-summary/project-state-stale.md` | 향후 validator가 모순되는 생성 콘텐츠를 감지해야 함 |
 
-Fixtures are static test vectors in Phase 1A. No validator or fixture runner is implemented until Phase 1B.
+fixture는 Phase 1A의 정적 test vector다. Phase 1B까지 validator나 fixture runner를 구현하지 않는다.
 
-## Files To Modify
+## 수정할 파일
 
-| Path | Required Change |
+| 경로 | 필수 변경 |
 |---|---|
-| `.gitignore` | Add `.ai-runs/` as a repository-root ignored directory |
-| `AGENTS.md` | Add canonical-state reading order, Phase 1A status semantics, and enforcement-boundary wording |
+| `.gitignore` | 저장소 루트 무시 디렉터리로 `.ai-runs/` 추가 |
+| `AGENTS.md` | 기준 상태 읽기 순서, Phase 1A 상태 의미, 강제 적용 경계 문구 추가 |
 
-No product source, test source, Gradle configuration, runtime configuration, feature spec, ADR, QA gate, or command script is modified in Phase 1A.
+Phase 1A에서는 product source, test source, Gradle 구성, runtime 구성, 기능 명세, ADR, QA gate 또는 command script를 수정하지 않는다.
 
-## Closed Enum Definitions
+## 폐쇄형 enum 정의
 
-### Fact Confidence
+### 사실 신뢰도
 
-Allowed values:
+허용 값:
 
-- `CONFIRMED`: directly supported by static repository evidence
-- `INFERRED`: reasonable default or implication that lacks runtime evidence
-- `UNKNOWN`: not inspected or not knowable from current evidence
-- `STALE`: previously known but invalidated by a relevant change
-- `UNCERTAIN`: inspected evidence is conflicting or incomplete
+- `CONFIRMED`: 정적 저장소 증거가 직접 뒷받침함
+- `INFERRED`: runtime 증거가 없는 합리적 기본값 또는 추론
+- `UNKNOWN`: 검사하지 않았거나 현재 증거로 알 수 없음
+- `STALE`: 이전에 알려졌으나 관련 변경으로 무효화됨
+- `UNCERTAIN`: 검사한 증거가 충돌하거나 불완전함
 
-### Capability Configuration
+### 기능 구성
 
-Allowed values:
+허용 값:
 
-- `UNKNOWN`: capability has not been conclusively discovered
-- `CONFIGURED_UNVERIFIED`: static configuration exists, but no successful execution evidence exists
-- `VERIFIED`: exact registered argv executed successfully and evidence was recorded
-- `NOT_CONFIGURED`: no supported command or mechanism is currently defined
-- `STALE`: prior configuration evidence was invalidated
-- `UNCERTAIN`: configuration evidence is incomplete or contradictory
+- `UNKNOWN`: capability가 확정적으로 발견되지 않음
+- `CONFIGURED_UNVERIFIED`: 정적 구성은 있지만 성공한 실행 증거가 없음
+- `VERIFIED`: 정확히 등록된 argv가 성공적으로 실행되었고 증거가 기록됨
+- `NOT_CONFIGURED`: 현재 지원되는 명령 또는 메커니즘이 정의되지 않음
+- `STALE`: 이전 구성 증거가 무효화됨
+- `UNCERTAIN`: 구성 증거가 불완전하거나 모순됨
 
-### Workflow Result
+### 워크플로 결과
 
-Allowed values:
+허용 값:
 
 - `PASS`
 - `FAIL`
@@ -137,11 +137,11 @@ Allowed values:
 - `NOT_APPLICABLE`
 - `SKIPPED_WITH_REASON`
 
-Markdown displays `NOT_APPLICABLE` as `N/A`. JSON never stores `N/A`.
+Markdown은 `NOT_APPLICABLE`을 `N/A`로 표시한다. JSON에는 `N/A`를 저장하지 않는다.
 
-### Script Control Outcome
+### 스크립트 제어 결과
 
-Allowed values:
+허용 값:
 
 - `PASS`
 - `FAIL`
@@ -152,36 +152,36 @@ Allowed values:
 - `NOT_APPLICABLE`
 - `SKIPPED_WITH_REASON`
 
-### Command Classification
+### 명령 분류
 
-Allowed values:
+허용 값:
 
 - `SAFE`
 - `RISKY`
 - `DESTRUCTIVE`
 - `UNAVAILABLE`
 
-### Environment Kind
+### 환경 종류
 
-Allowed values:
+허용 값:
 
 - `LOCAL`
 - `CI`
 
-### Evidence Kind
+### 증거 종류
 
-Allowed values:
+허용 값:
 
 - `STATIC_FILE`
 - `RUNTIME_COMMAND`
 - `EXTERNAL_APPROVAL`
 - `CI_ARTIFACT`
 
-Phase 1A uses only `STATIC_FILE` evidence.
+Phase 1A는 `STATIC_FILE` 증거만 사용한다.
 
-### Approval Type
+### 승인 유형
 
-Allowed values:
+허용 값:
 
 - `REGISTRY_UPDATE`
 - `RISKY_COMMAND`
@@ -190,9 +190,9 @@ Allowed values:
 - `DEPLOYMENT`
 - `SECRET_CHANGE`
 
-### Policy Violation Type
+### 정책 위반 유형
 
-Allowed values:
+허용 값:
 
 - `RAW_COMMAND_ATTEMPT`
 - `UNREGISTERED_COMMAND`
@@ -203,21 +203,21 @@ Allowed values:
 - `COMPLETION_WITHOUT_EVIDENCE`
 - `DIRECT_TOOL_BYPASS`
 
-## JSON Schema Contracts
+## JSON Schema 계약
 
-Every schema requires `$schema`, `$id`, and `schemaVersion`. Every object sets `additionalProperties: false`. Nullable fields use an explicit union such as `"type": ["string", "null"]`; missing data is not represented by invented strings.
+모든 스키마에는 `$schema`, `$id`, `schemaVersion`이 필요하다. 모든 객체는 `additionalProperties: false`를 설정한다. null 허용 필드는 `"type": ["string", "null"]`처럼 명시적 union을 사용하며, 누락 데이터는 임의로 만든 문자열로 표현하지 않는다.
 
-Schema files use stable URNs with this pattern:
+스키마 파일은 다음 패턴의 안정적인 URN을 사용한다.
 
 ```text
 urn:sparta-ch6-advanced:ai-workflow:schema:<schema-name>:v1
 ```
 
-For example, `command-registry.schema.json` uses `$id: urn:sparta-ch6-advanced:ai-workflow:schema:command-registry:v1`. Canonical instance files use a repository-relative `$schema` path and repository-relative `$id`, such as `$schema: ./schemas/command-registry.schema.json` and `$id: ai/command-registry.json`. Public HTTP schema URLs are not used.
+예를 들어 `command-registry.schema.json`은 `$id: urn:sparta-ch6-advanced:ai-workflow:schema:command-registry:v1`을 사용한다. 기준 instance 파일은 `$schema: ./schemas/command-registry.schema.json`, `$id: ai/command-registry.json`처럼 저장소 상대 `$schema` 경로와 저장소 상대 `$id`를 사용한다. 공개 HTTP 스키마 URL은 사용하지 않는다.
 
 ### `command-registry.schema.json`
 
-Top-level required fields:
+최상위 필수 필드:
 
 - `$schema`
 - `$id`
@@ -225,32 +225,32 @@ Top-level required fields:
 - `updatedAt`
 - `commands`
 
-Each command record requires:
+각 명령 레코드에 필요:
 
-- `id`: unique dotted identifier
-- `purpose`: human-readable capability description
-- `configurationStatus`: Capability Configuration enum
-- `classification`: Command Classification enum
-- `argv`: array of non-empty strings or `null`
-- `workingDirectory`: repository-relative path
-- `parameters`: object with `allowed` and nullable `schema`
-- `prerequisites`: array of capability or service identifiers
-- `evidence`: array of evidence records
-- `inputPaths`: array of repository-relative paths or globs
-- `lastVerifiedAt`: ISO-8601 UTC string or `null`
-- `notes`: array of strings
+- `id`: 고유 dotted 식별자
+- `purpose`: 사람이 읽을 수 있는 capability 설명
+- `configurationStatus`: Capability Configuration 열거형
+- `classification`: Command Classification 열거형
+- `argv`: 비어 있지 않은 문자열 배열 또는 `null`
+- `workingDirectory`: 저장소 상대 경로
+- `parameters`: `allowed` 및 null 허용 `schema`를 가진 객체
+- `prerequisites`: capability 또는 service 식별자 배열
+- `evidence`: 증거 레코드 배열
+- `inputPaths`: 저장소 상대 경로 또는 glob 배열
+- `lastVerifiedAt`: ISO-8601 UTC 문자열 또는 `null`
+- `notes`: 문자열 배열
 
-Conditional rules:
+조건부 규칙:
 
-- `CONFIGURED_UNVERIFIED` and `VERIFIED` require non-empty argv and at least one evidence record.
-- `VERIFIED` requires non-null `lastVerifiedAt` and `RUNTIME_COMMAND` evidence.
-- `NOT_CONFIGURED` requires `argv: null`, `classification: UNAVAILABLE`, and `lastVerifiedAt: null`.
-- `UNKNOWN`, `STALE`, and `UNCERTAIN` cannot be treated as executable.
-- Raw shell command strings, shell pipelines, and `eval` expressions are not representable.
+- `CONFIGURED_UNVERIFIED`, `VERIFIED`에는 비어 있지 않은 argv와 최소 하나의 증거 레코드가 필요하다.
+- `VERIFIED`에는 null이 아닌 `lastVerifiedAt`과 `RUNTIME_COMMAND` 증거가 필요하다.
+- `NOT_CONFIGURED`에는 `argv: null`, `classification: UNAVAILABLE`, `lastVerifiedAt: null`이 필요하다.
+- `UNKNOWN`, `STALE`, `UNCERTAIN`은 실행 가능한 것으로 취급할 수 없다.
+- 원시 shell 명령 문자열, shell pipeline, `eval` 표현식은 표현할 수 없다.
 
 ### `project-state.schema.json`
 
-Top-level required fields:
+최상위 필수 필드:
 
 - `$schema`
 - `$id`
@@ -265,7 +265,7 @@ Top-level required fields:
 - `commandRegistryRef`
 - `cacheInvalidationInputs`
 
-Required project fields:
+필수 프로젝트 필드:
 
 - `name`
 - `productType`
@@ -273,13 +273,13 @@ Required project fields:
 - `framework`
 - `buildSystem`
 
-Each fact requires `id`, `value`, `confidence`, `evidence`, and `observedAt`. Each port requires `service`, `value`, `confidence`, and `evidence`. Each helper-runtime record requires `environment`, `targetRuntime`, `detectedRuntime`, `configurationStatus`, `version`, and `evidence`.
+각 fact에는 `id`, `value`, `confidence`, `evidence`, `observedAt`이 필요하다. 각 port에는 `service`, `value`, `confidence`, `evidence`가 필요하다. 각 helper-runtime 레코드에는 `environment`, `targetRuntime`, `detectedRuntime`, `configurationStatus`, `version`, `evidence`가 필요하다.
 
-The application port uses value `8080` with confidence `INFERRED`. Helper runtimes remain `UNKNOWN` until a later approved preflight records evidence.
+애플리케이션 port는 confidence `INFERRED`와 값 `8080`을 사용한다. helper runtime은 이후 승인된 preflight가 증거를 기록할 때까지 `UNKNOWN`으로 유지한다.
 
 ### `run.schema.json`
 
-Required fields:
+필수 필드:
 
 - `$schema`, `$id`, `schemaVersion`
 - `runId`, `taskKey`, `startedAt`, `endedAt`
@@ -288,11 +288,11 @@ Required fields:
 - `commandResultRefs`, `approvalRefs`, `policyViolationRefs`, `evidenceRefs`
 - `redactionApplied`
 
-This schema is defined in Phase 1A, but no `.ai-runs/<run-id>/run.json` file is created by Phase 1A.
+이 schema는 Phase 1A에서 정의되지만 Phase 1A는 `.ai-runs/<run-id>/run.json` 파일을 만들지 않는다.
 
 ### `command-result.schema.json`
 
-Required fields:
+필수 필드:
 
 - `$schema`, `$id`, `schemaVersion`
 - `runId`, `commandId`
@@ -302,11 +302,11 @@ Required fields:
 - `stdoutPath`, `stderrPath`
 - `redactionApplied`, `reason`
 
-`processExitCode` preserves the child process code. It is not reused as a workflow control code.
+`processExitCode`는 child process code를 보존한다. workflow control code로 재사용하지 않는다.
 
 ### `done-claim.schema.json`
 
-Required fields:
+필수 필드:
 
 - `$schema`, `$id`, `schemaVersion`
 - `runId`, `taskKey`, `generatedAt`
@@ -315,35 +315,35 @@ Required fields:
 - `unexpected500Status`, `unhandledExceptionStatus`
 - `blockers`, `remainingRisks`
 
-No done-claim JSON is created in Phase 1A.
+Phase 1A에서는 done-claim JSON을 만들지 않는다.
 
 ### `approval-record.schema.json`
 
-Required fields:
+필수 필드:
 
 - `$schema`, `$id`, `schemaVersion`
 - `approvalId`, `runId`
 - `type`, `approver`, `scope`, `reason`
 - `approvedAt`, `externalReference`
 
-The schema states that approval records are audit records. A locally written record cannot independently authorize an action.
+스키마는 approval record가 감사 레코드라고 명시한다. 로컬에 작성한 레코드는 독립적으로 작업을 승인할 수 없다.
 
 ### `policy-violation.schema.json`
 
-Required fields:
+필수 필드:
 
 - `$schema`, `$id`, `schemaVersion`
 - `violationId`, `runId`
 - `type`, `description`, `detectedAt`
 - `blocking`, `context`
 
-No policy-violation event is created in Phase 1A.
+Phase 1A에서는 policy-violation 이벤트를 만들지 않는다.
 
-## Initial `command-registry.json` Structure
+## 초기 `command-registry.json` 구조
 
-The initial registry contains capability records even when no executable argv is available. The timestamp below illustrates shape only; implementation uses its actual UTC write time.
+초기 레지스트리는 실행 가능한 argv가 없더라도 capability 레코드를 포함한다. 아래 타임스탬프는 형태만 예시하며 구현은 실제 UTC 기록 시각을 사용한다.
 
-The Phase 1A/1B command profile is POSIX/Bash only. `verify.unit` uses `["./gradlew", "test"]`. Native Windows `gradlew.bat` execution profiles are not represented and remain future scope. Git Bash on Windows is usable only when the POSIX wrapper path works; Phase 1A does not test that condition.
+Phase 1A/1B command profile은 POSIX/Bash 전용이다. `verify.unit`은 `["./gradlew", "test"]`를 사용한다. Native Windows `gradlew.bat` 실행 profile은 표현하지 않으며 향후 범위로 남는다. Windows의 Git Bash는 POSIX wrapper path가 동작할 때만 사용할 수 있으며 Phase 1A는 해당 조건을 테스트하지 않는다.
 
 ```json
 {
@@ -507,7 +507,7 @@ The Phase 1A/1B command profile is POSIX/Bash only. `verify.unit` uses `["./grad
 }
 ```
 
-## Initial `project-state.json` Structure
+## 초기 `project-state.json` 구조
 
 ```json
 {
@@ -573,38 +573,38 @@ The Phase 1A/1B command profile is POSIX/Bash only. `verify.unit` uses `["./grad
 }
 ```
 
-Example timestamps in this specification are illustrative. Phase 1A implementation writes the actual UTC time without executing project commands.
+이 명세의 예시 타임스탬프는 설명용이다. Phase 1A 구현은 프로젝트 명령을 실행하지 않고 실제 UTC 시각을 기록한다.
 
-## Markdown Summary Rules
+## Markdown 요약 규칙
 
-Both `ai/command-registry.md` and `ai/project-state.md` use this ownership structure:
+`ai/command-registry.md`와 `ai/project-state.md`는 모두 다음 소유권 구조를 사용한다.
 
 ```md
-# Document Title
+# 문서 제목
 
-## Human Policy Notes
+## 사람이 작성하는 정책 참고
 
 Human-editable policy and interpretation rules.
 
 <!-- GENERATED:START source=ai/example.json -->
-## Generated State Summary
+## 생성된 상태 요약
 
 Bootstrap summary derived from the canonical JSON in the same reviewed change.
 <!-- GENERATED:END source=ai/example.json -->
 ```
 
-Rules:
+규칙:
 
-1. Human Policy Notes may be edited directly.
-2. Content between generated markers may not be edited independently of canonical JSON.
-3. During Phase 1A, the initial summary is bootstrapped manually from JSON in the same change and reviewed for exact agreement.
-4. Automatic generation and validation are deferred to Phase 1B or later.
-5. A summary must show the canonical path, schema version, update time, status, and evidence path.
-6. `NOT_APPLICABLE` is displayed as `N/A`; all other enum values are displayed unchanged.
-7. A mismatch is resolved by updating canonical JSON first, then refreshing the summary.
-8. Markdown tables are never parsed as executable state.
+1. Human Policy Notes는 직접 편집할 수 있다.
+2. 생성 marker 사이의 콘텐츠는 기준 JSON과 독립적으로 편집해서는 안 된다.
+3. Phase 1A에서는 동일 변경의 JSON에서 초기 요약을 수동 bootstrap하고 정확한 일치를 검토한다.
+4. 자동 생성 및 검증은 Phase 1B 이후로 미룬다.
+5. 요약에는 기준 경로, 스키마 버전, 갱신 시각, 상태, 증거 경로를 표시해야 한다.
+6. `NOT_APPLICABLE`은 `N/A`로 표시하고, 나머지 enum 값은 변경 없이 표시한다.
+7. 불일치는 먼저 기준 JSON을 갱신한 뒤 요약을 새로 고쳐 해결한다.
+8. Markdown 표는 실행 가능한 상태로 절대 파싱하지 않는다.
 
-The generated section includes this Phase 1A bootstrap notice:
+생성 섹션에는 다음 Phase 1A bootstrap 고지를 포함한다.
 
 ```md
 This section was manually bootstrapped from canonical JSON during Phase 1A.
@@ -622,7 +622,7 @@ This section cannot be changed independently of its canonical JSON source.
 - Evidence
 - Last Verified
 
-For `argv: null`, display `NOT CONFIGURED` or `UNKNOWN` according to `configurationStatus`; do not invent a command.
+`argv: null`에는 `configurationStatus`에 따라 `NOT CONFIGURED` 또는 `UNKNOWN`을 표시하며 명령을 임의로 만들지 않는다.
 
 ### `project-state.md` Generated Summary Sections
 
@@ -634,105 +634,105 @@ For `argv: null`, display `NOT CONFIGURED` or `UNKNOWN` according to `configurat
 - Command Registry Reference
 - Cache Invalidation Inputs
 
-The application port must display `8080 (INFERRED)`.
+애플리케이션 port는 `8080 (INFERRED)`로 표시해야 한다.
 
-## `.gitignore` Integration
+## `.gitignore` 통합
 
-Add this repository-root entry under a dedicated AI workflow section:
+전용 AI 워크플로 섹션 아래에 다음 저장소 루트 항목을 추가한다.
 
 ```gitignore
 ### AI Workflow Local Evidence ###
 .ai-runs/
 ```
 
-Rules:
+규칙:
 
-- Ignore the directory recursively.
-- Do not add a negation rule that commits raw logs.
-- Reviewable evidence belongs in scrubbed work logs, completion reports, or future CI artifacts.
-- Phase 1A does not create `.ai-runs/`.
+- 디렉터리를 재귀적으로 무시한다.
+- 원시 로그를 커밋하는 negation 규칙을 추가하지 않는다.
+- 검토 가능한 증거는 정제된 작업 로그, 완료 보고서 또는 향후 CI 산출물에 둔다.
+- Phase 1A는 `.ai-runs/`를 만들지 않는다.
 
-## `AGENTS.md` Addition
+## `AGENTS.md` 추가 사항
 
-Add the following section after **First Rule**:
+**First Rule** 뒤에 다음 section을 추가한다.
 
 ```md
-## Mandatory Workflow State
+## 필수 워크플로 상태
 
-Before rediscovering repository structure, commands, ports, environments, or verification capabilities, read:
+저장소 구조, 명령, port, 환경 또는 검증 capability를 다시 탐색하기 전에 다음을 읽는다.
 
 1. `ai/project-state.json` - canonical project state
 2. `ai/command-registry.json` - canonical command capability registry
 3. `ai/project-state.md` and `ai/command-registry.md` - human policy and summaries
 
-JSON is canonical. Markdown summaries must not override or contradict JSON.
+JSON이 기준 문서다. Markdown 요약은 JSON을 재정의하거나 모순되어서는 안 된다.
 
-Phase 1A provides state and registry contracts only. It does not provide a command gateway, native tool interception, or CI enforcement. Do not describe Phase 1A as complete command enforcement.
+Phase 1A는 상태와 레지스트리 계약만 제공한다. command gateway, 네이티브 도구 interception 또는 CI 강제 적용을 제공하지 않는다. Phase 1A를 완전한 명령 강제 적용으로 설명하지 않는다.
 
-During Phase 1A work, do not execute project commands. Keep `verify.unit` as `CONFIGURED_UNVERIFIED`; keep lint, dedicated integration test, E2E, migration, seed, and API smoke as `NOT_CONFIGURED`; and keep application port 8080 as `INFERRED`.
+Phase 1A 작업 중에는 프로젝트 명령을 실행하지 않는다. `verify.unit`은 `CONFIGURED_UNVERIFIED`로 유지하고 lint, 전용 integration test, E2E, migration, seed, API smoke는 `NOT_CONFIGURED`로 유지하며 애플리케이션 port 8080은 `INFERRED`로 유지한다.
 
-Until the Phase 1B gateway exists, AI agents must not directly run Gradle, application server, Docker Compose, HTTP/API, migration, seed, or infrastructure commands. There is no temporary direct-command exception for AI agents. Static file inspection, documentation edits, and host-approved version-control operations remain allowed administrative workflow operations.
+Phase 1B gateway가 존재할 때까지 AI 에이전트는 Gradle, application server, Docker Compose, HTTP/API, migration, seed 또는 infrastructure 명령을 직접 실행해서는 안 된다. AI 에이전트에는 임시 직접 명령 예외가 없다. 정적 파일 검사, 문서 편집, 호스트 승인 버전 관리 작업은 허용되는 관리 워크플로 작업으로 유지한다.
 
-A command run manually by a human outside the AI workflow does not make a registry entry `VERIFIED`, does not count as workflow evidence, and must not be reported by an agent as a passed check. Only Phase 1B command-runner evidence may transition an entry to `VERIFIED`.
+AI 워크플로 밖에서 사람이 수동으로 실행한 명령은 레지스트리 항목을 `VERIFIED`로 만들지 않고 워크플로 증거로 계산하지 않으며 에이전트가 통과한 검사로 보고해서는 안 된다. Phase 1B command-runner 증거만 항목을 `VERIFIED`로 전환할 수 있다.
 
-Commands with `NOT_CONFIGURED`, `UNKNOWN`, `STALE`, or `UNCERTAIN` status are not executable. No command may be marked `VERIFIED` without recorded runtime evidence.
+`NOT_CONFIGURED`, `UNKNOWN`, `STALE`, `UNCERTAIN` 상태의 명령은 실행할 수 없다. 기록된 런타임 증거 없이는 어떤 명령도 `VERIFIED`로 표시할 수 없다.
 ```
 
-Also add the four new state files and schema directory to the existing Document Map. Do not add command-runner instructions until Phase 1B.
+기존 Document Map에 새 상태 파일 4개와 schema 디렉터리도 추가한다. Phase 1B까지 command-runner 지침을 추가하지 않는다.
 
-## Phase 1A Completion Criteria
+## Phase 1A 완료 기준
 
-Phase 1A is complete only when all of the following are true:
+Phase 1A는 다음을 모두 만족할 때만 완료다.
 
-- [ ] All seven schemas exist and use Draft 2020-12, `schemaVersion: 1`, closed objects, and the enums in this specification.
-- [ ] `ai/command-registry.json` and `ai/project-state.json` conform by document review to their schemas.
-- [ ] `verify.unit` is `CONFIGURED_UNVERIFIED` with argv `./gradlew test` and static evidence.
-- [ ] Native `gradlew.bat` execution is absent from Phase 1A and recorded as future scope / `NOT_CONFIGURED`.
-- [ ] Lint, dedicated integration test, E2E, migration, seed, and API smoke are `NOT_CONFIGURED` with `argv: null`.
-- [ ] No command or capability is marked `VERIFIED`.
-- [ ] Application port 8080 is `INFERRED`.
-- [ ] Python 3 is recorded as the Phase 1B target runtime; local availability remains `UNKNOWN` and CI remains `NOT_CONFIGURED` unless pre-existing static evidence proves otherwise without command execution.
-- [ ] Markdown files contain Human Policy Notes and generated markers, and their bootstrap summaries match canonical JSON.
-- [ ] `.ai-runs/` is ignored and no raw evidence is committed.
-- [ ] `AGENTS.md` states the canonical reading order and Phase 1A enforcement boundary.
-- [ ] Static valid and invalid fixtures exist for future validation.
-- [ ] No product, command gateway, hook script, command execution, migration, seed, API smoke, or runtime verification change is included.
-- [ ] No human manual command result is accepted as `VERIFIED` AI workflow evidence.
-- [ ] The six decisions under Resolved Decisions are reflected consistently across schemas, canonical examples, Markdown rules, and `AGENTS.md` wording.
+- [ ] 일곱 스키마가 모두 존재하며 Draft 2020-12, `schemaVersion: 1`, 닫힌 객체, 이 명세의 enum을 사용한다.
+- [ ] `ai/command-registry.json`, `ai/project-state.json`이 문서 검토로 각 스키마를 준수한다.
+- [ ] `verify.unit`이 argv `./gradlew test` 및 정적 증거와 함께 `CONFIGURED_UNVERIFIED`다.
+- [ ] 네이티브 `gradlew.bat` 실행은 Phase 1A에 없으며 향후 범위 / `NOT_CONFIGURED`로 기록된다.
+- [ ] lint, 전용 integration test, E2E, migration, seed, API smoke가 `argv: null`과 함께 `NOT_CONFIGURED`다.
+- [ ] 어떤 명령이나 capability도 `VERIFIED`로 표시하지 않는다.
+- [ ] 애플리케이션 port 8080이 `INFERRED`다.
+- [ ] Python 3가 Phase 1B 대상 runtime으로 기록되며, 명령 실행 없이 기존 정적 증거가 달리 증명하지 않는 한 로컬 가용성은 `UNKNOWN`, CI는 `NOT_CONFIGURED`로 유지된다.
+- [ ] Markdown 파일에 Human Policy Notes와 생성 marker가 있으며 bootstrap 요약은 기준 JSON과 일치한다.
+- [ ] `.ai-runs/`를 무시하고 원시 증거를 커밋하지 않는다.
+- [ ] `AGENTS.md`가 기준 읽기 순서와 Phase 1A 강제 적용 경계를 명시한다.
+- [ ] 향후 검증을 위한 정적 유효 및 무효 fixture가 존재한다.
+- [ ] product, command gateway, hook script, 명령 실행, migration, seed, API smoke 또는 runtime 검증 변경을 포함하지 않는다.
+- [ ] 어떤 사람 수동 명령 결과도 `VERIFIED` AI 워크플로 증거로 받아들이지 않는다.
+- [ ] Resolved Decisions 아래의 여섯 결정이 schema, 기준 예시, Markdown 규칙, `AGENTS.md` 문구에 일관되게 반영된다.
 
-Verification for Phase 1A is document and static consistency review only. It must report all project commands as `NOT RUN`.
+Phase 1A 검증은 문서 및 정적 일관성 검토만 수행한다. 모든 프로젝트 명령을 `NOT RUN`으로 보고해야 한다.
 
-## Phase 1A Non-Goals
+## Phase 1A 비목표
 
-Phase 1A does not:
+Phase 1A는 다음을 수행하지 않는다.
 
-- implement `scripts/ai/command-runner.sh`
-- implement `scripts/ai/workflow-gate.sh`
-- implement `scripts/ai/done-claim-check.sh`
-- parse, generate, or validate JSON automatically
-- execute Gradle or application commands
-- create `.ai-runs/` evidence
-- capture or scrub command logs
-- implement pre/post command hooks
-- enforce command IDs technically
-- implement cache, fingerprints, repo intake, skills, or handoff automation
-- implement API smoke cases
-- add native runtime adapters or CI gates
-- change product code, tests, runtime behavior, database state, migrations, seeds, deployment, or secrets
+- `scripts/ai/command-runner.sh` 구현
+- `scripts/ai/workflow-gate.sh` 구현
+- `scripts/ai/done-claim-check.sh` 구현
+- JSON 자동 파싱, 생성 또는 검증
+- Gradle 또는 애플리케이션 명령 실행
+- `.ai-runs/` 증거 생성
+- 명령 로그 수집 또는 정제
+- pre/post command hook 구현
+- command ID의 기술적 강제 적용
+- cache, fingerprint, repo intake, skill 또는 handoff 자동화 구현
+- API smoke case 구현
+- 네이티브 runtime adapter 또는 CI gate 추가
+- product code, test, runtime 동작, database 상태, migration, seed, deployment 또는 secret 변경
 
-## Resolved Decisions
+## 해결된 결정
 
-1. **Helper runtime:** Phase 1B targets Python 3. Phase 1A records local availability as `UNKNOWN`, performs no preflight, and allows no implicit fallback to Node.js, Java, or `jq`.
-2. **Gradle execution profile:** Phase 1A and Phase 1B register only POSIX/Bash argv such as `["./gradlew", "test"]`. Native Windows `gradlew.bat` support is future scope and `NOT_CONFIGURED`.
-3. **Schema identity:** Schema files use stable project URNs. Canonical instances use repository-relative `$schema` and `$id` values.
-4. **Generated summaries:** Phase 1A manually bootstraps a small summary from canonical JSON in the same reviewed change. Automatic generation and stale validation begin in Phase 1B or later.
-5. **Schema validator:** Phase 1B targets Python `jsonschema` with Draft 2020-12 support and plans `scripts/ai/lib/validate_json.py`. Phase 1A creates schemas and fixtures only.
-6. **Interim command policy:** AI project-command execution is fully paused until the Phase 1B gateway exists. Human manual results are outside the AI workflow and cannot produce `VERIFIED` state or passed-check claims.
+1. **Helper runtime:** Phase 1B는 Python 3를 대상으로 한다. Phase 1A는 로컬 가용성을 `UNKNOWN`으로 기록하고 preflight를 수행하지 않으며 Node.js, Java, `jq`로의 암묵적 fallback을 허용하지 않는다.
+2. **Gradle 실행 프로필:** Phase 1A와 Phase 1B는 `["./gradlew", "test"]` 같은 POSIX/Bash argv만 등록한다. 네이티브 Windows `gradlew.bat` 지원은 향후 범위이며 `NOT_CONFIGURED`다.
+3. **스키마 식별:** 스키마 파일은 안정적인 프로젝트 URN을 사용한다. 기준 instance는 저장소 상대 `$schema`, `$id` 값을 사용한다.
+4. **생성 요약:** Phase 1A는 동일 검토 변경에서 기준 JSON으로 작은 요약을 수동 bootstrap한다. 자동 생성과 stale 검증은 Phase 1B 이후에 시작한다.
+5. **스키마 validator:** Phase 1B는 Draft 2020-12 지원 Python `jsonschema`를 대상으로 하고 `scripts/ai/lib/validate_json.py`를 계획한다. Phase 1A는 스키마와 fixture만 만든다.
+6. **임시 명령 정책:** Phase 1B gateway가 존재할 때까지 AI 프로젝트 명령 실행을 완전히 중지한다. 사람의 수동 결과는 AI 워크플로 밖에 있으며 `VERIFIED` 상태나 통과 검사 주장을 만들 수 없다.
 
-## Open Questions
+## 열린 질문
 
-None. The six prior questions are resolved above. Before implementation begins, the reviewer checks only that the implementation plan preserves the resolved decisions, file boundaries, and non-goals in this specification.
+없음. 이전 여섯 질문은 위에서 해결했다. 구현을 시작하기 전에 검토자는 구현 계획이 이 명세의 해결된 결정, 파일 경계, 비목표를 보존하는지만 확인한다.
 
-## Review Decision
+## 검토 결정
 
-This specification is approved for Phase 1A implementation planning. Approval authorizes only the Phase 1A file creation and modification listed here. It does not authorize Phase 1B command gateway implementation or any AI project-command execution.
+이 명세는 Phase 1A 구현 계획 수립을 승인한다. 승인은 이 문서에 나열한 Phase 1A 파일 생성과 수정만 허용한다. Phase 1B command gateway 구현이나 AI 프로젝트 명령 실행을 허용하지 않는다.

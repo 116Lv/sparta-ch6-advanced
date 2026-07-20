@@ -156,7 +156,7 @@ Task 1 is historical and complete; Tasks 2 through 4 are also complete. Task 5 r
 ## Decisions
 
 - Historical Task 1 authorized three Phase 3A schema names; this final review wave adds the separately reviewed closed runtime-snapshot schema required by the supported-host trust path.
-- The Issue remains open; Task 1 does not close Issue #10 or make an unqualified overall DONE claim.
+- Historical Task 1 did not close Issue #10 or make an unqualified overall DONE claim. GitHub Issue #10 was subsequently closed on 2026-07-14.
 
 ## Verification Evidence
 

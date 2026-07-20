@@ -1,21 +1,21 @@
-# 03. Domain Model
+# 03. 도메인 모델
 
-## Core Concepts
+## 핵심 개념
 
-### User
+### 사용자
 
 커피를 주문하고 포인트를 보유하는 사용자다.
 
-Rules:
+규칙:
 
 - 사용자는 하나의 포인트 계정을 가진다.
 - 현재 과제에서는 request의 사용자 식별값으로 사용자를 식별한다.
 
-### Menu
+### 메뉴
 
 주문 가능한 커피 메뉴다.
 
-Rules:
+규칙:
 
 - 가격은 0보다 커야 한다.
 - 판매 중인 메뉴만 주문할 수 있다.
@@ -25,7 +25,7 @@ Rules:
 
 사용자의 현재 포인트 잔액이다.
 
-Rules:
+규칙:
 
 - 잔액은 음수가 될 수 없다.
 - 동일 사용자의 포인트 변경은 Redisson 분산락으로 직렬화한다.
@@ -35,25 +35,25 @@ Rules:
 
 포인트 충전과 사용 이력이다.
 
-Rules:
+규칙:
 
 - 충전은 `CHARGE`, 사용은 `USE` 타입으로 저장한다.
 - 장애 분석과 잔액 검증을 위해 이력은 삭제하지 않는다.
 
-### Order
+### 주문
 
 사용자가 특정 메뉴를 주문한 기록이다.
 
-Rules:
+규칙:
 
 - 주문 생성과 결제 성공은 같은 트랜잭션에서 처리한다.
 - 잔액 부족 시 주문을 생성하지 않는다.
 
-### Payment
+### 결제
 
 주문에 대한 포인트 결제 기록이다.
 
-Rules:
+규칙:
 
 - 결제 수단은 포인트만 허용한다.
 - 결제 금액은 주문 시점의 메뉴 가격과 같아야 한다.
@@ -62,7 +62,7 @@ Rules:
 
 외부 데이터 수집 플랫폼으로 전송해야 하는 주문 이벤트다.
 
-Rules:
+규칙:
 
 - 주문 트랜잭션 안에서 저장한다.
 - Kafka 발행 성공 시 `PUBLISHED`로 변경한다.
@@ -72,14 +72,14 @@ Rules:
 
 메뉴별 일별 주문 집계다.
 
-Rules:
+규칙:
 
 - 주문 성공 시 해당 날짜와 메뉴의 주문 횟수를 증가시킨다.
 - Redis 인기 메뉴 랭킹 복구 기준으로 사용한다.
 
-## Entities
+## 엔터티
 
-| Entity | Purpose |
+| 엔터티 | 목적 |
 |---|---|
 | User | 주문 사용자 |
 | Menu | 커피 메뉴 |
@@ -92,7 +92,7 @@ Rules:
 | OrderPaidAnalytics | consumer group이 소유하는 내구성 있는 주문 결제 분석 입력 |
 | OutboxRecoveryAudit | 영구 실패 Outbox 이벤트의 감사 가능한 복구 기록 |
 
-## Relationships
+## 관계
 
 ```txt
 User 1:1 UserPoint
@@ -104,7 +104,7 @@ Order 1:N OutboxEvent
 Menu 1:N DailyMenuSale
 ```
 
-## Business Rules
+## 비즈니스 규칙
 
 ### BR-001: 포인트 잔액은 음수가 될 수 없다
 
@@ -126,36 +126,35 @@ Menu 1:N DailyMenuSale
 
 Redis Sorted Set은 빠른 조회용이며, MySQL `daily_menu_sales`가 복구 기준이다.
 
-## Consistency Invariants
+## 정합성 불변식
 
-These conditions are mandatory regardless of whether concurrency control uses Redisson or a MySQL pessimistic lock:
+동시성 제어에 Redisson을 사용하든 MySQL 비관적 락을 사용하든 다음 조건은 필수다.
 
-| Invariant | Required condition |
+| 불변식 | 필수 조건 |
 |---|---|
-| No negative point | A committed `user_points.balance` is always zero or greater. An insufficient-balance order changes no point, order, payment, history, aggregate, or Outbox state. |
-| No lost update | Every committed charge or point use is reflected exactly once in the final balance and has one matching `point_histories` record. Concurrent operations must not overwrite one another. |
-| No duplicate payment | One order has at most one payment. A retry or concurrent execution for the same order identity must not create a second payment or deduct points twice. |
-| No Outbox omission | Every committed paid order has its `ORDER_PAID` Outbox event saved in the same transaction. A rolled-back order has no publishable event. |
-| Idempotent event consumption | In one consumer group, the first delivery commits one `processed_events` marker and one `order_paid_analytics` effect in the same transaction. A duplicate commits neither a second marker nor a second effect, and an analytics failure rolls back the marker. |
-| Recoverable ranking | MySQL `daily_menu_sales` remains sufficient to rebuild Redis ranking after Redis data loss. |
+| 음수 포인트 없음 | 커밋된 `user_points.balance`는 항상 0 이상이다. 잔액이 부족한 주문은 포인트, 주문, 결제, 이력, 집계 또는 Outbox 상태를 변경하지 않는다. |
+| lost update 없음 | 커밋된 모든 충전 또는 포인트 사용은 최종 잔액에 정확히 한 번 반영되고, 일치하는 `point_histories` 레코드가 하나 존재한다. 동시 작업은 서로를 덮어쓰면 안 된다. |
+| 중복 결제 없음 | 하나의 주문에는 결제가 최대 하나만 존재한다. 동일 주문 식별자에 대한 재시도 또는 동시 실행은 두 번째 결제를 만들거나 포인트를 두 번 차감하면 안 된다. |
+| Outbox 누락 없음 | 커밋된 모든 결제 완료 주문은 동일 트랜잭션에서 `ORDER_PAID` Outbox 이벤트를 저장한다. 롤백된 주문에는 발행 가능한 이벤트가 없다. |
+| 멱등 이벤트 소비 | 하나의 consumer group에서 최초 전달은 동일 트랜잭션으로 하나의 `processed_events` 마커와 하나의 `order_paid_analytics` 효과를 커밋한다. 중복 전달은 두 번째 마커나 두 번째 효과를 커밋하지 않으며, 분석 실패는 마커를 롤백한다. |
+| 복구 가능한 랭킹 | MySQL `daily_menu_sales`는 Redis 데이터 유실 후 Redis 랭킹을 재구성하기에 충분한 상태를 유지한다. |
 
-`OrderPaidAnalytics` stores the immutable event ID together with aggregate/order ID, user ID, menu ID, payment amount, consumer group, and processing time. Its identity is `(consumer_group, event_id)`, and `(consumer_group, aggregate_id)` is also unique.
+`OrderPaidAnalytics`는 변경 불가능한 이벤트 ID와 aggregate/order ID, 사용자 ID, 메뉴 ID, 결제 금액, consumer group, 처리 시각을 함께 저장한다. 식별자는 `(consumer_group, event_id)`이며, `(consumer_group, aggregate_id)`도 고유하다.
 
-An Outbox event in `FAILED` may return to `READY` only through the application-owned audited recovery operation. Recovery records the operator, reason, previous retry count/error, and recovery time before resetting retry and claim state in the same transaction.
+`FAILED` 상태의 Outbox 이벤트는 애플리케이션이 소유한 감사 가능한 복구 작업을 통해서만 `READY`로 돌아갈 수 있다. 복구는 동일 트랜잭션에서 재시도 및 claim 상태를 재설정하기 전에 운영자, 사유, 이전 재시도 횟수/오류, 복구 시각을 기록한다.
 
-Load and failure tests are invalid if any invariant fails, even when their throughput or latency target is met.
+처리량이나 지연 시간 목표를 충족하더라도 불변식 하나라도 실패하면 부하 및 장애 테스트는 무효다.
 
-## Glossary
+## 용어집
 
-| Term | Meaning |
+| 용어 | 의미 |
 |---|---|
 | Point | 결제에 사용하는 선불 잔액. 1원은 1P |
-| Distributed Lock | 다수 서버 환경에서 공유 자원 접근을 직렬화하는 락 |
+| 분산 락 | 다수 서버 환경에서 공유 자원 접근을 직렬화하는 락 |
 | Outbox | DB 트랜잭션과 이벤트 발행을 분리하기 위한 이벤트 저장 테이블 |
-| Popular Menu | 최근 7일 주문 횟수 기준 TOP 메뉴 |
+| 인기 메뉴 | 최근 7일 주문 횟수 기준 TOP 메뉴 |
 
-## Open Questions
+## 미해결 질문
 
-- Open Question: 주문 취소/환불 도메인을 추후 포함할 것인가?
-- Open Question: 메뉴 품절 상태를 구현할 것인가, 문서상 상태만 둘 것인가?
-
+- 미해결 질문: 주문 취소/환불 도메인을 추후 포함할 것인가?
+- 미해결 질문: 메뉴 품절 상태를 구현할 것인가, 문서상 상태만 둘 것인가?

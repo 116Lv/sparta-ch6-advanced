@@ -1,90 +1,79 @@
-# ADR-003: Use Redis Sorted Set with MySQL Daily Menu Aggregation
+# ADR-003: MySQL 일별 메뉴 집계와 Redis Sorted Set 사용
 
-## Status
+## 상태
 
 Accepted
 
-## Context
+## 배경
 
-The popular menu API must return the top 3 menus for the last 7 days, and menu order counts must be accurate.
+인기 메뉴 API는 최근 7일의 상위 3개 메뉴를 반환해야 하며 메뉴 주문 수는 정확해야 한다.
 
-Querying the full orders table with `GROUP BY` on every request is simple but can become expensive as order volume grows. Using only Redis Sorted Set gives fast ranking reads but makes recovery and correctness harder to explain if Redis data is lost.
+매 요청마다 전체 orders 테이블을 `GROUP BY`로 조회하는 방식은 단순하지만 주문량이 증가하면 비용이 커질 수 있다. Redis Sorted Set만 사용하면 순위 조회는 빠르지만 Redis 데이터가 손실될 때 복구와 정확성을 설명하기 어려워진다.
 
-## Decision
+## 결정
 
-Use both:
+다음을 모두 사용한다.
 
-- Redis Sorted Set for fast popular menu reads
-- MySQL `daily_menu_sales` table as the durable aggregation and recovery source
+- 빠른 인기 메뉴 조회를 위한 Redis Sorted Set
+- 내구성 있는 집계 및 복구 원천으로서의 MySQL `daily_menu_sales` 테이블
 
-Daily Redis key format:
+일별 Redis 키 형식:
 
 ```txt
 popular-menu:{yyyy-MM-dd}
 ```
 
-On successful order:
+주문 성공 시:
 
-1. Increment MySQL `daily_menu_sales`.
-2. After commit, take the date-scoped ranking lock, read the durable count, and assign that
-   absolute value to the Redis member. The same atomic Redis operation publishes a new generation
-   and a completeness marker containing the current durable total and member count.
+1. MySQL `daily_menu_sales`를 증가시킨다.
+2. 커밋 후 날짜 범위 순위 락을 획득하고, 내구성 있는 수를 읽어 Redis 멤버에 해당 절대 값을 할당한다. 동일한 원자적 Redis 작업이 현재 내구성 총계와 멤버 수를 포함하는 새 generation 및 완전성 마커를 발행한다.
 
-For the recent 7-day query:
+최근 7일 조회 시:
 
-1. Read per-date MySQL total/member metadata and require each
-   `popular-menu:complete:{yyyy-MM-dd}` marker to match it.
-2. Union the last 7 daily Sorted Sets only when the range is complete.
-3. Read top 3 by score and fetch menu details from MySQL.
-4. Validate daily ZSET cardinality and score sum, and require marker generations to remain
-   identical across the union read.
-5. If metadata, data, generation, or menu resolution is invalid, return the MySQL aggregate and
-   rebuild all seven dates.
+1. 날짜별 MySQL 총계/멤버 메타데이터를 읽고 각 `popular-menu:complete:{yyyy-MM-dd}` 마커가 이에 일치하도록 요구한다.
+2. 범위가 완전한 경우에만 최근 7개 일별 Sorted Set을 합친다.
+3. 점수 기준 상위 3개를 읽고 MySQL에서 메뉴 상세를 가져온다.
+4. 일별 ZSET 카디널리티와 점수 합계를 검증하고, 합집합 조회 전체에서 마커 generation이 동일하게 유지되도록 요구한다.
+5. 메타데이터, 데이터, generation 또는 메뉴 확인이 유효하지 않으면 MySQL 집계를 반환하고 7일 전체를 재구성한다.
 
-If Redis data is unavailable or lost, rebuild ranking from MySQL `daily_menu_sales`.
+Redis 데이터를 사용할 수 없거나 손실한 경우 MySQL `daily_menu_sales`에서 순위를 재구성한다.
 
-Redis Sentinel is not part of the confirmed implementation. It is a future availability option if automatic promotion of a replica is required after Redis master failure. Sentinel monitors and coordinates failover; it does not shard data, distribute write load across masters, or increase write throughput. Sharding or write distribution would require a separate Redis Cluster or application-level partitioning decision.
+Redis Sentinel은 확정된 구현의 일부가 아니다. Redis 마스터 장애 후 레플리카의 자동 승격이 필요할 경우 미래의 가용성 옵션이다. Sentinel은 장애 조치를 모니터링하고 조정한다. 데이터를 샤딩하거나 마스터 간 쓰기 부하를 분산하거나 쓰기 처리량을 높이지는 않는다. 샤딩 또는 쓰기 분산에는 별도의 Redis Cluster 또는 애플리케이션 수준 파티셔닝 결정이 필요하다.
 
-## Alternatives Considered
+## 검토한 대안
 
-- Orders table direct aggregation: strongest simplicity, but potentially expensive at read time.
-- Redis Sorted Set only: fast reads, but weak recovery story.
-- MySQL daily aggregate only: durable and accurate, but less suitable for frequent ranking reads.
-- Redis Sentinel: can automate master failover when replicas exist, but adds operational complexity and does not solve sharding or write-load distribution. Deferred until availability requirements and failure tests justify it.
+- orders 테이블 직접 집계: 가장 단순하지만 읽기 시 비용이 커질 수 있다.
+- Redis Sorted Set만 사용: 빠른 읽기를 제공하지만 복구 방안이 약하다.
+- MySQL 일별 집계만 사용: 내구성과 정확성은 있지만 빈번한 순위 조회에는 덜 적합하다.
+- Redis Sentinel: 레플리카가 있을 때 마스터 장애 조치를 자동화할 수 있지만 운영 복잡성을 더하고 샤딩 또는 쓰기 부하 분산을 해결하지 않는다. 가용성 요구 사항과 장애 테스트가 정당화할 때까지 보류한다.
 
-## Consequences
+## 결과
 
-### Positive
+### 긍정적 결과
 
-- Popular menu read path is fast.
-- MySQL remains the durable source for counts.
-- Redis recovery is possible.
-- The design clearly separates performance storage from source-of-truth storage.
+- 인기 메뉴 읽기 경로가 빠르다.
+- MySQL이 수치의 내구성 있는 원천으로 남는다.
+- Redis 복구가 가능하다.
+- 설계가 성능 저장소와 원천 데이터 저장소를 명확히 분리한다.
 
-### Negative
+### 부정적 결과
 
-- Write path updates both MySQL and Redis.
-- Redis update failure needs reconciliation.
-- Daily key TTL and rebuild policy must be defined.
+- 쓰기 경로가 MySQL과 Redis 모두를 업데이트한다.
+- Redis 업데이트 실패에는 조정이 필요하다.
+- 일별 키 TTL과 재구성 정책을 정의해야 한다.
 
-### Neutral / Trade-offs
+### 중립적 결과 / 트레이드오프
 
-- If MySQL update succeeds and Redis update fails, the system remains recoverable.
-- The API may need fallback behavior if Redis is down.
-- Sentinel must not be described as a current dependency or as a scaling mechanism unless a later ADR accepts and verifies it.
+- MySQL 업데이트가 성공하고 Redis 업데이트가 실패해도 시스템은 복구 가능하다.
+- Redis가 중단되면 API에 폴백 동작이 필요할 수 있다.
+- 후속 ADR이 이를 수용하고 검증하지 않는 한 Sentinel을 현재 의존성 또는 확장 메커니즘으로 설명해서는 안 된다.
 
-## Follow-up
+## 후속 조치
 
-- Daily ranking keys use a 14-day TTL; temporary union keys use a 1-minute TTL and are deleted
-  after the query.
-- Daily completeness markers use the same 14-day TTL. A complete empty date has a marker and no
-  live ZSET.
-- `RankingRebuildService` reconstructs every date under the same date-scoped lock used by
-  post-commit updates. It atomically replaces or deletes the live generation before publishing
-  the marker.
-- A missing marker, Redis failure, or unresolved cached menu serves the MySQL aggregate and
-  attempts reconstruction without changing the committed order result.
-- Add tests for last-7-days calculation.
-- Add tests for Redis rebuild from `daily_menu_sales`.
-- Test Redis unavailability and recovery first; use the evidence to decide whether a later Sentinel ADR is warranted.
-
+- 일별 순위 키는 14일 TTL을 사용한다. 임시 합집합 키는 1분 TTL을 사용하며 조회 후 삭제한다.
+- 일별 완전성 마커는 같은 14일 TTL을 사용한다. 완전한 빈 날짜에는 마커가 있고 활성 ZSET은 없다.
+- `RankingRebuildService`는 커밋 후 업데이트에 사용한 것과 같은 날짜 범위 락 아래에서 각 날짜를 재구성한다. 마커를 발행하기 전에 활성 generation을 원자적으로 교체하거나 삭제한다.
+- 마커 누락, Redis 실패 또는 확인할 수 없는 캐시 메뉴는 MySQL 집계를 제공하고 커밋된 주문 결과를 변경하지 않고 재구성을 시도한다.
+- 최근 7일 계산 테스트를 추가한다.
+- `daily_menu_sales`에서 Redis를 재구성하는 테스트를 추가한다.
+- Redis 비가용성과 복구를 먼저 테스트하고, 증거를 사용해 후속 Sentinel ADR이 필요한지 결정한다.

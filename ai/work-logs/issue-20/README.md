@@ -68,6 +68,7 @@ legitimately promoted to `VERIFIED`; failure triage and regression correction ar
 - [Failure Fixer](failure-fixer.md): done; stale CI contracts corrected with RED/GREEN and refreshed CI evidence
 - [Independent Reviewer](independent-reviewer.md): done; CI-fix diff Critical 0, Important 0, Minor 0
 - [Final Verifier](final-verifier.md): done; five finalized runs, registry reconciliation, Phase 2C and QA evidence
+- [Archived predecessor audit](archive/cafe-ordering-consistency-audit/README.md): 선행 정적 감사 기록; Issue #20의 런타임 검증으로 대체·완료
 
 ## Current State
 
@@ -76,7 +77,7 @@ reconciliation, Phase 2C, and implementation QA were completed. Tracking is `iss
 fallback migration is complete. The stale helper-test assumptions and migrated evidence pointers
 are corrected, the full 551-test Ubuntu helper suite is green, independent review reports
 Critical 0 / Important 0 / Minor 0, and refreshed GitHub Actions run `29494202619` passed. The
-workflow status is restored to `done`; PR review/merge and Issue closure remain pending.
+workflow status is restored to `done`. GitHub Issue #20 was subsequently closed on 2026-07-20.
 
 ## Decisions
 
@@ -128,7 +129,7 @@ workflow status is restored to `done`; PR review/merge and Issue closure remain 
 ## Blockers
 
 - Implementation blockers: none.
-- PR merge and Issue #20 closure remain repository-owner workflow steps.
+- Issue #20 closure was completed by the repository owner on 2026-07-20. Historical PR review/merge notes remain execution history rather than current Issue state.
 
 ## Next Handoff
 

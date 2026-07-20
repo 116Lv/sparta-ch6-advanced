@@ -1,88 +1,84 @@
-# ADR-001: Use Redisson Distributed Lock for User Point Mutations
+# ADR-001: 사용자 포인트 변경에 Redisson 분산 락 사용
 
-## Status
+## 상태
 
 Accepted
 
-## Context
+## 배경
 
-The coffee order system must work correctly when multiple application server instances are running.
+커피 주문 시스템은 여러 애플리케이션 서버 인스턴스가 실행 중인 경우에도 올바르게 동작해야 한다.
 
-Point charge and point payment both mutate the same user point balance. If the same user sends concurrent charge/order requests, the system must not produce a negative balance, lost update, or duplicated deduction.
+포인트 충전과 포인트 결제는 모두 같은 사용자 포인트 잔액을 변경한다. 같은 사용자가 동시에 충전/주문 요청을 보내면 시스템은 음수 잔액, 업데이트 유실 또는 중복 차감을 만들어서는 안 된다.
 
-JVM-local locking such as `synchronized` cannot protect shared state across multiple server instances.
+`synchronized`와 같은 JVM 로컬 락은 여러 서버 인스턴스에 걸쳐 공유 상태를 보호할 수 없다.
 
-MySQL pessimistic row locking is also valid in a multi-instance deployment because every API instance coordinates through the same database. The decision is therefore not based on a claim that database locking only works on one instance. The comparison is where contention is admitted and how quickly excess contention is rejected.
+모든 API 인스턴스가 같은 데이터베이스를 통해 조정하므로 MySQL 비관적 행 락도 다중 인스턴스 배포에서 유효하다. 따라서 이 결정은 데이터베이스 락이 하나의 인스턴스에서만 동작한다는 주장에 근거하지 않는다. 비교 대상은 경합을 어디에서 받아들이고 과도한 경합을 얼마나 빨리 거부하는지다.
 
-## Decision
+## 결정
 
-Use Redisson distributed lock for user-level point mutation flows.
+사용자 수준 포인트 변경 흐름에 Redisson 분산 락을 사용한다.
 
-Lock key format:
+락 키 형식:
 
 ```txt
 point:user:{userId}
 ```
 
-The lock protects:
+락이 보호하는 범위:
 
-- point charge
-- point deduction during order/payment
-- charge and order running concurrently for the same user
+- 포인트 충전
+- 주문/결제 중 포인트 차감
+- 같은 사용자에 대해 동시에 실행되는 충전과 주문
 
-The lock does not replace the MySQL transaction, database constraints, or row-level consistency checks. Redisson controls contention before requests enter MySQL and applies a short, explicit acquisition timeout. MySQL still controls atomic persistence and is the final consistency boundary.
+락은 MySQL 트랜잭션, 데이터베이스 제약 조건 또는 행 수준 일관성 검사를 대체하지 않는다. Redisson은 요청이 MySQL에 진입하기 전에 경합을 제어하고 짧고 명시적인 획득 타임아웃을 적용한다. MySQL은 여전히 원자적 영속성을 제어하며 최종 일관성 경계다.
 
-The intended sequence is:
+의도한 순서는 다음과 같다.
 
-1. Acquire `point:user:{userId}` with a bounded wait time.
-2. Start the MySQL transaction only after lock acquisition.
-3. Read and mutate the point row, save history and order/payment data, and commit.
-4. Release only a lock owned by the current execution in a `finally` block.
+1. 제한된 대기 시간으로 `point:user:{userId}`를 획득한다.
+2. 락을 획득한 후에만 MySQL 트랜잭션을 시작한다.
+3. 포인트 행을 읽고 변경하고, 이력과 주문/결제 데이터를 저장한 후 커밋한다.
+4. `finally` 블록에서 현재 실행이 소유한 락만 해제한다.
 
-This choice is conditional on comparative verification. The same contention scenarios must be measured with Redisson and with MySQL pessimistic locking before concluding that the extra Redis dependency is justified.
+이 선택은 비교 검증을 조건으로 한다. 추가 Redis 의존성이 정당화된다고 결론 내리기 전에 Redisson과 MySQL 비관적 락으로 같은 경합 시나리오를 측정해야 한다.
 
-## Alternatives Considered
+## 검토한 대안
 
-- JVM local lock: simple but only works within a single process.
-- MySQL pessimistic lock only: valid across all application instances and provides strong DB-level consistency with fewer infrastructure dependencies, but all contenders occupy the database path and timeout behavior is coupled to database lock settings.
-- MySQL optimistic lock only: useful under low contention, but requires retry policy and can make user-facing payment flows noisy.
-- Redis command-only balance update: fast, but makes Redis the source of truth, which is not desired.
+- JVM 로컬 락: 단순하지만 단일 프로세스 내에서만 동작한다.
+- MySQL 비관적 락만 사용: 모든 애플리케이션 인스턴스에서 유효하고 더 적은 인프라 의존성으로 강한 DB 수준 일관성을 제공하지만, 모든 경쟁자가 데이터베이스 경로를 점유하고 타임아웃 동작은 데이터베이스 락 설정에 결합된다.
+- MySQL 낙관적 락만 사용: 낮은 경합에서는 유용하지만 재시도 정책이 필요하며 사용자 대면 결제 흐름을 불안정하게 만들 수 있다.
+- Redis 명령 전용 잔액 업데이트: 빠르지만 Redis가 원천 데이터가 되므로 원하지 않는다.
 
-## Consequences
+## 결과
 
-### Positive
+### 긍정적 결과
 
-- Works across multiple application instances.
-- Makes user-level critical section explicit.
-- Keeps point consistency policy consistent between charge and payment.
-- Rejects excess same-user contention before it consumes a DB connection or waits on a DB row lock.
-- Allows a short application-level lock acquisition timeout independently of the database lock timeout.
+- 여러 애플리케이션 인스턴스에 걸쳐 동작한다.
+- 사용자 수준 임계 구역을 명시적으로 만든다.
+- 충전과 결제 간 포인트 일관성 정책을 유지한다.
+- 동일 사용자에 대한 과도한 경합을 DB 연결을 점유하거나 DB 행 락을 기다리기 전에 거부한다.
+- 데이터베이스 락 타임아웃과 독립적으로 짧은 애플리케이션 수준 락 획득 타임아웃을 허용한다.
 
-### Negative
+### 부정적 결과
 
-- Redis availability affects point mutation APIs.
-- Lock wait time and lease time must be configured carefully.
-- Incorrect lock release handling can cause stuck or unsafe behavior.
-- The service now crosses two failure boundaries, Redis for admission control and MySQL for persistence.
-- A fixed lease can expire while the transaction is still running, allowing another owner to enter the critical section.
+- Redis 가용성이 포인트 변경 API에 영향을 미친다.
+- 락 대기 시간과 임대 시간은 신중하게 구성해야 한다.
+- 잘못된 락 해제 처리는 교착 또는 안전하지 않은 동작을 일으킬 수 있다.
+- 서비스는 이제 진입 제어를 위한 Redis와 영속성을 위한 MySQL이라는 두 실패 경계를 넘는다.
+- 트랜잭션이 여전히 실행 중인 동안 고정 임대가 만료될 수 있어 다른 소유자가 임계 구역에 진입할 수 있다.
 
-### Neutral / Trade-offs
+### 중립적 결과 / 트레이드오프
 
-- MySQL constraints and transactions are still required.
-- Lock timeout should return a controlled `LOCK_TIMEOUT` response rather than an unexpected 500.
-- Redisson's watchdog can extend a lock acquired without a fixed lease while the owner is healthy, but it is not a fencing mechanism. Client pauses, lost connectivity, owner failure, or watchdog interruption can still create an expiry boundary.
-- The application must never bypass the lock when Redis is unavailable. It must fail in a controlled way unless a separately designed and verified DB-lock fallback is introduced.
-- Database locking remains the simpler baseline and may be preferable if Redisson does not reduce DB pool pressure or tail latency under measured contention.
+- MySQL 제약 조건과 트랜잭션은 여전히 필요하다.
+- 락 타임아웃은 예기치 않은 500 대신 제어된 `LOCK_TIMEOUT` 응답을 반환해야 한다.
+- Redisson의 watchdog은 소유자가 정상인 동안 고정 임대 없이 획득한 락을 연장할 수 있지만, fencing 메커니즘은 아니다. 클라이언트 일시 정지, 연결 유실, 소유자 장애 또는 watchdog 중단은 여전히 만료 경계를 만들 수 있다.
+- Redis를 사용할 수 없을 때 애플리케이션은 절대로 락을 우회해서는 안 된다. 별도로 설계되고 검증된 DB 락 폴백이 도입되지 않는 한 제어된 방식으로 실패해야 한다.
+- 데이터베이스 락은 더 단순한 기준선으로 남으며, 측정된 경합에서 Redisson이 DB 풀 압력이나 꼬리 지연 시간을 줄이지 못하면 더 적합할 수 있다.
 
-## Follow-up
+## 후속 조치
 
-- The implementation uses a 200 ms acquisition wait and Redisson watchdog renewal with a
-  30-second watchdog timeout. It does not pass a fixed lease to `tryLock`, so fixed-lease and
-  watchdog assumptions are not mixed.
-- Unlock first checks `isHeldByCurrentThread()`. Redis acquisition failure never falls through
-  to an unlocked point mutation.
-- Add concurrency tests for same-user multiple orders.
-- Add concurrency tests for charge and order running at the same time.
-- Compare Redisson and MySQL pessimistic locking with identical normal-load and hot-user workloads. Measure throughput, p50/p95/p99 latency, error and timeout rate, lock wait time, and DB connection-pool usage.
-- Inject Redis delay/unavailability and a transaction that approaches or exceeds the lease boundary. Verify that balances never become negative, updates are not lost, and duplicate payment is not created.
-
+- 구현은 200 ms 획득 대기와 30초 watchdog 타임아웃의 Redisson watchdog 갱신을 사용한다. `tryLock`에 고정 임대를 전달하지 않으므로 고정 임대와 watchdog 가정은 혼합되지 않는다.
+- 잠금 해제 전에 `isHeldByCurrentThread()`를 확인한다. Redis 획득 실패는 락이 없는 포인트 변경으로 진행되지 않는다.
+- 동일 사용자의 여러 주문에 대한 동시성 테스트를 추가한다.
+- 충전과 주문이 동시에 실행되는 동시성 테스트를 추가한다.
+- 동일한 정상 부하 및 핫 사용자 워크로드로 Redisson과 MySQL 비관적 락을 비교한다. 처리량, p50/p95/p99 지연 시간, 오류 및 타임아웃 비율, 락 대기 시간, DB 커넥션 풀 사용량을 측정한다.
+- Redis 지연/비가용성과 임대 경계에 근접하거나 이를 초과하는 트랜잭션을 주입한다. 잔액이 절대로 음수가 되지 않고, 업데이트가 유실되지 않으며, 중복 결제가 생성되지 않는지 검증한다.

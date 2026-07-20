@@ -4,6 +4,10 @@ Repository work logs are the durable execution and recovery record for delegated
 
 Follow [github-issue-planning.md](../github-issue-planning.md) and [work-log-template.md](../work-log-template.md). `ai/document-routing.md` is always the ownership gate before issue creation or dispatch.
 
+## 현재 상태를 확인하는 기준
+
+현재 상태는 먼저 [index.md](index.md)를 보고, 그다음 각 `issue-{number}/README.md`의 frontmatter를 확인한다. 역할별 로그와 본문의 `pending`, `blocked`, `Issue remains open` 같은 문구는 해당 시점의 실행 이력일 수 있으며 현재 상태를 뜻하지 않는다. GitHub Issue가 종료된 뒤에는 인덱스와 Issue 요약을 `issue_backed`, `status: done`, reconciliation 완료 상태로 갱신하되, 실패·검증 이력 자체는 삭제하지 않는다.
+
 When Phase 2B skill or handoff reuse applies, issue summaries and role logs must carry `skill_ids`, `handoff_state_ref`, `reusable_context_refs`, `not_run_project_commands`, and `github_reconciliation_status`. Use `ai/agent-handoff.json`, `ai/skill-catalog.json`, and `ai/workflow-cache.json` before rediscovering reusable workflow context.
 
 When Phase 2C verification gates apply, issue summaries and role logs must link `ai/verification-gates.md`, canonical `ai/verification-policy.json`, and `scripts/ai/verification-gate.sh`. Record verification completeness, task/change applicability, and the `NOT_CONFIGURED`, `NOT_APPLICABLE`, `BLOCKED`, and `FAIL` mapping by change type. Product commands remain NOT RUN for static/helper gates.

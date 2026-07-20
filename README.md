@@ -1,277 +1,153 @@
 # Coffee Shop Order System
 
-> 이 문서는 구현의 설계 기준과 현재 적용된 정합성 정책을 함께 설명합니다.
+다중 서버 환경에서 포인트 충전, 커피 주문·결제, 인기 메뉴 집계, 주문 이벤트 전송을 일관성 있게 처리하는 Spring Boot 백엔드 프로젝트입니다.
 
-다수 서버 환경에서도 안정적으로 동작하는 커피숍 주문 시스템을 설계하고 구현한다.
+이 과제는 API 구현뿐 아니라 동시 요청에서 포인트 잔액을 지키는 방법, 주문과 이벤트를 함께 보존하는 방법, Redis 장애 후 인기 메뉴를 복구하는 방법을 설계하고 검증하는 데 초점을 둡니다.
 
-이 과제의 핵심은 API 구현 자체보다, 동시성, 데이터 일관성, 확장성 관점에서 어떤 선택을 했고 왜 그 선택이 적절한지 설명하는 것이다. 따라서 본 프로젝트는 기능 요구사항뿐 아니라 설계 의도, 대안 비교, 기술 선택 이유를 문서와 코드에 함께 남긴다.
+## 1. 프로젝트 소개와 핵심 요구사항
 
-## 1. 요구사항 요약
+### 필수 기능
 
-### 필수 API
-
-| API | 설명 |
+| 기능 | 설명 |
 |---|---|
-| 커피 메뉴 목록 조회 | 메뉴 ID, 이름, 가격을 조회한다. |
-| 포인트 충전 | 사용자 식별값과 충전 금액을 받아 포인트를 충전한다. 1원은 1P로 계산한다. |
-| 커피 주문/결제 | 사용자 식별값과 메뉴 ID를 받아 주문을 생성하고 포인트로 결제한다. |
-| 인기 메뉴 조회 | 최근 7일간 주문 횟수가 많은 메뉴 3개를 조회한다. |
+| 커피 메뉴 조회 | 판매 중인 메뉴의 ID, 이름, 가격을 조회합니다. |
+| 포인트 충전 | 사용자 식별값과 충전 금액을 받아 1원당 1P를 충전합니다. |
+| 주문·결제 | 메뉴를 주문하고 사용자의 포인트로 결제합니다. |
+| 인기 메뉴 조회 | 최근 7일간 주문 횟수가 많은 메뉴 3개를 조회합니다. |
 
-### 도전 요구사항
+### 설계 요구사항
 
-- 다수 서버 인스턴스 환경에서도 기능이 깨지지 않아야 한다.
-- 포인트 충전/차감과 주문 생성에서 동시성 이슈를 고려한다.
-- 주문, 결제, 이벤트 전송, 인기 메뉴 집계의 데이터 일관성을 고려한다.
-- 각 기능과 제약사항에 대한 테스트를 작성한다.
+- 여러 애플리케이션 인스턴스가 실행되어도 포인트와 주문 데이터가 깨지지 않아야 합니다.
+- 포인트 충전·차감과 주문 생성의 동시성 문제를 처리해야 합니다.
+- 주문, 결제, 이벤트 발행, 인기 메뉴 집계의 일관성과 장애 복구를 고려해야 합니다.
+- 정상·실패·동시성·외부 인프라 장애 경로를 테스트해야 합니다.
+
+로그인 기능은 과제 범위에 포함되지 않습니다. API의 `userId`는 인증 수단이 아니라 미리 준비한 포인트 계정의 사용자를 식별하는 값입니다.
 
 ## 2. 기술 스택
 
-| 영역 | 선택 |
+| 영역 | 기술 |
 |---|---|
-| Backend | Spring Boot |
-| Language | Java |
-| Java Version | 21 |
-| Spring Boot Version | 4.1.0 |
-| Build Tool | Gradle |
-| Base Package | `com.ch6.cafe` |
-| Persistence | Spring Data JPA, QueryDSL |
-| Database | MySQL |
-| Distributed Lock | Redisson |
+| Backend | Spring Boot `4.1.0` |
+| Language | Java `21` |
+| Build | Gradle Wrapper `9.0.0` |
+| Persistence | Spring Data JPA, QueryDSL, Flyway |
+| Database | MySQL `8.4` |
+| Lock | Redisson, MySQL 트랜잭션·제약조건 |
 | Cache / Ranking | Redis Sorted Set |
 | Event Streaming | Kafka |
-| Reliability Pattern | Transactional Outbox |
-| Test | JUnit 5, Spring Boot Test, Testcontainers |
+| Reliability | Transactional Outbox, consumer 멱등성 |
+| Test | JUnit 5, Spring Boot Test, Testcontainers, k6 |
 
-런타임은 로드밸런서 뒤 stateless API 다중 인스턴스를 전제로 한다. 패키지는 `com.ch6.cafe.global`과 `com.ch6.cafe.domain.{menu,point,order,ranking,outbox}` 아래에서 도메인별 `controller -> service -> repository` 방향을 사용한다. 상세 토폴로지는 [시스템 아키텍처](docs/06-system-architecture.md), 패키지 결정은 [ADR-004](adr/ADR-004-domain-packages-three-layer.md), 부하·장애·측정 계획은 [품질 및 운영 규칙](docs/09-quality-operations-and-rules.md)을 따른다.
+애플리케이션은 `com.ch6.cafe.global`과 `com.ch6.cafe.domain.{menu,point,order,ranking,outbox}`로 나누고, 각 도메인에서 `controller -> service -> repository` 방향을 사용합니다.
 
-## 3. 기술 선택 이유
+## 3. 로컬 실행 방법
 
-### Spring Boot
-
-Spring Boot는 REST API, 트랜잭션, JPA, Kafka, Redis 연동을 안정적으로 지원한다. 과제의 핵심이 프레임워크 자체 구현이 아니라 주문/결제 도메인의 일관성 보장이므로, 검증된 생태계를 활용해 비즈니스 로직과 장애 대응 전략에 집중한다.
-
-### JPA + QueryDSL
-
-기본적인 메뉴, 포인트, 주문 저장은 JPA Repository로 충분하다. JPA는 엔티티 중심으로 도메인 상태 변경을 표현하기 좋고, 트랜잭션 경계 안에서 변경 감지를 활용할 수 있다.
-
-다만 인기 메뉴 조회, 기간 조건, 집계성 조회처럼 조건이 늘어날 수 있는 영역은 QueryDSL을 사용한다. 문자열 기반 JPQL보다 타입 안정성이 높고, 동적 조건을 조합하기 쉬워 유지보수성이 좋다.
-
-### MySQL
-
-과제 조건상 DB는 MySQL을 사용한다. 주문, 결제, 포인트 이력, Outbox 이벤트는 정합성이 중요한 데이터이므로 Redis나 Kafka만을 source of truth로 두지 않는다. MySQL을 기준 저장소로 사용하고, Redis와 Kafka는 조회 성능 및 비동기 전송을 위한 보조 컴포넌트로 둔다.
-
-### Redisson Distributed Lock
-
-DB 비관적 락도 공용 MySQL을 통해 다중 인스턴스에서 유효하다. Redisson은 DB 진입 전에 같은 사용자 요청의 경합을 제어하고 짧은 획득 timeout을 적용하기 위해 선택한다. MySQL 트랜잭션과 제약은 최종 정합성 경계로 유지한다.
-
-이 선택은 Redis 의존성, lease 만료, watchdog 중단, Redis와 MySQL의 이중 장애 경계를 추가한다. 따라서 동일한 일반 부하·hot key·충전/주문 경합을 DB 비관적 락과 비교해 DB pool 압력과 tail latency 개선이 비용을 정당화하는지 검증한다. 상세 결정과 검증 조건은 [ADR-001](adr/ADR-001-redisson-distributed-lock.md)에 있다.
-
-### Transactional Outbox
-
-주문, 결제, 포인트 이력과 Outbox 이벤트를 같은 MySQL 트랜잭션에 저장한다. 여러 Publisher 인스턴스는 `READY` row를 짧은 트랜잭션으로 claim하고, 장애로 만료된 claim은 다시 회수한다. Kafka 발행 성공 후 상태 기록 전에 장애가 나면 중복 발행될 수 있으므로 event ID 기반 consumer 멱등성이 필수다.
-
-### Kafka
-
-Kafka는 Outbox와 별개의 선택이다. 이벤트 보존과 replay, 여러 consumer group의 독립 소비, partition 병렬화, 같은 partition key의 순서 보존이 필요해 선택한다. consumer 인스턴스 장애 시 group rebalance가 partition을 동적으로 재할당한다. replay가 필요 없고 짧은 작업 전달, 우선순위, 복잡한 routing이 중심이면 RabbitMQ 같은 메시지 큐가 더 적합할 수 있다. 두 선택의 상세 근거와 trade-off는 [ADR-002](adr/ADR-002-transactional-outbox-kafka.md)에 있다.
-
-### Redis Sorted Set + 일별 집계 테이블
-
-인기 메뉴는 최근 7일간 주문 횟수가 정확해야 한다. 단순히 주문 테이블을 매 요청마다 `GROUP BY`로 집계할 수도 있지만, 주문량이 늘어나면 인기 메뉴 조회 API의 비용이 커진다.
-
-고려한 선택지는 다음과 같다.
-
-| 선택지 | 장점 | 한계 |
-|---|---|---|
-| 주문 테이블 직접 집계 | 구현이 단순하고 정합성이 높다. | 요청마다 집계 비용이 발생한다. 데이터가 많아질수록 느려진다. |
-| Redis Sorted Set만 사용 | 조회가 빠르다. | Redis 장애나 유실 시 복구 기준이 약하다. |
-| 일별 집계 테이블만 사용 | DB 기준으로 정합성 검증이 쉽다. | 실시간 랭킹 조회 성능은 Redis보다 낮을 수 있다. |
-| Redis Sorted Set + 일별 집계 테이블 | 빠른 조회와 복구 가능성을 함께 가진다. | 쓰기 경로와 보정 작업이 추가된다. |
-
-본 프로젝트는 주문 트랜잭션에서 MySQL의 `daily_menu_sales`를 먼저 누적한다. commit 후에는 해당 날짜의 MySQL durable count와 total/member metadata를 다시 읽고, 날짜별 lock 아래에서 Lua로 Redis Sorted Set score를 절대값 대입(`ZADD`)하면서 completeness marker를 함께 교체한다. 인기 메뉴 조회는 Redis를 우선 사용하고, Redis 장애 또는 데이터 불일치 시 MySQL 일별 집계 테이블을 기준으로 응답하고 복구할 수 있게 설계한다.
-
-Redis Sentinel은 현재 확정 구현이 아니라 향후 master 장애 자동 전환 대안이다. Sentinel은 sharding이나 쓰기 부하 분산 수단이 아니다. 상세 범위는 [ADR-003](adr/ADR-003-redis-sorted-set-daily-aggregation.md)에 있다.
-
-## 로컬 환경과 지원 실행 경로
-
-### 사전 조건
+### 준비물
 
 - Java 21
-- Docker Engine 또는 Docker Desktop과 Docker Compose
-- Windows 호환 shell이 아닌 실제 POSIX `bash` 환경
-- Python 3와 `jsonschema` 패키지(저장소 workflow helper 실행에 필요)
-- 저장소의 POSIX Gradle Wrapper 실행 권한
+- Docker Engine 또는 Docker Desktop
+- Docker Compose
+- Windows PowerShell 또는 POSIX shell
 
-### 로컬 인프라와 기본 포트
+Windows·WSL·Docker 환경의 상세 기준은 [로컬 개발 환경 문서](docs/local-development-environment.md)를 참고하세요.
 
-루트의 `docker-compose.yml`은 MySQL, Redis, Kafka를 loopback 주소에만 노출하는 로컬 개발용 의존성 구성이다. 기본값은 다음과 같다.
+### 3.1 의존성 실행
 
-| 서비스 | 주소 |
-|---|---|
-| MySQL | `127.0.0.1:3306` |
-| Redis | `127.0.0.1:6379` |
-| Kafka | `127.0.0.1:9092` |
+저장소 루트에서 MySQL, Redis, Kafka를 실행합니다.
 
-Compose 값은 다음 환경변수로 바꿀 수 있다.
+```powershell
+docker compose up -d
+docker compose ps
+```
 
-- MySQL: `CAFE_MYSQL_DATABASE`, `CAFE_MYSQL_USER`, `CAFE_MYSQL_PASSWORD`, `CAFE_MYSQL_ROOT_PASSWORD`, `CAFE_MYSQL_PORT`
-- Redis: `CAFE_REDIS_PORT`
-- Kafka: `CAFE_KAFKA_PORT`
+기본 연결 정보는 다음과 같습니다.
 
-`CAFE_*`는 Compose 컨테이너 설정과 host 포트만 바꾼다. `src/main/resources/application.yml`의 datasource, Spring Data Redis, Redisson, Kafka 연결 정보는 자동으로 바뀌지 않는다. 처음에는 기본값 사용을 권장하며, 값을 바꾸면 Spring datasource/Redis/Kafka와 `redisson.address`도 같은 주소, 포트, database, credential로 맞춰야 한다.
+| 서비스 | 주소 | 기본 계정 |
+|---|---|---|
+| MySQL | `127.0.0.1:3306` | database `cafe`, user `cafe`, password `cafe` |
+| Redis | `127.0.0.1:6379` | - |
+| Kafka | `127.0.0.1:9092` | - |
 
-일반 로컬 인프라는 `docker-compose.yml`로 구성하지만, 현재 command registry에는 독립적인 인프라 시작 명령과 애플리케이션 개발 서버 명령이 등록되어 있지 않다. 특히 `server.dev`는 `UNKNOWN`/`UNAVAILABLE`이므로 검증되지 않은 앱 시작 명령을 문서에서 만들지 않는다.
+Compose 포트와 MySQL 계정은 `CAFE_MYSQL_*`, `CAFE_REDIS_PORT`, `CAFE_KAFKA_PORT`로 바꿀 수 있습니다. 값을 바꾸면 `src/main/resources/application.yml`의 datasource, Redis, Redisson, Kafka 연결 정보도 같은 값으로 맞춰야 합니다.
 
-### 애플리케이션 포함 실제 실행
+### 3.2 Spring Boot 애플리케이션 실행
 
-현재 애플리케이션까지 포함해 실제로 실행하는 지원 경로는 command registry의 no-argument `verify.e2e`다. 실제 POSIX `bash`에서 다음과 같이 매번 고유한 run ID로 runner session을 만들고 실행한다.
+Windows PowerShell:
+
+```powershell
+.\gradlew.bat bootRun
+```
+
+Linux 또는 WSL:
 
 ```bash
-RUN_ID="verify-local-e2e-$(date +%Y%m%d%H%M%S)-$$"
-bash scripts/ai/command-runner.sh start \
-  --run-id "$RUN_ID" \
-  --task-key local-e2e-verification
-bash scripts/ai/command-runner.sh run verify.e2e \
-  --run-id "$RUN_ID"
+./gradlew bootRun
 ```
 
-이 명령은 먼저 기존 단일 인스턴스 black-box 시나리오를 보존 실행하고, 이어서 `docker-compose.multi-instance.yml`의 공유 MySQL·Redis·Kafka, `app-1`/`app-2`, `nginx:1.30.3-alpine`, `grafana/k6:2.1.0` 구성을 실행하도록 작성되어 있다. nginx가 유일한 host endpoint이며, k6는 Compose profile의 일회성 컨테이너이므로 host에 k6를 설치할 필요가 없다. 시나리오는 `scripts/k6/multi-instance.js`, machine-readable 결과는 host의 `build/reports/k6/<compose-project>/k6-summary.json`(container의 `/results/k6-summary.json`)에 기록되고 runner stdout에도 출력된다.
+애플리케이션은 종료할 때까지 계속 실행되며 기본 주소는 `http://localhost:8080`입니다. 시작 과정에서 Flyway가 `src/main/resources/db/migration/`의 스키마를 적용합니다.
 
-다중 인스턴스 시나리오는 두 upstream 분산, bounded normal/hot-key traffic, 한 인스턴스 중지 후 처리, fixture 범위의 포인트·주문·Outbox·consumer 멱등성, Redis 유실 후 MySQL 기준 인기 메뉴 복구를 확인한다. fresh finalized run `verify-20260717-assignment-p2-e2e-03`의 attempt `1a5979e9-f360-4804-8bb6-8f1a2d20c224`는 exit code 0이었고, k6는 60 requests, 120 checks, 실패 0을 기록했다. finalization은 `INTEGRITY_ONLY`, `completenessEvaluated: false`이므로 artifact 무결성을 확인할 뿐 전체 검증 완전성을 자체적으로 증명하지 않는다.
+종료할 때는 애플리케이션 터미널에서 `Ctrl+C`를 누릅니다. 로컬 의존성까지 내리려면 다음 명령을 실행합니다.
 
-이 결과는 처리량·latency SLO, publisher fairness, 모든 claim transition의 관찰, Kafka exactly-once publication을 증명하지 않는다. 관측 baseline은 6.44491566218543 requests/s, p50 6.7699985 ms, p95 56.77538449999978 ms, p99 761.2199300399985 ms이며 합격 목표로 해석하지 않는다.
-
-성공·실패와 관계없이 구성은 자동 정리되므로 검증이 끝나면 애플리케이션도 종료된다. 따라서 이는 AI/자동화가 사용할 수 있는 전체 실행 검증 경로이지, 계속 띄워 두는 일반 개발 서버가 아니다. 장기 실행용 `server.dev`는 여전히 미등록·미지원이다.
-
-## 검증
-
-AI 또는 자동화가 Gradle, Docker Compose, HTTP 등 제품 명령을 실행할 때는 직접 호출하지 않고 실제 POSIX `bash`에서 `scripts/ai/command-runner.sh`와 등록된 `verify.*` 명령을 사용한다. 각 검증은 재사용하지 않는 고유 run ID로 별도 세션을 만든다.
-
-```bash
-RUN_ID=verify-submission-unit-20260716-01
-bash scripts/ai/command-runner.sh start \
-  --run-id "$RUN_ID" \
-  --task-key submission-verification
-bash scripts/ai/command-runner.sh run verify.unit \
-  --run-id "$RUN_ID"
+```powershell
+docker compose down
 ```
 
-다른 검증도 같은 방식으로 `RUN_ID` 값을 매번 새 고유 ID로 바꾸고, 각각 별도 session에서 실행한다.
+볼륨의 MySQL 데이터를 함께 지우려는 경우에만 `docker compose down -v`를 사용하세요.
 
-| 등록 명령 | 검증 범위 |
-|---|---|
-| `verify.build` | 컴파일·패키징 가능 여부 |
-| `verify.unit` | 빠른 단위·슬라이스 테스트 |
-| `verify.integration` | MySQL·Redis·Kafka Testcontainers 통합 테스트 |
-| `verify.api-smoke` | random port에서 실제 HTTP API 계약 |
-| `verify.e2e` | 보존된 단일 인스턴스 후 다중 인스턴스·nginx·Docker k6 black-box 흐름 |
+### 3.3 API 호출용 샘플 데이터 준비
 
-`start`는 run session을 만들고 `run`은 명령 attempt와 stdout/stderr, command result를 남긴다. 이 두 단계만으로 검증이 최종 확정되거나 `.ai-runs/$RUN_ID/run.json`과 `artifact-manifest.json`이 생기는 것은 아니다.
+Flyway migration은 테이블을 만들지만 사용자와 메뉴를 자동으로 넣지 않습니다. 빈 DB에서 API를 호출하려면 다음 명령으로 사용자와 판매 중인 메뉴를 한 건씩 추가합니다.
 
-### 검증 결과 확정
-
-finalization에는 `ai/schemas/done-claim.schema.json`을 만족하는 claim 입력 파일이 필요하다. 파일은 symlink가 아닌 regular file이어야 하고 해당 run 디렉터리 안의 repository-relative 경로에 있어야 한다. claim의 `$id`는 `.ai-runs/$RUN_ID/done-claim.json`, `runId`와 `taskKey`는 OPEN session과 일치해야 하며, PASS check와 evidence reference는 실제 session artifact를 가리켜야 한다. 예를 들어 claim을 `.ai-runs/$RUN_ID/claim-input.json`에 준비했다면 다음 별도 단계로 finalize하고 무결성을 다시 확인한다.
-
-```bash
-bash scripts/ai/done-claim-check.sh prepare "$RUN_ID" \
-  --claim ".ai-runs/$RUN_ID/claim-input.json"
-bash scripts/ai/done-claim-check.sh verify-finalized "$RUN_ID"
+```powershell
+docker compose exec -T mysql mysql -ucafe -pcafe cafe -e "INSERT INTO users(created_at,updated_at) VALUES(NOW(),NOW()); SET @uid=LAST_INSERT_ID(); INSERT INTO menus(name,price,status,created_at,updated_at) VALUES('Americano',4500,'ON_SALE',NOW(),NOW()); SET @mid=LAST_INSERT_ID(); SELECT @uid AS userId,@mid AS menuId;"
 ```
 
-`prepare`가 성공하면 finalized `run.json`과 `artifact-manifest.json`이 게시되고, `verify-finalized`는 retained receipt·journal·manifest를 기준으로 directory closure와 digest를 읽기 전용으로 재검증한다. 다만 이 Phase 1B-3 결과의 범위는 `INTEGRITY_ONLY`이고 `completenessEvaluated: false`다. 따라서 artifact 무결성은 확인하지만 필요한 검증이 모두 수행됐는지, registry `VERIFIED` 전환이나 reconciliation/Issue closure가 끝났는지, 전체 작업이 무조건 DONE인지를 자체적으로 증명하지 않는다. 상세 lifecycle은 [Phase 1B spec의 Run Finalization Lifecycle](docs/superpowers/specs/2026-07-10-ai-workflow-phase-1b-spec.md#run-finalization-lifecycle)을 따른다. PASS를 기록하기 전에는 finalized `run.json`, artifact manifest, command result와 로그를 함께 확인해야 한다.
+출력된 `userId`와 `menuId`를 다음 API 호출에 사용합니다.
 
-## 4. 도메인 모델
+## 4. Postman으로 API 호출하기
 
-```mermaid
-erDiagram
-  USERS ||--|| USER_POINTS : owns
-  USERS ||--o{ POINT_HISTORIES : has
-  USERS ||--o{ ORDERS : places
-  MENUS ||--o{ ORDERS : ordered
-  ORDERS ||--|| PAYMENTS : paid_by
-  ORDERS ||--o{ OUTBOX_EVENTS : emits
-  MENUS ||--o{ DAILY_MENU_SALES : aggregated_by
+1. `docker compose up -d`와 `bootRun`으로 서버를 실행합니다.
+2. Postman 환경에 `baseUrl`을 `http://localhost:8080`으로 등록합니다.
+3. 샘플 데이터 명령이 출력한 값을 `userId`, `menuId` 환경변수로 등록합니다.
+4. 포인트를 먼저 충전한 뒤 주문 API를 호출합니다.
 
-  USERS {
-    bigint id PK
-    datetime created_at
-    datetime updated_at
-  }
+### 포인트 충전 예시
 
-  USER_POINTS {
-    bigint id PK
-    bigint user_id FK
-    bigint balance
-    bigint version
-    datetime created_at
-    datetime updated_at
-  }
+- Method: `POST`
+- URL: `{{baseUrl}}/api/v1/users/{{userId}}/points/charge`
+- Header: `Content-Type: application/json`
+- Body → raw → JSON:
 
-  POINT_HISTORIES {
-    bigint id PK
-    bigint user_id FK
-    string type
-    bigint amount
-    bigint balance_after
-    string reason
-    datetime created_at
-  }
-
-  MENUS {
-    bigint id PK
-    string name
-    bigint price
-    string status
-    datetime created_at
-    datetime updated_at
-  }
-
-  ORDERS {
-    bigint id PK
-    bigint user_id FK
-    bigint menu_id FK
-    bigint order_price
-    string status
-    datetime ordered_at
-  }
-
-  PAYMENTS {
-    bigint id PK
-    bigint order_id FK
-    bigint user_id FK
-    bigint amount
-    string status
-    datetime paid_at
-  }
-
-  OUTBOX_EVENTS {
-    bigint id PK
-    string aggregate_type
-    bigint aggregate_id
-    string event_type
-    json payload
-    string status
-    int retry_count
-    datetime created_at
-    datetime published_at
-  }
-
-  DAILY_MENU_SALES {
-    bigint id PK
-    date sales_date
-    bigint menu_id FK
-    bigint order_count
-    datetime created_at
-    datetime updated_at
-  }
+```json
+{
+  "amount": 10000
+}
 ```
 
-## 5. API 명세
+### 주문·결제 예시
+
+- Method: `POST`
+- URL: `{{baseUrl}}/api/v1/orders`
+- Header: `Content-Type: application/json`
+- Body → raw → JSON:
+
+```json
+{
+  "userId": 1,
+  "menuId": 1
+}
+```
+
+위 JSON의 수치는 예시입니다. 실제로는 샘플 데이터 명령에서 확인한 ID를 사용하세요.
+
+## 5. 주요 API
 
 ### 5.1 커피 메뉴 목록 조회
 
-`GET /api/v1/menus`
-
-Response:
+```http
+GET /api/v1/menus
+```
 
 ```json
 {
@@ -287,11 +163,9 @@ Response:
 
 ### 5.2 포인트 충전
 
-`POST /api/v1/users/{userId}/points/charge`
-
-이 과제는 로그인 기능을 구현하지 않는다. 여기서 `userId`는 로그인 사용자가 아니라 포인트 계정을 구분하기 위한 과제용 사용자 식별값이다.
-
-Request:
+```http
+POST /api/v1/users/{userId}/points/charge
+```
 
 ```json
 {
@@ -299,205 +173,150 @@ Request:
 }
 ```
 
-Response:
-
 ```json
 {
   "userId": 1,
   "chargedAmount": 10000,
-  "balance": 15000
+  "balance": 10000
 }
 ```
 
-### 5.3 커피 주문/결제
+### 5.3 커피 주문·결제
 
-`POST /api/v1/orders`
-
-주문 API의 `userId`도 인증 principal이 아니라 과제 요구사항의 사용자 식별값이다. 실제 서비스라면 로그인된 사용자와 요청 userId가 일치하는지 서버에서 검증해야 한다.
-
-Request:
+```http
+POST /api/v1/orders
+```
 
 ```json
 {
   "userId": 1,
-  "menuId": 10
+  "menuId": 1
 }
 ```
 
-Response:
-
 ```json
 {
-  "orderId": 100,
+  "orderId": 1,
   "userId": 1,
-  "menuId": 10,
+  "menuId": 1,
   "paymentAmount": 4500,
-  "remainingPoint": 10500,
+  "remainingPoint": 5500,
   "status": "PAID"
 }
 ```
 
-### 5.4 인기 메뉴 목록 조회
+### 5.4 인기 메뉴 조회
 
-`GET /api/v1/menus/popular?days=7&limit=3`
+```http
+GET /api/v1/menus/popular?days=7&limit=3
+```
 
-Response:
+`days`와 `limit`을 생략하면 각각 `7`, `3`을 사용합니다.
 
 ```json
 {
   "periodDays": 7,
   "menus": [
     {
-      "menuId": 10,
+      "menuId": 1,
       "name": "Americano",
       "price": 4500,
-      "orderCount": 120
+      "orderCount": 1
     }
   ]
 }
 ```
 
-## 6. 주문/결제 처리 흐름
+오류 응답 형식과 상태 코드는 [데이터 및 API 계약](docs/07-data-and-api-contracts.md)에서 확인할 수 있습니다.
 
-```mermaid
-sequenceDiagram
-  participant Client
-  participant API as Order API
-  participant Lock as Redisson
-  participant RankingLock as Date lock
-  participant DB as MySQL
-  participant Redis
-  participant Publisher as Outbox Publisher
-  participant Kafka
+## 6. 핵심 설계와 기술 선택 이유
 
-  Client->>API: POST /api/v1/orders
-  API->>Lock: lock(point:user:{userId})
-  Lock-->>API: lock acquired
-  API->>DB: begin transaction
-  API->>DB: menu 조회
-  API->>DB: point 잔액 확인 및 차감
-  API->>DB: point_history 저장
-  API->>DB: order/payment 저장
-  API->>DB: daily_menu_sales 증가
-  API->>DB: outbox_event 저장
-  API->>DB: commit
-  API->>Lock: unlock
-  API->>RankingLock: lock(ranking:date:{yyyy-MM-dd})
-  RankingLock-->>API: lock acquired
-  API->>DB: durable count/metadata 재조회
-  API->>Redis: Lua ZADD absolute assignment + marker 교체
-  API->>RankingLock: unlock
-  API-->>Client: order response
-  Publisher->>DB: claim READY rows
-  DB-->>Publisher: PROCESSING rows + claim deadline
-  Publisher->>Kafka: publish order-paid event
-  Kafka-->>Publisher: acknowledge
-  Publisher->>DB: mark PUBLISHED
+### 애플리케이션 기반: Spring Boot + JPA + QueryDSL
+
+Spring Boot의 REST API, 트랜잭션, JPA, Kafka, Redis 통합을 활용해 프레임워크 구성보다 주문·결제 정합성과 장애 대응에 집중합니다. 기본 저장과 상태 변경은 JPA로 처리하고, 기간 조건과 집계처럼 조건 조합이 필요한 조회에는 타입 안정성과 동적 조건 구성이 용이한 QueryDSL을 사용합니다.
+
+주문, 결제, 포인트, Outbox 이벤트, 일별 메뉴 집계의 정합성 기준 저장소는 MySQL입니다. Redis와 Kafka는 각각 조회 성능과 비동기 이벤트 전송을 위한 보조 인프라입니다.
+
+### 포인트 동시성: Redisson + MySQL
+
+동일 사용자의 충전과 주문은 `point:user:{userId}` 분산락으로 직렬화합니다. 락 안에서 MySQL 트랜잭션과 row lock, 제약조건을 사용하므로 Redis는 진입 경합을 줄이고 MySQL은 최종 일관성 경계를 담당합니다. lease 만료와 Redis 장애가 추가되는 비용을 고려해 DB 비관적 락과의 부하·지연 비교가 필요합니다.
+
+### 주문 이벤트: Transactional Outbox + Kafka
+
+주문, 결제, 포인트 이력, Outbox 이벤트를 같은 MySQL 트랜잭션에 저장합니다. Publisher는 `READY` 이벤트를 claim해 Kafka로 발행하고, 발행 성공 후 `PUBLISHED`로 변경합니다. 발행 성공과 상태 기록 사이에서 장애가 나면 중복 발행될 수 있으므로 consumer는 event ID를 기준으로 멱등 처리합니다.
+
+Kafka는 이벤트 보존과 replay, 여러 consumer group의 독립 소비, partition 병렬 처리, 같은 partition key의 순서 보존을 위해 선택했습니다. replay나 여러 consumer group이 필요 없는 짧은 작업 전달·우선순위·복잡한 routing이 중심이라면 RabbitMQ 같은 작업 큐가 더 적합할 수 있습니다.
+
+### 인기 메뉴: Redis Sorted Set + MySQL 일별 집계
+
+Redis Sorted Set으로 최근 7일 순위를 빠르게 조회하되, `daily_menu_sales`를 복구 가능한 기준 데이터로 유지합니다. Redis 데이터가 없거나 불완전하면 MySQL 일별 집계에서 응답하고 Redis를 다시 구성합니다.
+
+주문 테이블을 매번 직접 집계하는 방식은 단순하지만 조회 비용이 커질 수 있고, Redis만 사용하는 방식은 데이터 유실 시 복구 기준이 약합니다. Redis Sorted Set과 MySQL 일별 집계를 함께 사용해 빠른 조회와 복구 가능성을 절충합니다.
+
+### 패키지 구조
+
+도메인별로 controller, service, repository를 배치해 기능 응집도를 높이고, controller에는 HTTP 변환과 validation만 둡니다. 주문·결제·락·Outbox 같은 비즈니스 규칙은 service와 domain에 둡니다.
+
+각 선택의 대안과 한계는 [ADR 목록](#8-상세-문서)에서 확인할 수 있습니다.
+
+## 7. 테스트 및 자동 검증 방법
+
+### 개발자가 직접 실행하는 Gradle 검증
+
+Windows PowerShell:
+
+```powershell
+.\gradlew.bat test
+.\gradlew.bat integrationTest
+.\gradlew.bat apiSmokeTest
+.\gradlew.bat assemble
 ```
 
-## 7. 동시성 제어 전략
-
-포인트 잔액은 사용자 단위로 보호한다. 같은 사용자가 동시에 여러 주문을 요청하거나 충전과 주문을 동시에 요청하는 경우, 잔액 계산이 꼬이지 않도록 Redisson 분산락을 획득한 뒤 트랜잭션을 시작한다.
-
-락 정책:
-
-- Lock key: `point:user:{userId}`
-- wait time: 짧게 설정하여 장시간 대기 요청을 방지한다.
-- lease/watchdog: 기준 테스트와 장애 주입 후 하나의 정책을 명시한다. lease 만료나 watchdog 중단이 안전을 보장하지 않으므로 DB 정합성 검증을 유지한다.
-- unlock: 반드시 `finally`에서 수행한다.
-
-DB 트랜잭션은 다음 작업을 하나의 원자적 단위로 묶는다.
-
-- 포인트 잔액 변경
-- 포인트 이력 저장
-- 주문 생성
-- 결제 저장
-- 일별 메뉴 집계 증가
-- Outbox 이벤트 저장
-
-## 8. 데이터 일관성 전략
-
-### 포인트 일관성
-
-포인트 잔액만 저장하면 장애 상황에서 추적이 어렵다. 따라서 `user_points`에는 현재 잔액을 저장하고, `point_histories`에는 충전과 사용 이력을 모두 저장한다. 장애 분석이나 보정이 필요할 때 이력 기반으로 잔액을 검증할 수 있다.
-
-### 주문 이벤트 일관성
-
-주문 이벤트는 Outbox 테이블에 먼저 저장한다. Kafka 발행은 별도 프로세스가 담당한다. 이를 통해 주문 트랜잭션 성공과 이벤트 발행 대상 저장을 같은 MySQL 트랜잭션에 묶는다.
-
-### 인기 메뉴 일관성
-
-Redis Sorted Set은 빠른 조회를 위한 자료구조다. 정확성 검증과 복구 기준은 MySQL의 `daily_menu_sales`가 담당한다. Redis 데이터가 유실되면 최근 7일간의 `daily_menu_sales`를 읽어 Redis Sorted Set을 재구성한다.
-
-## 9. 테스트 전략
-
-| 테스트 | 검증 내용 |
+| 명령 | 범위 |
 |---|---|
-| 메뉴 조회 테스트 | 판매 중인 메뉴 목록이 가격과 함께 조회되는지 검증한다. |
-| 포인트 충전 테스트 | 충전 금액 검증, 잔액 증가, 이력 저장을 검증한다. |
-| 주문/결제 테스트 | 포인트 차감, 주문 생성, 결제 저장, 잔액 부족 실패를 검증한다. |
-| 동시성 테스트 | 동일 사용자에 대한 다중 주문 요청 시 잔액이 음수가 되지 않는지 검증한다. |
-| Outbox 테스트 | 주문 성공 시 Outbox 이벤트가 저장되는지 검증한다. |
-| Kafka 발행 실패 테스트 | 발행 실패 시 Outbox 이벤트가 재시도 대상으로 남는지 검증한다. |
-| 인기 메뉴 테스트 | 최근 7일 기준 TOP 3가 정확히 계산되는지 검증한다. |
-| Redis 복구 테스트 | Redis 데이터 유실 시 일별 집계 테이블로 랭킹을 복구할 수 있는지 검증한다. |
+| `test` | 단위·슬라이스 테스트. `*IntegrationTest`, `*ApiSmokeTest` 제외 |
+| `integrationTest` | MySQL·Redis·Kafka Testcontainers 통합 테스트 |
+| `apiSmokeTest` | random port에서 실행한 실제 HTTP API smoke test |
+| `assemble` | 컴파일·패키징 가능 여부 |
 
-필수 정합성 조건은 [도메인 모델의 Consistency Invariants](docs/03-domain-model.md#consistency-invariants)가 소유한다. 일반 부하, hot key, 충전/주문 경합, Outbox backlog, API·Redis·Kafka 장애 복구와 처리량·p50/p95/p99·오류율·lock wait·DB pool·Outbox 체류시간·consumer lag 측정 계획은 [품질 및 운영 규칙](docs/09-quality-operations-and-rules.md)에 있다. TPS와 p95 목표 수치는 기준 테스트 결과 후 확정한다.
+### 일회성 E2E 자동 검증
 
-## 10. 문서 구조
+`verify.e2e`는 단일 인스턴스 시나리오와 다중 인스턴스·nginx·Docker k6 시나리오를 차례로 실행합니다. 성공·실패와 관계없이 종료 trap이 애플리케이션과 Compose 컨테이너·볼륨을 정리하므로, 검증이 끝나면 서버도 종료됩니다.
 
-```txt
-AGENTS.md
-README.md
+따라서 `verify.e2e`는 한 번 실행하고 정리하는 자동 검증 경로입니다. 일반 개발 서버가 없다는 뜻이 아니며, 로컬 개발에서는 앞서 설명한 `docker compose up -d`와 `bootRun`으로 애플리케이션을 계속 실행하고 Postman으로 `localhost:8080` API를 호출할 수 있습니다.
 
-docs/
-  00-index.md
-  01-product-vision.md
-  02-users-and-permissions.md
-  03-domain-model.md
-  04-user-flows.md
-  05-functional-requirements.md
-  06-system-architecture.md
-  07-data-and-api-contracts.md
-  08-ui-and-frontend-guidelines.md
-  09-quality-operations-and-rules.md
+AI command registry의 `server.dev` 미등록 상태는 자동화 레지스트리에 별도 개발 서버 command ID가 없다는 뜻일 뿐, Spring Boot 애플리케이션을 개발 서버로 실행할 수 없다는 뜻이 아닙니다. 자동화 명령·증적·finalization 규칙은 과제 본문에서 분리해 [AI command registry](ai/command-registry.md)와 [검증 규칙](ai/verification-gates.md)에 기록합니다.
 
-ai/
-  agent.rules.md
-  subagent-workflow.md
-  verification-levels.md
-  qa-gate.md
-  done-claim-template.md
-  implementation-guardrails.md
-  issue-completion-checklist.md
-  reviewer-checklist.md
-  agent-mistakes.md
-  remove-ai-slop.md
-  lazycodex-runbook.md
+최근 저장소 증적에는 `verify.build`, `verify.unit`, `verify.integration`, `verify.api-smoke`, `verify.e2e` 실행 기록이 있습니다. 이 기록은 각 artifact가 보존됐음을 보여주지만, finalization 범위가 `INTEGRITY_ONLY`이고 `completenessEvaluated: false`이므로 모든 검증이 완전하다는 주장을 자체적으로 증명하지는 않습니다.
 
-specs/
-  _template/
-    spec.md
-    plan.md
-    tasks.md
-    checklist.md
-    decisions.md
-  001-menu-query/
-  002-point-charge/
-  003-order-payment/
-  004-popular-menu/
+## 8. 상세 문서
 
-adr/
-  ADR-000-template.md
-  ADR-001-redisson-distributed-lock.md
-  ADR-002-transactional-outbox-kafka.md
-  ADR-003-redis-sorted-set-daily-aggregation.md
-  ADR-004-domain-packages-three-layer.md
-```
+### 프로젝트 문서
 
-## 11. 기능별 상세 문서
+- [문서 인덱스](docs/00-index.md)
+- [제품 비전](docs/01-product-vision.md)
+- [사용자와 권한](docs/02-users-and-permissions.md)
+- [도메인 모델과 일관성 조건](docs/03-domain-model.md)
+- [주요 사용자 흐름](docs/04-user-flows.md)
+- [기능 요구사항](docs/05-functional-requirements.md)
+- [시스템 아키텍처](docs/06-system-architecture.md)
+- [데이터 및 API 계약](docs/07-data-and-api-contracts.md)
+- [UI 및 프런트엔드 가이드라인](docs/08-ui-and-frontend-guidelines.md)
+- [품질·운영·검증 규칙](docs/09-quality-operations-and-rules.md)
+- [로컬 개발 환경](docs/local-development-environment.md)
+- [포인트 동시성·Outbox·Redis 복구 트러블슈팅](docs/til/2026-07-16-cafe-consistency-troubleshooting.md)
 
-- 메뉴 목록 조회: `specs/001-menu-query`
-- 포인트 충전: `specs/002-point-charge`
-- 주문/결제: `specs/003-order-payment`
-- 인기 메뉴 조회: `specs/004-popular-menu`
+### 아키텍처 결정 기록
+
+- [ADR 템플릿](adr/ADR-000-template.md)
+- [ADR-001: Redisson 분산락](adr/ADR-001-redisson-distributed-lock.md)
+- [ADR-002: Transactional Outbox와 Kafka](adr/ADR-002-transactional-outbox-kafka.md)
+- [ADR-003: Redis Sorted Set과 일별 집계](adr/ADR-003-redis-sorted-set-daily-aggregation.md)
+- [ADR-004: 도메인 패키지와 3계층 구조](adr/ADR-004-domain-packages-three-layer.md)
+
+### 기능별 명세
+
+- [메뉴 목록 조회](specs/001-menu-query/spec.md)
+- [포인트 충전](specs/002-point-charge/spec.md)
+- [주문·결제](specs/003-order-payment/spec.md)
+- [인기 메뉴 조회](specs/004-popular-menu/spec.md)

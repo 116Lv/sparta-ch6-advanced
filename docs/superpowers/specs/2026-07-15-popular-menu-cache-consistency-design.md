@@ -1,35 +1,29 @@
-# Popular Menu Cache Consistency Design
+# 인기 메뉴 캐시 일관성 설계
 
-## Context
+## 배경
 
-MySQL `daily_menu_sales` is the durable source and Redis daily sorted sets are the fast read model. A non-empty Redis union is not proof that every requested day is complete, and snapshot rebuilds can conflict with post-commit increments.
+MySQL `daily_menu_sales`는 내구성 있는 원천이고 Redis 일별 sorted set은 빠른 읽기 모델이다. 비어 있지 않은 Redis 합집합은 요청된 모든 날짜가 완전하다는 증거가 아니며, 스냅샷 재구성은 커밋 후 증가와 충돌할 수 있다.
 
-## Decision
+## 결정
 
-Keep the Redis-first design and add an explicit completeness protocol.
+Redis 우선 설계를 유지하고 명시적인 완전성 프로토콜을 추가한다.
 
-- Each daily ZSET `popular-menu:{yyyy-MM-dd}` has a completeness marker
-  `popular-menu:complete:{yyyy-MM-dd}` containing a unique generation, durable total count, and
-  durable member count, with the same 14-day TTL.
-- Before trusting Redis, the query reads lightweight per-date MySQL total/member metadata for all
-  seven days. Marker metadata, ZSET cardinality, and score sum must match MySQL; marker values must
-  remain identical across the union read.
-- A range is cache-readable only when all requested daily markers exist. Missing any marker causes a MySQL response and a rebuild of every date in the range, including dates with no rows.
-- Rebuild creates a temporary daily ZSET, then atomically replaces or deletes the live key and writes the completeness marker.
-- Cache updates and rebuilds use the same date-scoped lock. Post-commit updates read the durable MySQL count and set the Redis member to that absolute value; they do not blindly increment a possibly rebuilt snapshot.
-- A post-commit update atomically writes the known absolute member value and publishes a new marker
-  from metadata read under the same date lock. If it fails, the previous marker no longer matches
-  the advanced MySQL metadata and the next query falls back.
-- Query and order date calculations use the same injected `Clock`.
-- The public contract remains recent seven days and top three: only `days=7` and `limit=3` are accepted.
-- A cached member whose menu cannot be resolved is treated as cache corruption. The request uses the durable result and initiates rebuild instead of returning a shortened list.
+- 각 일별 ZSET `popular-menu:{yyyy-MM-dd}`는 같은 14일 TTL로 고유 generation, 내구성 총계 및 내구성 멤버 수를 포함하는 완전성 마커 `popular-menu:complete:{yyyy-MM-dd}`를 갖는다.
+- Redis를 신뢰하기 전에 쿼리는 7일 전체의 가벼운 날짜별 MySQL 총계/멤버 메타데이터를 읽는다. 마커 메타데이터, ZSET 카디널리티, 점수 합계는 MySQL과 일치해야 하며, 마커 값은 합집합 조회 전체에서 동일하게 유지되어야 한다.
+- 요청된 모든 일별 마커가 존재할 때만 범위를 캐시에서 읽을 수 있다. 하나라도 누락되면 MySQL 응답을 반환하고 행이 없는 날짜를 포함해 범위의 모든 날짜를 재구성한다.
+- 재구성은 임시 일별 ZSET을 만든 후 활성 키를 원자적으로 교체하거나 삭제하고 완전성 마커를 기록한다.
+- 캐시 업데이트와 재구성은 같은 날짜별 락을 사용한다. 커밋 후 업데이트는 내구성 MySQL 수를 읽고 Redis 멤버에 그 절대 값을 설정한다. 재구성되었을 수 있는 스냅샷을 맹목적으로 증가시키지 않는다.
+- 커밋 후 업데이트는 같은 날짜 락 아래에서 읽은 메타데이터로부터 알려진 절대 멤버 값을 원자적으로 기록하고 새 마커를 발행한다. 실패하면 이전 마커는 진행된 MySQL 메타데이터와 더 이상 일치하지 않으며 다음 쿼리는 폴백한다.
+- 쿼리와 주문 날짜 계산은 같은 주입된 `Clock`을 사용한다.
+- 공개 계약은 최근 7일과 상위 3개로 유지된다. `days=7`과 `limit=3`만 허용된다.
+- 메뉴를 확인할 수 없는 캐시 멤버는 캐시 손상으로 처리한다. 축소된 목록을 반환하는 대신 요청은 내구성 결과를 사용하고 재구성을 시작한다.
 
-## Failure and concurrency behavior
+## 실패 및 동시성 동작
 
-Redis read, write, lock, or rebuild failure never changes the committed order. A request with incomplete or unusable cache state returns the MySQL aggregate. Date-scoped locking plus absolute score assignment makes rebuild and post-commit cache updates convergent and prevents duplicate increments from snapshot overlap.
+Redis 읽기, 쓰기, 락 또는 재구성 실패는 커밋된 주문을 절대로 변경하지 않는다. 불완전하거나 사용할 수 없는 캐시 상태의 요청은 MySQL 집계를 반환한다. 날짜별 락과 절대 점수 할당은 재구성과 커밋 후 캐시 업데이트를 수렴시키고 스냅샷 중첩으로 인한 중복 증가를 방지한다.
 
-The DB commit and cache update are not a distributed transaction. The documented consistency boundary remains post-commit recoverability: Redis is trusted only after the completeness protocol succeeds, while MySQL remains authoritative whenever completeness is uncertain.
+DB 커밋과 캐시 업데이트는 분산 트랜잭션이 아니다. 문서화된 일관성 경계는 계속 커밋 후 복구 가능성이다. Redis는 완전성 프로토콜이 성공한 후에만 신뢰하고, 완전성이 불확실할 때는 MySQL이 계속 권위 있는 원천으로 남는다.
 
-## Verification
+## 검증
 
-Author tests for the exact inclusive seven-day range, outside-range exclusion, top-three/tie order, fixed-clock date alignment, malformed and noncanonical parameters, all-marker cache hits, partial marker loss, empty-date stale-key removal, temporary-key cleanup and TTL, missing-menu fallback, Redis failure fallback, and deterministic rebuild/update interleavings. Runtime execution remains `NOT RUN` when repository command policy provides no VERIFIED product command.
+정확한 포함 7일 범위, 범위 밖 제외, 상위 3개/동점 순서, 고정 clock 날짜 정렬, 잘못된 및 비정규 파라미터, 모든 마커 캐시 적중, 일부 마커 손실, 빈 날짜의 오래된 키 제거, 임시 키 정리 및 TTL, 누락 메뉴 폴백, Redis 실패 폴백, 결정적인 재구성/업데이트 인터리빙에 대한 테스트를 작성한다. 저장소 명령 정책이 VERIFIED 제품 명령을 제공하지 않을 때 런타임 실행은 `NOT RUN`으로 남는다.

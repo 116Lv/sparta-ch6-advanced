@@ -1,14 +1,14 @@
 ---
-issue: pending
-issue_url:
+issue: 20
+issue_url: https://github.com/116Lv/sparta-ch6-advanced/issues/20
 agent: implementation-agent
-tracking_status: pending_issue
-status: handoff_needed
+tracking_status: issue_backed
+status: done
 owning_feature: "none"
-current_owner: implementation-agent-task-5
+current_owner: repository-owner
 started_at: 2026-07-15T20:47:50.5155079+09:00
 ended_at: 2026-07-15T23:50:00+09:00
-last_updated: 2026-07-15T23:50:00+09:00
+last_updated: 2026-07-20T14:15:00+09:00
 branch: codex/implement-cafe-features
 related_files:
   - specs/001-menu-query/spec.md
@@ -28,12 +28,11 @@ commands_run:
   - git diff --check
   - rg stale increment references
 tests_run: []
-blockers:
-  - No VERIFIED product command; runtime RED/GREEN, HTTP, Kafka, database, Docker, migration, and seed evidence is unavailable
+blockers: []
 skill_ids:
   - superpowers:receiving-code-review
   - superpowers:test-driven-development
-handoff_state_ref: ai/work-logs/no-issue/cafe-ordering-consistency-audit/README.md
+handoff_state_ref: ai/work-logs/issue-20/archive/cafe-ordering-consistency-audit/README.md
 reusable_context_refs: []
 not_run_project_commands:
   - verify.build
@@ -43,12 +42,12 @@ not_run_project_commands:
   - verify.api-smoke
   - db.migration
   - db.seed
-github_reconciliation_status: pending_external_authorization
-reconciliation_required: true
+github_reconciliation_status: complete
+reconciliation_required: false
 issue_creation_attempted_at: 2026-07-15T20:47:50.5155079+09:00
 issue_creation_failure_reason: GitHub connector rejected external disclosure because the user had not explicitly authorized issue creation
 expected_issue_scope: Independent cross-feature audit of cafe ordering consistency implementation at 16bea34..HEAD
-migration_history: []
+migration_history: ["2026-07-20T14:15:00+09:00: Issue #20 archive로 이관"]
 ---
 
 # Summary
